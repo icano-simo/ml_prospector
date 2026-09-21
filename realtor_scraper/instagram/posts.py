@@ -127,8 +127,34 @@ def _detectar(patrones: tuple[str, ...], texto: str) -> list[str]:
 
 # ── Post ──────────────────────────────────────────────────────────────────────
 
-_RE_MENCION = re.compile(r"@([A-Za-z0-9_.]{2,30})")
+#: Una @mencion de verdad, no la cola de un email.
+#:
+#: Medido sobre la captura real del piloto: el patron ingenuo `@([\w.]{2,30})`
+#: daba `@gmail.com` diez veces en un solo perfil y `@mpowerrealtors.com`
+#: cuatro, porque los captions llevan el email del agente. Eso no es ruido
+#: inocuo: inflaba `etiquetadas`, ponia `tiene_socio = True` en casi todo post
+#: con firma de contacto —y con eso `posts_comarketing`— y un caption con
+#: `maria@titlecompanyx.com` habria producido `menciona_lender =
+#: @titlecompanyx.com`, o sea un socio hipotecario inventado.
+#:
+#: Dos guardas: el `@` no puede venir pegado a una letra, un digito o un punto
+#: (que es lo que lo separa de un email), y la cuenta tiene que empezar por
+#: letra o digito. El punto final se recorta aparte, porque `@cuenta.` es una
+#: mencion al final de una frase.
+_RE_MENCION = re.compile(r"(?<![A-Za-z0-9_.])@([A-Za-z0-9_][A-Za-z0-9_.]{1,29})")
 _RE_HASHTAG = re.compile(r"#([\wÀ-ɏ]{2,60})", re.UNICODE)
+
+
+def menciones_de_texto(texto: str | None) -> list[str]:
+    """Las @cuentas de un texto, en minuscula, sin repetir y en orden.
+
+    Es la unica via: `finder.py` tenia su propia copia del patron, y arreglar
+    una sin la otra es como quedo el bug del alt-text.
+    """
+    if not texto:
+        return []
+    crudas = (m.rstrip(".").lower() for m in _RE_MENCION.findall(texto))
+    return list(dict.fromkeys(m for m in crudas if len(m) >= 2))
 
 
 @dataclass
@@ -151,7 +177,7 @@ class Post:
     def menciones(self) -> list[str]:
         """@cuentas en el caption. S6 gratis: si etiqueta a un loan officer o a
         una hipotecaria, ahi esta su lender."""
-        return list(dict.fromkeys(m.lower() for m in _RE_MENCION.findall(self.caption)))
+        return menciones_de_texto(self.caption)
 
     @property
     def hashtags(self) -> list[str]:

@@ -308,6 +308,47 @@ def test_sin_cuenta_hipotecaria_el_lender_es_null():
     assert fila["cuentas_hipotecarias_etiquetadas"] is None
 
 
+def test_un_email_en_el_caption_no_inventa_un_lender():
+    """El caso que habria producido un socio hipotecario inexistente.
+
+    `maria@titlecompanyx.com` contiene la pista `title`, asi que con el patron
+    ingenuo `menciona_lender` habria salido `@titlecompanyx.com`: una cuenta
+    que no existe, presentada como el lender del agente. Una firma de contacto
+    inventando la categoria S6 es peor que S6 vacia.
+    """
+    posts = [
+        _post("Escribime a maria@titlecompanyx.com para cualquier consulta",
+              dias_atras=i)
+        for i in range(5)
+    ]
+    fila = parsear_crudo(_crudo(posts=posts))
+    assert fila["menciona_lender"] is None, fila["menciona_lender"]
+    assert fila["cuentas_hipotecarias_etiquetadas"] is None
+
+
+def test_la_firma_de_contacto_no_infla_el_co_marketing():
+    """`tiene_socio` se ponia en True con cualquier email en el caption, asi
+    que casi todo post con firma y la palabra taller contaba como
+    co-marketing."""
+    solo = _post("Taller de compradores este sabado. Escribime a ana@exp.com",
+                 dias_atras=0)
+    assert parsear_crudo(_crudo(posts=[solo]))["posts_comarketing"] == 0
+
+
+def test_mencionarse_a_si_mismo_no_es_un_socio():
+    """En la captura real el agente se menciona en sus propios captions.
+
+    `_crudo` usa @anatapia_realtor como handle del perfil.
+    """
+    posts = [
+        _post("Taller de compradores este sabado con @anatapia_realtor",
+              dias_atras=0, etiquetadas=["anatapia_realtor"]),
+    ]
+    fila = parsear_crudo(_crudo(posts=posts))
+    assert fila["posts_comarketing"] == 0
+    assert fila["cuentas_hipotecarias_etiquetadas"] is None
+
+
 def test_co_marketing_necesita_socio_etiquetado():
     solo = _post("Homebuyer workshop this Saturday, see you all there", dias_atras=0)
     con = _post("Homebuyer workshop junto a @acme_mortgage este sabado",

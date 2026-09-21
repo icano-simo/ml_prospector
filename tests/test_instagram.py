@@ -424,6 +424,52 @@ def test_menciones_salen_del_caption_no_del_alt():
     assert p.menciones == ["maria.loanofficer"]
 
 
+def test_el_email_del_agente_no_es_una_cuenta_etiquetada():
+    """Medido en la captura real: `@gmail.com` diez veces en un perfil.
+
+    El patron ingenuo `@([\\w.]{2,30})` agarra la cola de cualquier email, y en
+    un caption de agente inmobiliario el email esta casi siempre.
+    """
+    p = Post(caption="Llamame o escribeme a javier.hernandez@gmail.com hoy mismo")
+    assert p.menciones == [], p.menciones
+
+    p2 = Post(caption="Soy Javier, agente en mpower: javier@mpowerrealtors.com")
+    assert p2.menciones == [], p2.menciones
+
+
+def test_una_mencion_de_verdad_si_sale_aunque_haya_un_email_al_lado():
+    p = Post(caption="Gracias @maria.loanofficer! Escribime a ana@exp.com")
+    assert p.menciones == ["maria.loanofficer"]
+
+
+def test_el_punto_final_de_la_frase_no_es_parte_del_handle():
+    """`@captivatereg.com.` y `@captivatereg.com` aparecieron como dos cuentas
+    distintas en la captura real."""
+    p = Post(caption="Trabajo con @captivate_reg. Todo mi equipo esta ahi")
+    assert p.menciones == ["captivate_reg"]
+
+
+def test_la_mencion_pegada_a_una_palabra_no_cuenta():
+    assert Post(caption="correo a hola@acme_mortgage ahora").menciones == []
+    assert Post(caption="hablale a @acme_mortgage ahora").menciones == [
+        "acme_mortgage"
+    ]
+
+
+def test_hay_un_solo_patron_de_mencion_en_el_repo():
+    """finder.py tenia su propia copia, y arreglar una sin la otra es
+    exactamente como quedo el bug del alt-text."""
+    from instagram.finder import _menciones_de_caption
+    from instagram.posts import menciones_de_texto
+
+    for texto in ("escribeme a ana@exp.com",
+                  "gracias @maria.loanofficer!",
+                  "con @captivate_reg. y nada mas",
+                  "pegado hola@acme_mortgage",
+                  ""):
+        assert _menciones_de_caption(texto) == menciones_de_texto(texto), texto
+
+
 def test_red_de_menciones_encuentra_candidatas_a_lender():
     posts = [
         Post(caption="Gracias @maria.loanofficer por el cierre"),

@@ -45,6 +45,7 @@ from instagram.posts import (
     calcular_engagement,
     construir_red,
     geotags_agregados,
+    menciones_de_texto,
     programas_agregados,
 )
 from instagram.verificacion import (
@@ -1374,11 +1375,12 @@ def _tipo_de_post(post: dict) -> str:
 
 
 def _menciones_de_caption(caption: str | None) -> list[str]:
-    if not caption:
-        return []
-    return list(dict.fromkeys(
-        m.lower() for m in re.findall(r"@([A-Za-z0-9_.]{2,30})", caption)
-    ))
+    """Delega en `posts.menciones_de_texto`. No hay un segundo patron aca.
+
+    Habia uno, y era el ingenuo: contaba `@gmail.com` del email del agente como
+    una cuenta etiquetada. Ver el comentario de `_RE_MENCION` en `posts.py`.
+    """
+    return menciones_de_texto(caption)
 
 
 def _es_hipotecaria(handle: str) -> bool:
@@ -1614,13 +1616,18 @@ def parsear_crudo(crudo: dict) -> dict:
     # Es el campo mas valioso del archivo. S6 -- con quien trabaja -- esta vacia
     # en las 4.249 filas, y si el agente etiqueta a un loan officer o a una
     # hipotecaria en sus posts, esta diciendo con quien trabaja.
+    # El agente se menciona a si mismo, y bastante: en la captura real,
+    # @anakaren_properties y @homesbyeve aparecen en sus propios captions. Eso
+    # no es un socio, asi que no cuenta ni aca ni para el co-marketing.
     etiquetadas: dict[str, int] = {}
     for p in posts:
         for cuenta in (p.get("etiquetadas") or []):
             k = str(cuenta).lower().lstrip("@")
-            etiquetadas[k] = etiquetadas.get(k, 0) + 1
+            if k and k != handle_agente:
+                etiquetadas[k] = etiquetadas.get(k, 0) + 1
         for cuenta in _menciones_de_caption(p.get("caption")):
-            etiquetadas[cuenta] = etiquetadas.get(cuenta, 0) + 1
+            if cuenta != handle_agente:
+                etiquetadas[cuenta] = etiquetadas.get(cuenta, 0) + 1
 
     hipotecarias = sorted(
         ((h, n) for h, n in etiquetadas.items() if _es_hipotecaria(h)),
@@ -1644,8 +1651,16 @@ def parsear_crudo(crudo: dict) -> dict:
     n_comarketing = 0
     for p in posts:
         caption = p.get("caption") or ""
-        tiene_socio = bool(_menciones_de_caption(caption)
-                           or (p.get("etiquetadas") or []))
+        # Un socio, no el propio agente: mencionarse a si mismo no es
+        # co-marketing.
+        socios = [
+            c for c in _menciones_de_caption(caption) if c != handle_agente
+        ] + [
+            str(c).lower().lstrip("@")
+            for c in (p.get("etiquetadas") or [])
+            if str(c).lower().lstrip("@") != handle_agente
+        ]
+        tiene_socio = bool(socios)
         if tiene_socio and _cuenta_patrones([caption], lex_comarketing):
             n_comarketing += 1
     fila["posts_comarketing"] = n_comarketing
