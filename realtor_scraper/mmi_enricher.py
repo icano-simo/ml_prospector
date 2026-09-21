@@ -49,7 +49,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(ROOT))
 from datos_privados import ruta_insumo  # noqa: E402
-from instagram.finder import find_instagram  # noqa: E402
+from instagram.finder import buscar_instagram  # noqa: E402
 from navegador import crear_contexto  # noqa: E402
 
 MMI_DEFECTO = "MMI Data.xlsx"
@@ -71,6 +71,8 @@ def main():
     parser.add_argument("--skip-states",    nargs="+",  default=None, help="Skip these states, process the rest")
     parser.add_argument("--no-headless",    action="store_true")
     parser.add_argument("--skip-instagram", action="store_true")
+    parser.add_argument("--skip-comentarios", action="store_true",
+                        help="no leer comentarios (mas rapido, pero sin S8)")
     parser.add_argument("--resume",         type=str,   default=None,
                         help="Path to existing output CSV to resume from")
     parser.add_argument("--input",          type=str,   default=None,
@@ -152,33 +154,20 @@ def main():
             row = _base_record(rec)
             row["batch_name"] = batch_name
 
-            # ── Instagram lookup ──────────────────────────────────────────────
+            # ── Instagram ─────────────────────────────────────────────────────
+            # Devuelve SenalesInstagram, no un dict de booleanos. Cada señal
+            # que puede faltar viene en None y `ig_disponibilidad` dice por que.
+            # Nunca False donde corresponde null.
             if not args.skip_instagram:
-                ig = find_instagram(
-                    rec.get("first_name", ""),
-                    rec.get("last_name", ""),
-                    rec.get("state", ""),
-                    ig_page,
+                senales = buscar_instagram(
+                    nombre=rec.get("first_name", ""),
+                    apellido=rec.get("last_name", ""),
+                    estado=rec.get("state", ""),
+                    page=ig_page,
+                    licencia_conocida=rec.get("license_number") or None,
+                    con_comentarios=not args.skip_comentarios,
                 )
-                if ig:
-                    row.update({
-                        "ig_handle":           ig.get("ig_handle"),
-                        "ig_url":              ig.get("ig_url"),
-                        "ig_followers":        ig.get("ig_followers"),
-                        "ig_posts":            ig.get("ig_posts"),
-                        "ig_bio":              ig.get("ig_bio"),
-                        "ig_is_private":       ig.get("ig_is_private"),
-                        "ig_spanish_signals":  ig.get("ig_spanish_signals"),
-                        "ig_realtor_signals":  ig.get("ig_realtor_signals"),
-                        "ig_posts_spanish":    ig.get("ig_posts_spanish"),
-                        "ig_mentions_latino":  ig.get("ig_mentions_latino"),
-                        "ig_nahrep":           ig.get("ig_nahrep"),
-                        "ig_community_type":   ig.get("ig_community_type"),
-                        "ig_collaborates":     ig.get("ig_collaborates"),
-                        "ig_area_mentions":    ig.get("ig_area_mentions"),
-                        "ig_content_language": ig.get("ig_content_language"),
-                        "ig_engagement_proxy": ig.get("ig_engagement_proxy"),
-                    })
+                row.update(senales.a_fila())
                 time.sleep(random.uniform(*DELAY_GOOGLE))
 
             enriched.append(row)
@@ -214,23 +203,38 @@ def _base_record(rec: dict) -> dict:
 
 
 def _save(records: list[dict], path: Path):
+    """Guarda el checkpoint. El orden de columnas no esta hardcodeado.
+
+    La version anterior listaba a mano las dieciseis columnas `ig_*`, asi que
+    agregar una señal nueva la dejaba fuera del CSV en silencio. Ahora las
+    columnas de MMI van primero en su orden y todas las `ig_*` despues,
+    alfabeticas: una señal nueva aparece sin tocar esta funcion.
+    """
     if not records:
         return
     df = pd.DataFrame(records)
     df = df.drop_duplicates(subset=["full_name"], keep="last")
-    col_order = [
-        # MMI original
+
+    orden_mmi = [
         "full_name", "first_name", "last_name", "company", "state",
         "email_mmi", "phone_mmi", "units_sold", "loan_volume", "batch_name",
-        # Instagram
-        "ig_handle", "ig_url", "ig_followers", "ig_posts",
-        "ig_bio", "ig_is_private", "ig_spanish_signals", "ig_realtor_signals",
-        "ig_posts_spanish", "ig_mentions_latino", "ig_nahrep",
-        "ig_community_type", "ig_collaborates", "ig_area_mentions",
-        "ig_content_language", "ig_engagement_proxy",
     ]
-    existing = [c for c in col_order if c in df.columns]
-    df[existing].to_csv(path, index=False)
+    primeras = [c for c in orden_mmi if c in df.columns]
+    # Las de identidad y estado del perfil van al frente de las ig_*, porque
+    # son las que hay que mirar antes de creerle a cualquier otra.
+    cabecera_ig = [
+        c for c in ("ig_handle", "ig_url", "ig_estado_perfil",
+                    "ig_handle_confidence", "ig_motivo_estado",
+                    "ig_razon_confianza")
+        if c in df.columns
+    ]
+    resto_ig = sorted(
+        c for c in df.columns
+        if c.startswith("ig_") and c not in cabecera_ig
+    )
+    otras = [c for c in df.columns
+             if c not in primeras + cabecera_ig + resto_ig]
+    df[primeras + cabecera_ig + resto_ig + otras].to_csv(path, index=False)
 
 
 def _summary(records: list[dict], path: Path):
@@ -245,12 +249,36 @@ def _summary(records: list[dict], path: Path):
     ig_found  = int(df["ig_handle"].notna().sum()) if "ig_handle" in df.columns else 0
     email_mmi = int(df["email_mmi"].notna().sum()) if "email_mmi" in df.columns else 0
 
-    logger.info("=" * 55)
+    logger.info("=" * 62)
     logger.info(f"Total realtors procesados : {total:,}")
-    logger.info(f"Instagram encontrado      : {pct(ig_found)}")
+    logger.info(f"Handle candidato          : {pct(ig_found)}")
     logger.info(f"Email MMI                 : {pct(email_mmi)}")
+
+    # El reporte de lote. 'Encontrado' no es 'verificado', y la version anterior
+    # reportaba 98,1% de handles encontrados sin verificar ninguno.
+    if "ig_handle_confidence" in df.columns:
+        logger.info("-" * 62)
+        logger.info("Confianza del handle (solo alta y media alimentan señales):")
+        for nivel in ("alta", "media", "baja"):
+            n = int(df["ig_handle_confidence"].eq(nivel).sum())
+            logger.info(f"  {nivel:6}: {pct(n)}")
+
+    if "ig_estado_perfil" in df.columns:
+        logger.info("-" * 62)
+        logger.info("Estado del perfil:")
+        for estado, n in df["ig_estado_perfil"].value_counts().items():
+            logger.info(f"  {str(estado):20}: {pct(int(n))}")
+
+    if "ig_intensidad_pq14" in df.columns:
+        medidos = int(df["ig_intensidad_pq14"].notna().sum())
+        logger.info("-" * 62)
+        logger.info(f"P-Q14 (barrera de idioma) medido en: {pct(medidos)}")
+        logger.info("  El resto queda en null, NO en 0. Un 0 significaria "
+                    "'operacion integramente en ingles', que es una afirmacion.")
+
+    logger.info("-" * 62)
     logger.info(f"Guardado en: {path}")
-    logger.info("=" * 55)
+    logger.info("=" * 62)
 
 
 if __name__ == "__main__":
