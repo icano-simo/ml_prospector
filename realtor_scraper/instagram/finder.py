@@ -1415,6 +1415,9 @@ def parsear_crudo(crudo: dict) -> dict:
         nombre_perfil=perfil.get("nombre_visible"),
         bio=bio,
         captions=captions_todos or None,
+        # El email es señal de corroboracion independiente: lo escribio la
+        # fuente transaccional, no nuestro scraper.
+        email=objetivo.get("email"),
     )
     confianza_csv = MAPA_CONFIANZA_CSV.get(ver.confianza.value, "baja")
 

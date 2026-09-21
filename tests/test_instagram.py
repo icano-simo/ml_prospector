@@ -211,6 +211,100 @@ def test_senal_inmobiliaria_en_captions_no_solo_en_bio():
     assert "captions" in s.donde
 
 
+# ── Corroboracion por email ──────────────────────────────────────────────────
+#
+# El email lo escribio la fuente transaccional, no nuestro scraper, asi que es
+# una señal INDEPENDIENTE del handle. Sobre los 20 del piloto, usarla lleva la
+# verificacion de nombre de 8/20 a 17/20; sobre el Top 300 entero, de 57% a 84%.
+
+def test_tokens_de_email_pela_el_ruido_de_oficio():
+    from instagram.verificacion import tokens_de_email
+
+    assert "clarissa" in tokens_de_email("soldbyclarissa@gmail.com")
+    assert "eddie" in tokens_de_email("eddieyouragent@gmail.com")
+    assert "janie" in tokens_de_email("mybrokerjanie@gmail.com")
+    assert set(tokens_de_email("hernandez.javierre@gmail.com")) >= {
+        "hernandez", "javierre"}
+
+
+def test_la_particion_suma_candidatos_y_no_reemplaza():
+    """Una particion equivocada solo puede agregar ruido, no perder el nombre."""
+    from instagram.verificacion import fragmentos_de_token
+
+    assert "clarissa" in fragmentos_de_token("soldbyclarissa")
+    assert "ever" in fragmentos_de_token("homesbyever")
+    assert "clarissa" in fragmentos_de_token("yourrealtorclarissa")
+    assert "janie" in fragmentos_de_token("mybrokerjanie")
+    assert "jennyfer" in fragmentos_de_token("jennyfertherealtor")
+    # El original SIEMPRE es el primero, asi que un corte malo no destruye nada.
+    for t in ("soldbyclarissa", "casanova", "mybrokerjanie"):
+        assert fragmentos_de_token(t)[0] == t
+
+
+def test_no_se_parte_por_palabras_de_dos_o_tres_letras():
+    """Medido: con 'by', 'mi' y 'the' adentro se arruinan cinco nombres reales
+    para rescatar uno."""
+    from instagram.verificacion import fragmentos_de_token
+
+    for nombre in ("mirna", "byron", "michelle", "temperance", "themis",
+                   "tumbaco", "mateo"):
+        assert fragmentos_de_token(nombre) == [nombre], (
+            "%s se partio: %s" % (nombre, fragmentos_de_token(nombre))
+        )
+
+
+def test_el_email_corrobora_un_handle_que_el_nombre_no_verifica():
+    """EDUARDO SANCHEZ -> @eddie_turealtor, email eddieyouragent@gmail.com."""
+    sin = comparar_nombre("EDUARDO SANCHEZ", None, "eddie_turealtor")
+    con = comparar_nombre("EDUARDO SANCHEZ", None, "eddie_turealtor",
+                          email="eddieyouragent@gmail.com")
+    assert sin.coincide is False
+    assert con.coincide is True
+    assert con.por_email is True
+    assert "email de la persona" in con.detalle
+
+
+def test_la_corroboracion_por_email_da_MEDIA_no_ALTA():
+    """Son dos señales, pero la de identidad es indirecta."""
+    v = verificar(
+        nombre_realtor="EDUARDO SANCHEZ", handle="eddie_turealtor",
+        nombre_perfil=None, bio="Realtor en Chicago | se habla espanol",
+        email="eddieyouragent@gmail.com",
+    )
+    assert v.confianza is Confianza.MEDIA
+    assert v.senales_usables is True
+
+
+def test_un_email_que_no_corrobora_no_salva_el_handle():
+    """ANA OSORIO -> @anakaren_properties, email anaosorio@...
+
+    'anakaren' es el nombre de OTRA persona de la misma lista. Ni el nombre ni
+    el email lo respaldan, asi que queda para revision manual.
+    """
+    c = comparar_nombre("ANA OSORIO", None, "anakaren_properties",
+                        email="anaosorio.yourrealtor@gmail.com")
+    assert c.coincide is False
+
+
+def test_un_token_de_email_corto_no_corrobora():
+    """gus@thegrgroup.net es sugestivo pero delgado: va a revision."""
+    c = comparar_nombre("GUSTAVO RUVALCABA", None, "gussellz",
+                        email="gus@thegrgroup.net")
+    assert c.coincide is False
+
+
+def test_apodo_reconocido_en_el_nombre_del_perfil():
+    """Dos tokens: el apodo mas el apellido."""
+    c = comparar_nombre("EDUARDO SANCHEZ", "Eddie Sanchez", None)
+    assert c.coincide is True
+    assert "apodo" in c.detalle
+
+
+def test_sin_email_todo_sigue_como_antes():
+    assert comparar_nombre("ANA TAPIA", None, "sold_by_ana").coincide is False
+    assert comparar_nombre("ANA TAPIA", None, "anatapia01").coincide is True
+
+
 def test_extrae_licencia_de_bio():
     assert extraer_licencias_de_bio("Realtor | TREC #654321 | Austin TX") == ["654321"]
     assert extraer_licencias_de_bio("DRE# 01998877") == ["01998877"]
