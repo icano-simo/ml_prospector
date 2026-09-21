@@ -261,7 +261,7 @@ real —(likes + comentarios) ÷ seguidores— se calcula en
 python tests/correr_todo.py
 ```
 
-**182 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
+**200 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
 propósito: son lo único verificable en cualquier máquina, y cuando algo falle en
 una corrida real, que pasen dice que el problema está en el selector o en el
 entorno y no en la lógica.
@@ -270,7 +270,7 @@ entorno y no en la lógica.
 |---|---|---|
 | `guardas` | 27 | las reglas de guardia de PACS-H |
 | `instagram` | 51 | estado del perfil, verificación de handle, idioma, posts, comentarios |
-| `instagram_profundo` | 36 | captura cruda, parser y contrato de `ig_signals.csv` |
+| `instagram_profundo` | 54 | captura cruda, muestra truncada, parser y contrato de `ig_signals.csv` |
 | `modelmatch` | 15 | las cuatro trampas verificadas del perfil de prueba |
 | `identidad` | 35 | normalización, cascada de cruce, registro versionado |
 | `hmda` | 8 | fallout y mix, con el denominador correcto |
@@ -307,12 +307,12 @@ python realtor_scraper/mmi_enricher.py
 # Capa de Instagram · profunda, sobre los MQL + Tier A/B del libro PACS.
 # Dos pasadas: la 1 raspa y guarda el crudo, la 2 parsea sin tocar la red.
 cd realtor_scraper
-python -m instagram.finder --iniciar-sesion           # una sola vez
-python -m instagram.finder --objetivo                 # ver la lista sin raspar
-python -m instagram.finder --piloto 20 --con-ventana  # 20 primero, siempre
+python -m instagram.finder --iniciar-sesion              # una sola vez
+python -m instagram.finder --objetivo --solo-top300     # ver la lista del piloto
+python -m instagram.finder --piloto 20 --con-ventana    # 20 del Top 300, siempre
 python -m instagram.finder --parsear
-python -m instagram.finder --revisar-piloto           # la revisión a mano
-python -m instagram.finder --lote                     # los 1.203, reanudable
+python -m instagram.finder --revisar-piloto             # las 4 preguntas
+python -m instagram.finder --lote                       # los 1.203, reanudable
 cd ..
 
 # Consolidar en la sábana de entrada del motor PACS-H

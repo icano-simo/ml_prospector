@@ -22,14 +22,18 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 sys.path.insert(0, os.path.join(RAIZ, "realtor_scraper"))
 
+from instagram.extraccion import _evaluar_truncamiento  # noqa: E402
 from instagram.finder import (  # noqa: E402
     COLUMNAS_CSV,
     MAX_CHARS_CELDA,
+    RUTA_LIBRO_PACS,
     SEP,
     Objetivo,
+    cargar_objetivo,
     guardar_crudo,
     parsear_crudo,
     parsear_crudos,
+    revisar_piloto,
 )
 from instagram.idioma import (  # noqa: E402
     Idioma,
@@ -463,7 +467,7 @@ def test_el_csv_tiene_las_columnas_exactas_del_brief():
         "engagement_rate", "designaciones", "destacadas_titulos", "geotags_top",
     ]
     agregadas = ["captions_texto", "comentarios_texto", "comentarios_del_agente",
-                 "texto_truncado"]
+                 "texto_truncado", "paginacion_truncada"]
     assert COLUMNAS_CSV == del_brief + agregadas, (
         "el orden y los nombres son contrato con la app que consume el archivo"
     )
@@ -583,6 +587,322 @@ def test_el_crudo_guardado_conserva_el_objetivo_y_no_deriva_nada():
             )
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ══ PAGINACION TRUNCADA ═══════════════════════════════════════════════════════
+#
+# La regla: si el perfil declara N publicaciones y se recuperaron menos del 60%
+# de las solicitadas SIN que haya llegado el fin de la paginacion, se marca
+# paginacion_truncada y captions_es_ratio va a null.
+#
+# Un ratio sobre una muestra truncada no es una medicion peor: es otra cosa.
+
+def _crudo_paginado(*, recuperados, solicitados, declaradas, fin_paginacion,
+                    captions_es=None):
+    """Crudo con la contabilidad de paginacion puesta a mano."""
+    if captions_es is None:
+        captions_es = recuperados  # todos en español, para que el ratio sea 1.0
+    posts = []
+    for i in range(recuperados):
+        if i < captions_es:
+            texto = ("Felicidades a la familia Ramirez por su casa nueva, "
+                     "que la disfruten mucho")
+        else:
+            texto = ("Congratulations to the Smith family on closing today, "
+                     "so happy for them")
+        posts.append(_post(texto, dias_atras=i * 3))
+
+    c = _crudo(posts=posts)
+    c["perfil"]["n_publicaciones"] = declaradas
+    c["posts_solicitados"] = solicitados
+    c["posts_recuperados"] = recuperados
+    c["n_publicaciones_declaradas"] = declaradas
+    c["fin_de_paginacion"] = fin_paginacion
+    _evaluar_truncamiento(c, solicitados)
+    return c
+
+
+def test_doce_de_treinta_con_mas_paginas_es_truncada():
+    """El caso del query_hash caducado: llegan 12 clavados y hay mas."""
+    c = _crudo_paginado(recuperados=12, solicitados=30, declaradas=340,
+                        fin_paginacion=False)
+    assert c["paginacion_truncada"] is True
+    assert "12 de 30" in c["motivo_truncamiento"]
+    assert "340 publicaciones" in c["motivo_truncamiento"]
+
+    fila = parsear_crudo(c)
+    assert fila["paginacion_truncada"] is True
+    assert fila["captions_es_ratio"] is None, (
+        "un ratio sobre muestra truncada no se reporta"
+    )
+    assert fila["captions_n"] == 12, (
+        "captions_n SI se conserva: es la evidencia de por que el ratio esta vacio"
+    )
+
+
+def test_dieciocho_de_treinta_alcanza_el_60_por_ciento():
+    """18/30 = 60% exacto: no esta truncada."""
+    c = _crudo_paginado(recuperados=18, solicitados=30, declaradas=340,
+                        fin_paginacion=False)
+    assert c["paginacion_truncada"] is False
+    fila = parsear_crudo(c)
+    assert fila["captions_es_ratio"] == 1.0
+
+
+def test_diecisiete_de_treinta_no_alcanza():
+    c = _crudo_paginado(recuperados=17, solicitados=30, declaradas=340,
+                        fin_paginacion=False)
+    assert c["paginacion_truncada"] is True
+    assert parsear_crudo(c)["captions_es_ratio"] is None
+
+
+def test_perfil_chico_agotado_no_es_truncamiento():
+    """Pedirle 30 posts a quien tiene 8 no es un truncamiento: es un perfil chico."""
+    c = _crudo_paginado(recuperados=8, solicitados=30, declaradas=8,
+                        fin_paginacion=True)
+    assert c["paginacion_truncada"] is False
+    fila = parsear_crudo(c)
+    assert fila["captions_es_ratio"] == 1.0, (
+        "8 de 8 es la muestra completa, no el 27% de 30"
+    )
+
+
+def test_perfil_chico_sin_llegar_al_final_se_mide_contra_lo_declarado():
+    """Declara 10, pedimos 30, trajimos 7: el umbral es 60% de 10, no de 30."""
+    c = _crudo_paginado(recuperados=7, solicitados=30, declaradas=10,
+                        fin_paginacion=False)
+    assert c["posts_esperados"] == 10
+    assert c["paginacion_truncada"] is False, "7 de 10 es el 70%"
+
+
+def test_fin_de_paginacion_gana_sobre_el_umbral():
+    """Si el timeline se agoto, no hay nada truncado por definicion."""
+    c = _crudo_paginado(recuperados=3, solicitados=30, declaradas=3,
+                        fin_paginacion=True)
+    assert c["paginacion_truncada"] is False
+    assert c["motivo_truncamiento"] is None
+
+
+def test_privado_no_tiene_truncamiento_sino_estado():
+    """No se leyo el timeline: no hay muestra que truncar. El estado ya lo dice."""
+    c = _crudo(estado="privado", privado=True, posts=[])
+    c["perfil"]["n_publicaciones"] = 400
+    c["fin_de_paginacion"] = None
+    _evaluar_truncamiento(c, 30)
+    assert c["paginacion_truncada"] is None
+    fila = parsear_crudo(c)
+    assert fila["paginacion_truncada"] is None
+    assert fila["captions_es_ratio"] is None
+    assert fila["estado_perfil"] == "privado"
+
+
+def test_la_columna_de_truncamiento_esta_en_el_contrato():
+    assert "paginacion_truncada" in COLUMNAS_CSV
+    assert COLUMNAS_CSV[-1] == "paginacion_truncada", (
+        "va al final para no mover el orden que ya consume la app"
+    )
+
+
+def test_el_truncamiento_llega_al_csv():
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        ruta_csv = tmp / "s.csv"
+        obj = Objetivo(email="ana@x.com", nombre="ANA TAPIA", estado="Texas",
+                       handle_del_libro="anatapia_realtor", nivel="MQL", tier="A")
+        guardar_crudo(obj, _crudo_paginado(recuperados=12, solicitados=30,
+                                           declaradas=340, fin_paginacion=False),
+                      dir_crudo=dir_crudo)
+        parsear_crudos(dir_crudo=dir_crudo, ruta_csv=ruta_csv)
+        with ruta_csv.open("r", encoding="utf-8-sig", newline="") as fh:
+            fila = list(csv.DictReader(fh))[0]
+        assert fila["paginacion_truncada"] == "True"
+        assert fila["captions_es_ratio"] == ""
+        assert fila["captions_n"] == "12"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_el_crudo_registra_la_contabilidad_de_paginacion():
+    """Son hechos de la captura, no derivaciones: van en el crudo."""
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        obj = Objetivo(email="ana@x.com", nombre="ANA TAPIA", estado="Texas",
+                       handle_del_libro="anatapia_realtor", nivel="MQL", tier="A")
+        ruta = guardar_crudo(obj, _crudo_paginado(recuperados=12, solicitados=30,
+                                                  declaradas=340,
+                                                  fin_paginacion=False),
+                             dir_crudo=tmp)
+        datos = json.loads(ruta.read_text(encoding="utf-8"))
+        for campo in ("posts_solicitados", "posts_recuperados",
+                      "fin_de_paginacion", "paginacion_truncada",
+                      "motivo_truncamiento", "posts_esperados",
+                      "n_publicaciones_declaradas"):
+            assert campo in datos, campo
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ══ EL PILOTO · DOCE CLAVADOS ═════════════════════════════════════════════════
+
+def test_el_piloto_detecta_los_doce_clavados():
+    """Si todos los perfiles traen exactamente 12, el query_hash caduco."""
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        for i in range(4):
+            obj = Objetivo(email="r%d@x.com" % i, nombre="ANA TAPIA",
+                           estado="Texas", handle_del_libro="anatapia_realtor",
+                           nivel="MQL", tier="A")
+            guardar_crudo(obj, _crudo_paginado(recuperados=12, solicitados=30,
+                                               declaradas=200,
+                                               fin_paginacion=False),
+                          dir_crudo=dir_crudo)
+        informe = revisar_piloto(dir_crudo=dir_crudo, n=20)
+        assert informe["exactamente_doce"] == 4
+        assert informe["hashes_caducados"] is True
+        assert informe["parar"] is True
+        assert informe["paginacion_truncada"] == 4
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_el_piloto_no_alarma_cuando_la_paginacion_corre():
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        for i, n_posts in enumerate((30, 28, 24, 30)):
+            obj = Objetivo(email="r%d@x.com" % i, nombre="ANA TAPIA",
+                           estado="Texas", handle_del_libro="anatapia_realtor",
+                           nivel="MQL", tier="A")
+            guardar_crudo(obj, _crudo_paginado(recuperados=n_posts,
+                                               solicitados=30, declaradas=200,
+                                               fin_paginacion=False),
+                          dir_crudo=dir_crudo)
+        informe = revisar_piloto(dir_crudo=dir_crudo, n=20)
+        assert informe["exactamente_doce"] == 0
+        assert informe["hashes_caducados"] is False
+        assert informe["paginacion_truncada"] == 0
+        assert informe["sospecha_alt_text"] is False
+        assert informe["parar"] is False
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_el_piloto_alarma_si_el_ratio_ronda_el_tres_por_ciento():
+    """El criterio de parada: si ronda el 3%, algo sigue mal."""
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        for i in range(4):
+            obj = Objetivo(email="r%d@x.com" % i, nombre="ANA TAPIA",
+                           estado="Texas", handle_del_libro="anatapia_realtor",
+                           nivel="MQL", tier="A")
+            # 30 captions, ninguno en español
+            guardar_crudo(obj, _crudo_paginado(recuperados=30, solicitados=30,
+                                               declaradas=200,
+                                               fin_paginacion=False,
+                                               captions_es=0),
+                          dir_crudo=dir_crudo)
+        informe = revisar_piloto(dir_crudo=dir_crudo, n=20)
+        assert informe["captions_es_ratio_media"] == 0.0
+        assert informe["sospecha_alt_text"] is True
+        assert informe["parar"] is True
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ══ TOP 300 ═══════════════════════════════════════════════════════════════════
+
+def test_el_cruce_con_top300_es_uno_a_uno():
+    """Dio 301 sobre 300 filas, con un TIER D adentro. Era el cruce por nombre."""
+    if not RUTA_LIBRO_PACS.exists():
+        print("      (sin el libro PACS: prueba omitida)")
+        return
+    objetivos, informe = cargar_objetivo(solo_top300=True)
+    recorte = informe["recorte_top300"]
+
+    assert len(objetivos) == recorte["filas_en_top300"], (
+        "el recorte no puede tener mas ni menos filas que la hoja"
+    )
+    assert recorte["filas_de_top300_sin_cruzar"] == 0
+
+    tiers = set(informe["composicion_por_tier"])
+    assert tiers <= {"A - PRIORIDAD ALTA", "B - PRIORIDAD MEDIA"}, (
+        "el Top 300 es solo Tier A y B; un TIER C o D es un falso positivo "
+        "del cruce: %s" % tiers
+    )
+    assert informe["composicion_por_tier"]["A - PRIORIDAD ALTA"] == 168
+    assert informe["composicion_por_tier"]["B - PRIORIDAD MEDIA"] == 132
+
+
+def test_top300_es_subconjunto_del_objetivo():
+    if not RUTA_LIBRO_PACS.exists():
+        print("      (sin el libro PACS: prueba omitida)")
+        return
+    completo, _ = cargar_objetivo()
+    top, _ = cargar_objetivo(solo_top300=True)
+    claves_completo = {o.clave for o in completo}
+    assert {o.clave for o in top} <= claves_completo
+    assert len(top) < len(completo)
+
+
+def test_top300_conserva_el_orden_de_la_hoja():
+    """El piloto toma los primeros N, asi que el orden tiene que ser el de la hoja.
+
+    La hoja esta ordenada por SCORE ACCION SEPT descendente, **no por TIER**:
+    hay Tier B entre los primeros veinte. Eso es correcto y esta prueba existe
+    para no volver a asumir lo contrario.
+    """
+    if not RUTA_LIBRO_PACS.exists():
+        print("      (sin el libro PACS: prueba omitida)")
+        return
+    from instagram.finder import cargar_top300
+
+    top, _ = cargar_objetivo(solo_top300=True)
+    por_email, por_nombre, orden = cargar_top300()
+
+    puestos = []
+    for o in top:
+        clave = (o.email or "").strip().lower()
+        datos = por_email.get(clave)
+        if datos is None:
+            from instagram.finder import _clave_de_nombre
+            datos = por_nombre.get(_clave_de_nombre(o.nombre))
+        assert datos is not None, o.nombre
+        puestos.append(datos["puesto"])
+
+    assert puestos == sorted(puestos), "el orden de la hoja no se conservo"
+    assert puestos[0] == 1, "el primero del lote tiene que ser el puesto 1"
+    assert len(set(puestos)) == len(puestos), "hay puestos repetidos"
+
+    # Y solo Tier A o B, que es de lo que esta hecha la hoja.
+    assert all(o.tier and o.tier[0] in "AB" for o in top[:20]), (
+        [o.tier for o in top[:20]]
+    )
+
+
+def test_el_handle_se_completa_desde_la_url_del_top300():
+    from instagram.finder import _con_handle
+
+    sin_handle = Objetivo(email="a@x.com", nombre="A B", estado="TX",
+                          handle_del_libro=None, nivel="MQL", tier="A")
+    con = _con_handle(sin_handle, {"handle_de_url": "ana_realtor", "puesto": 1})
+    assert con.handle_del_libro == "ana_realtor"
+
+    ya_tenia = Objetivo(email="a@x.com", nombre="A B", estado="TX",
+                        handle_del_libro="el_bueno", nivel="MQL", tier="A")
+    assert _con_handle(ya_tenia, {"handle_de_url": "otro", "puesto": 1}
+                       ).handle_del_libro == "el_bueno"
+
+
+def test_handle_de_url():
+    from instagram.finder import _handle_de_url
+
+    assert _handle_de_url("https://www.instagram.com/agent.ochoa/") == "agent.ochoa"
+    assert _handle_de_url("instagram.com/Realtor_Javi") == "realtor_javi"
+    assert _handle_de_url(None) is None
+    assert _handle_de_url("no es una url") is None
 
 
 def _main() -> int:

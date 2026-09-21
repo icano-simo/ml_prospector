@@ -699,6 +699,16 @@ def capturar_crudo(
         "comentarios_por_post": {},
         "destino_enlace_bio": None,
         "errores": [],
+        # ── Contabilidad de la paginacion ────────────────────────────────────
+        #
+        # Estos cuatro campos son HECHOS de la captura, no derivaciones, y por
+        # eso viven en el crudo. El parser los usa para decidir si el ratio de
+        # idioma se puede reportar.
+        "posts_solicitados": n_posts,
+        "posts_recuperados": 0,
+        "fin_de_paginacion": None,
+        "paginacion_truncada": None,
+        "motivo_truncamiento": None,
     }
 
     if not limpio:
@@ -769,21 +779,45 @@ def capturar_crudo(
             "el endpoint JSON no respondio; se uso el DOM, que trae menos "
             "campos (sin cuentas etiquetadas ni timestamp exacto)"
         )
+        # El scroll del DOM no puede afirmar "se agoto el timeline": deja de
+        # avanzar y no sabemos si es el final o si Instagram corto. Se declara
+        # como NO final, que es lo conservador: si se recuperaron pocos posts,
+        # la muestra queda marcada como truncada.
+        crudo["fin_de_paginacion"] = False
 
     # ── 3 · Mas posts por paginacion del JSON ────────────────────────────────
     if (crudo["via"] == "json"
-            and crudo["estado_perfil"] == EstadoPerfil.PUBLICO_LEIDO.value
-            and len(crudo["posts"]) < n_posts):
+            and crudo["estado_perfil"] == EstadoPerfil.PUBLICO_LEIDO.value):
         pagina = ((usuario.get("edge_owner_to_timeline_media") or {})
                   .get("page_info") or {})
+        hay_mas = bool(pagina.get("has_next_page"))
         cursor = pagina.get("end_cursor")
         id_usuario = usuario.get("id")
-        if pagina.get("has_next_page") and cursor and id_usuario:
-            extra = _mas_posts_por_json(
+
+        if not hay_mas:
+            # El timeline se agoto en la primera pagina: no hay truncamiento
+            # posible, la persona publico eso y nada mas.
+            crudo["fin_de_paginacion"] = True
+        elif len(crudo["posts"]) >= n_posts:
+            # Ya alcanzamos lo pedido; quedan mas pero no los queriamos.
+            crudo["fin_de_paginacion"] = False
+        elif cursor and id_usuario:
+            extra, fin, fallo = _mas_posts_por_json(
                 page, id_usuario, cursor, n_posts - len(crudo["posts"]),
             )
             crudo["posts"].extend(extra)
+            crudo["fin_de_paginacion"] = fin
             crudo["estado_evidencia"] += " + %d por paginacion" % len(extra)
+            if fallo:
+                crudo["errores"].append(fallo)
+        else:
+            crudo["fin_de_paginacion"] = False
+            crudo["errores"].append(
+                "hay mas posts pero el JSON no trajo cursor ni id de usuario: "
+                "no se pudo paginar"
+            )
+
+    _evaluar_truncamiento(crudo, n_posts)
 
     # ── 4 · Comentarios, post por post ───────────────────────────────────────
     if con_comentarios and crudo["estado_perfil"] == EstadoPerfil.PUBLICO_LEIDO.value:
@@ -810,15 +844,94 @@ def capturar_crudo(
     return crudo
 
 
+#: Fraccion minima de lo solicitado que hay que recuperar para que la muestra
+#: sea utilizable. Por debajo, y si la paginacion NO llego al final, la muestra
+#: esta truncada y el ratio de idioma se reporta como null.
+#:
+#: Un ratio calculado sobre una muestra truncada no es una medicion peor: es
+#: otra cosa. Y la distincion entre "no habla español" y "no lo leimos" ya
+#: costo 1.075 perfiles una vez.
+FRACCION_MINIMA_PAGINACION = 0.60
+
+
+def _evaluar_truncamiento(crudo: dict, n_solicitados: int) -> None:
+    """Decide `paginacion_truncada` y lo escribe en el crudo.
+
+    Truncada = no se llego al fin de la paginacion **y** se recuperaron menos
+    del 60% de lo que se podia esperar.
+
+    "Lo que se podia esperar" es el minimo entre lo solicitado y lo que el
+    perfil declara publicar: pedirle 30 posts a quien tiene 8 no es un
+    truncamiento, es un perfil chico.
+    """
+    recuperados = len(crudo.get("posts") or [])
+    crudo["posts_recuperados"] = recuperados
+
+    if crudo.get("estado_perfil") != EstadoPerfil.PUBLICO_LEIDO.value:
+        # Privado, bloqueado o no encontrado: no se leyo el timeline, asi que
+        # no hay muestra que truncar. El estado ya lo dice.
+        crudo["paginacion_truncada"] = None
+        crudo["motivo_truncamiento"] = None
+        return
+
+    declarado = (crudo.get("perfil") or {}).get("n_publicaciones")
+    try:
+        declarado = int(declarado) if declarado is not None else None
+    except (TypeError, ValueError):
+        declarado = None
+
+    esperados = n_solicitados if declarado is None else min(n_solicitados, declarado)
+    crudo["posts_esperados"] = esperados
+    crudo["n_publicaciones_declaradas"] = declarado
+
+    if crudo.get("fin_de_paginacion"):
+        crudo["paginacion_truncada"] = False
+        crudo["motivo_truncamiento"] = None
+        return
+
+    if esperados <= 0:
+        crudo["paginacion_truncada"] = False
+        crudo["motivo_truncamiento"] = None
+        return
+
+    umbral = FRACCION_MINIMA_PAGINACION * esperados
+    if recuperados < umbral:
+        crudo["paginacion_truncada"] = True
+        crudo["motivo_truncamiento"] = (
+            "se recuperaron %d de %d esperados (%.0f%%, umbral %.0f%%) y la "
+            "paginacion no llego al final%s"
+            % (recuperados, esperados, recuperados / esperados * 100,
+               FRACCION_MINIMA_PAGINACION * 100,
+               ". El perfil declara %d publicaciones." % declarado
+               if declarado is not None else "")
+        )
+    else:
+        crudo["paginacion_truncada"] = False
+        crudo["motivo_truncamiento"] = None
+
+
 #: Consulta GraphQL para paginar el timeline. El hash es el que usa la web de
 #: Instagram; si cambia, la paginacion deja de funcionar y `capturar_crudo` lo
 #: registra en `errores` en vez de fallar. Los primeros 12 posts del JSON del
 #: perfil no dependen de esto.
+#:
+#: **Si este hash caduca, todos los perfiles vuelven con exactamente 12 posts.**
+#: Es la primera cosa que hay que mirar en el piloto.
 QUERY_HASH_TIMELINE = "e769aa130647d2354c40ea6a439bfc08"
 
 
-def _mas_posts_por_json(page, id_usuario: str, cursor: str, faltan: int) -> list[dict]:
+def _mas_posts_por_json(
+    page, id_usuario: str, cursor: str, faltan: int,
+) -> tuple[list[dict], bool, str | None]:
+    """Pagina el timeline.
+
+    Devuelve (posts, llego_al_final, fallo). `llego_al_final` distingue "no hay
+    mas posts" de "no pudimos seguir pidiendo", que es la diferencia entre una
+    muestra completa y una truncada.
+    """
     salida: list[dict] = []
+    fallo: str | None = None
+
     while faltan > 0 and cursor:
         variables = json.dumps({
             "id": str(id_usuario),
@@ -828,19 +941,40 @@ def _mas_posts_por_json(page, id_usuario: str, cursor: str, faltan: int) -> list
         url = ("https://www.instagram.com/graphql/query/?query_hash=%s&variables=%s"
                % (QUERY_HASH_TIMELINE, urllib.parse.quote(variables)))
         datos = _pedir_json(page, url)
+
+        if datos is None:
+            # El endpoint no respondio. Casi siempre es el query_hash caducado.
+            return salida, False, (
+                "la paginacion del timeline fallo: el endpoint GraphQL no "
+                "respondio. Si pasa en todos los perfiles, el query_hash "
+                "%s caduco y hay que actualizarlo." % QUERY_HASH_TIMELINE[:12]
+            )
+
         medios = (((datos or {}).get("data") or {}).get("user") or {}).get(
             "edge_owner_to_timeline_media"
         ) or {}
         bordes = medios.get("edges") or []
         if not bordes:
-            break
+            # Respondio pero sin posts: se asume que no hay mas.
+            return salida, True, fallo
+
         for borde in bordes:
             salida.append(_nodo_a_post_crudo((borde or {}).get("node") or {}))
         faltan -= len(bordes)
+
         pagina = medios.get("page_info") or {}
-        cursor = pagina.get("end_cursor") if pagina.get("has_next_page") else None
+        if not pagina.get("has_next_page"):
+            return salida, True, fallo
+        cursor = pagina.get("end_cursor")
+        if not cursor:
+            return salida, False, (
+                "has_next_page es true pero no vino end_cursor: no se pudo "
+                "seguir paginando"
+            )
         pausa((1.5, 3.0))
-    return salida
+
+    # Se salio porque se alcanzo lo pedido, no porque se agoto el timeline.
+    return salida, False, fallo
 
 
 #: Consulta GraphQL para los comentarios de un post.

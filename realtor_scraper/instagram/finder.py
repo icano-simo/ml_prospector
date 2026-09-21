@@ -548,6 +548,7 @@ import json  # noqa: E402
 import os  # noqa: E402
 import statistics  # noqa: E402
 import unicodedata  # noqa: E402
+from collections import Counter  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 RAIZ_SCRAPER = Path(__file__).resolve().parent.parent
@@ -678,6 +679,13 @@ RUTA_LIBRO_PACS = (
 )
 HOJA_PACS = "Realtors PACS"
 
+#: Hoja del piloto. Son los 300 de mayor SCORE ACCION: los 168 Tier A completos
+#: mas 132 Tier B, asi que es subconjunto del objetivo.
+#:
+#: **No trae columna de handle**, solo `IG url`. El handle se saca de la URL y
+#: el resto de los campos se traen por email desde `Realtors PACS`.
+HOJA_TOP300 = "Top 300"
+
 
 @dataclass
 class Objetivo:
@@ -705,10 +713,122 @@ class Objetivo:
         return re.sub(r"[^a-z0-9._@-]+", "_", base)[:120] or "sin_clave"
 
 
+def _clave_de_nombre(nombre: str | None) -> str:
+    """Tokens del nombre ordenados, para cruzar Top 300 con Realtors PACS.
+
+    Ordenados porque el libro alterna "APELLIDO, Nombre" con "Nombre Apellido",
+    y en minusculas sin acentos porque tambien alterna mayusculas.
+    """
+    plano = _sin_acentos(nombre or "").lower()
+    tokens = [t for t in re.split(r"[^a-z0-9]+", plano) if len(t) > 1]
+    return "|".join(sorted(tokens))
+
+
+def _handle_de_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    m = re.search(r"instagram\.com/([A-Za-z0-9_.]{2,30})", str(url))
+    return m.group(1).lower() if m else None
+
+
+def _con_handle(obj: "Objetivo", datos: dict) -> "Objetivo":
+    """Completa el handle desde la `IG url` del Top 300 si el objetivo no traia.
+
+    La hoja Top 300 no tiene columna de handle, solo la URL, asi que es la
+    unica via para los pocos que no lo traen en `Realtors PACS`.
+    """
+    if obj.handle_del_libro or not datos.get("handle_de_url"):
+        return obj
+    return Objetivo(
+        email=obj.email, nombre=obj.nombre, estado=obj.estado,
+        handle_del_libro=datos["handle_de_url"], nivel=obj.nivel, tier=obj.tier,
+    )
+
+
+def cargar_top300(ruta: Path | None = None) -> tuple[dict, dict, dict]:
+    """Lee la hoja Top 300.
+
+    Devuelve (por_email, por_nombre, orden) donde `orden` mapea la clave al
+    puesto en la lista, que esta ordenada por SCORE ACCION descendente. El
+    piloto toma los primeros N de ese orden: son los mejores prospectos, que es
+    donde conviene mirar primero si los captions son reales.
+    """
+    import openpyxl
+
+    ruta = ruta or RUTA_LIBRO_PACS
+    wb = openpyxl.load_workbook(ruta, read_only=True, data_only=True)
+    if HOJA_TOP300 not in wb.sheetnames:
+        wb.close()
+        raise SystemExit(
+            "El libro no tiene la hoja %r. Hojas: %s" % (HOJA_TOP300, wb.sheetnames)
+        )
+    filas = list(wb[HOJA_TOP300].iter_rows(values_only=True))
+    wb.close()
+
+    # La hoja tiene titulo y subtitulo antes del encabezado real.
+    idx = None
+    for i, fila in enumerate(filas[:15]):
+        valores = [("" if c is None else str(c)).strip().lower() for c in fila]
+        if "nombre" in valores:
+            idx = i
+            break
+    if idx is None:
+        raise SystemExit(
+            "No encuentro la fila de encabezado en %r (busco una con 'Nombre')."
+            % HOJA_TOP300
+        )
+
+    enc = [("" if c is None else str(c)).strip() for c in filas[idx]]
+
+    def columna(*frag: str) -> str | None:
+        for c in enc:
+            if c and all(f.lower() in c.lower() for f in frag):
+                return c
+        return None
+
+    c_email = columna("email")
+    c_nombre = columna("nombre")
+    c_url = columna("ig", "url")
+
+    por_email: dict[str, dict] = {}
+    por_nombre: dict[str, dict] = {}
+    orden: dict[str, int] = {}
+
+    puesto = 0
+    for fila in filas[idx + 1:]:
+        if all(c is None or str(c).strip() == "" for c in fila):
+            continue
+        reg = {enc[j]: fila[j] for j in range(min(len(enc), len(fila))) if enc[j]}
+
+        def texto(clave: str | None) -> str:
+            if not clave:
+                return ""
+            v = reg.get(clave)
+            return ("" if v is None else str(v)).strip()
+
+        puesto += 1
+        datos = {
+            "puesto": puesto,
+            "email": texto(c_email).lower() or None,
+            "nombre": texto(c_nombre) or None,
+            "handle_de_url": _handle_de_url(texto(c_url)),
+        }
+        if datos["email"]:
+            por_email[datos["email"]] = datos
+            orden[datos["email"]] = puesto
+        clave_n = _clave_de_nombre(datos["nombre"])
+        if clave_n:
+            por_nombre.setdefault(clave_n, datos)
+            orden.setdefault(clave_n, puesto)
+
+    return por_email, por_nombre, orden
+
+
 def cargar_objetivo(
     ruta: Path | None = None,
     *,
     excluir_descartados: bool = False,
+    solo_top300: bool = False,
 ) -> tuple[list[Objetivo], dict]:
     """Los realtors a raspar, desde el libro de scoring v3 PACS.
 
@@ -826,16 +946,90 @@ def cargar_objetivo(
 
         objetivos.append(obj)
 
+    # ── Recorte al Top 300, para el piloto ───────────────────────────────────
+    #
+    # El Top 300 es subconjunto del objetivo (168 Tier A + 132 Tier B), pero no
+    # trae handle: solo `IG url`. Asi que se cruza por email, con el nombre como
+    # respaldo, y se conserva el orden de la hoja -- que es por SCORE ACCION
+    # descendente, o sea los mejores prospectos primero.
+    recorte_top300: dict | None = None
+    if solo_top300:
+        por_email, por_nombre, orden = cargar_top300(ruta)
+
+        #: El cruce es UNO A UNO. Cada fila del Top 300 la reclama un solo
+        #: objetivo, y cada objetivo reclama una sola fila.
+        #:
+        #: Sin esta restriccion el cruce por nombre duplica: dos realtors que
+        #: normalizan al mismo nombre matchean la misma fila del Top 300, y el
+        #: recorte sale con MAS filas que la hoja. Paso: 301 sobre 300, y con un
+        #: TIER D adentro, que en el Top 300 no existe -- la señal de que el
+        #: cruce estaba mal.
+        reclamadas: set[int] = set()
+        seleccion: list[tuple[int, Objetivo]] = []
+        por_nombre_ambiguo: list[str] = []
+
+        # Primera vuelta: email, que es la llave confiable.
+        pendientes: list[Objetivo] = []
+        for obj in objetivos:
+            clave_e = (obj.email or "").strip().lower()
+            datos = por_email.get(clave_e) if clave_e else None
+            if datos and datos["puesto"] not in reclamadas:
+                reclamadas.add(datos["puesto"])
+                seleccion.append((datos["puesto"], _con_handle(obj, datos)))
+            else:
+                pendientes.append(obj)
+
+        # Segunda vuelta: nombre, solo para las filas que nadie reclamo.
+        for obj in pendientes:
+            clave_n = _clave_de_nombre(obj.nombre)
+            datos = por_nombre.get(clave_n) if clave_n else None
+            if not datos:
+                continue
+            if datos["puesto"] in reclamadas:
+                # Ya la reclamo alguien por email: este es el falso positivo
+                # que inflaba el conteo.
+                por_nombre_ambiguo.append(
+                    "%s (%s) coincide por nombre con el puesto %d, que ya "
+                    "reclamo otro registro por email"
+                    % (obj.nombre, obj.tier, datos["puesto"])
+                )
+                continue
+            reclamadas.add(datos["puesto"])
+            seleccion.append((datos["puesto"], _con_handle(obj, datos)))
+
+        seleccion.sort(key=lambda par: par[0])
+        objetivos = [o for _, o in seleccion]
+
+        total_top300 = max(orden.values()) if orden else 0
+        recorte_top300 = {
+            "hoja": HOJA_TOP300,
+            "filas_en_top300": total_top300,
+            "con_email_en_top300": len(por_email),
+            "cruzados_con_el_objetivo": len(objetivos),
+            "filas_de_top300_sin_cruzar": total_top300 - len(objetivos),
+            "descartados_por_nombre_ambiguo": por_nombre_ambiguo,
+            "orden": "por SCORE ACCION descendente, tal como viene la hoja",
+        }
+
     informe = {
         "libro": str(ruta),
         "hoja": HOJA_PACS,
         "filas_en_la_hoja": len(registros),
+        "solo_top300": solo_top300,
+        "recorte_top300": recorte_top300,
         "objetivo": len(objetivos),
         "con_handle_en_el_libro": sum(1 for o in objetivos if o.handle_del_libro),
         "sin_handle_en_el_libro": sum(1 for o in objetivos if not o.handle_del_libro),
         "con_email": sum(1 for o in objetivos if o.email),
-        "composicion_por_nivel": dict(sorted(composicion_nivel.items())),
-        "composicion_por_tier": dict(sorted(composicion_tier.items())),
+        # Se recuentan sobre la lista FINAL, no sobre el filtro: con
+        # --solo-top300 la composicion es otra y reportar la del objetivo
+        # completo seria decir algo que no describe lo que se va a raspar.
+        "composicion_por_nivel": dict(sorted(
+            Counter((o.nivel or "(vacio)") for o in objetivos).items()
+        )),
+        "composicion_por_tier": dict(sorted(
+            Counter((o.tier or "(vacio)") for o in objetivos).items()
+        )),
         "excluidos_por_metodologia": excluidos,
         "excluir_descartados_aplicado": excluir_descartados,
         "horas_estimadas_a_30s": round(len(objetivos) * 30 / 3600, 1),
@@ -923,6 +1117,7 @@ def correr_lote(
     limite: int | None = None,
     reanudar: bool = True,
     excluir_descartados: bool = False,
+    solo_top300: bool = False,
     headless: bool = True,
     dir_crudo: Path | None = None,
     con_comentarios: bool = True,
@@ -956,7 +1151,9 @@ def correr_lote(
     )
 
     dir_crudo = dir_crudo or DIR_CRUDO
-    objetivos, informe = cargar_objetivo(excluir_descartados=excluir_descartados)
+    objetivos, informe = cargar_objetivo(
+        excluir_descartados=excluir_descartados, solo_top300=solo_top300,
+    )
 
     checkpoint = _cargar_checkpoint() if reanudar else {
         "hechos": [], "detenido_por": None, "iniciado_en": None
@@ -1251,7 +1448,8 @@ def parsear_crudo(crudo: dict) -> dict:
                 "cuentas_hipotecarias_etiquetadas", "posts_comarketing",
                 "tipo_post_reel_pct", "dias_entre_posts_mediana",
                 "hueco_max_dias", "engagement_rate", "geotags_top",
-                "captions_texto", "comentarios_texto", "comentarios_del_agente"):
+                "captions_texto", "comentarios_texto", "comentarios_del_agente",
+                "paginacion_truncada"):
         fila[col] = None
 
     # Estas dos se leen del perfil y existen incluso en una cuenta privada.
@@ -1260,6 +1458,11 @@ def parsear_crudo(crudo: dict) -> dict:
         perfil.get("titulos_destacadas") or []
     ) or None
     fila["texto_truncado"] = False
+
+    # Hecho de la captura, no derivacion: viene del crudo tal cual. En un perfil
+    # privado o bloqueado es None, porque no hubo timeline que truncar.
+    truncada = crudo.get("paginacion_truncada")
+    fila["paginacion_truncada"] = truncada
 
     if not senales_usables:
         return fila
@@ -1283,6 +1486,21 @@ def parsear_crudo(crudo: dict) -> dict:
     fila["captions_es_ratio"] = (
         round(n_es / captions_n, 4) if captions_n else None
     )
+
+    # ── La muestra truncada no produce ratio ─────────────────────────────────
+    #
+    # Si el perfil declara N publicaciones y se recuperaron menos del 60% de
+    # las solicitadas SIN que haya llegado el fin de la paginacion, el ratio se
+    # reporta en null.
+    #
+    # Un ratio calculado sobre una muestra truncada no es una medicion peor: es
+    # otra cosa. Y la distincion entre "no habla español" y "no lo leimos" ya
+    # costo 1.075 perfiles una vez.
+    #
+    # `captions_n` SI se conserva: es el conteo real de lo que se leyo, y es la
+    # evidencia de por que el ratio esta vacio.
+    if truncada:
+        fila["captions_es_ratio"] = None
 
     # ── Comentarios ───────────────────────────────────────────────────────────
     handle_agente = (handle or "").strip().lstrip("@").lower()
@@ -1436,6 +1654,10 @@ COLUMNAS_CSV = [
     # Texto crudo, agregado en el Bloque 1-bis.
     "captions_texto", "comentarios_texto", "comentarios_del_agente",
     "texto_truncado",
+    #: Muestra truncada: se leyeron menos del 60% de los posts esperados sin
+    #: llegar al fin de la paginacion. Cuando es true, `captions_es_ratio` esta
+    #: vacio a proposito y `captions_n` dice cuantos si se leyeron.
+    "paginacion_truncada",
 ]
 
 
@@ -1532,18 +1754,25 @@ def parsear_crudos(
 
 # ── La revision de 20 perfiles, antes de lanzar sobre los 1.000 ──────────────
 
+#: Posts que devuelve la PRIMERA pagina del JSON del perfil, sin paginar.
+#: Si todos los perfiles vuelven con exactamente esto, la paginacion no corrio.
+POSTS_PRIMERA_PAGINA = 12
+
+
 def revisar_piloto(*, dir_crudo: Path | None = None, n: int = 20) -> dict:
     """Imprime lo que hay que mirar A MANO despues del piloto.
 
-    El brief pide tres preguntas concretas y esta funcion las pone adelante en
-    vez de dejarlas a criterio de quien mire:
+    Las cuatro preguntas, en el orden pedido:
 
-      1. ¿los captions son los reales?
-      2. ¿el ratio de español tiene sentido contra lo que se ve en pantalla?
-      3. ¿aparecen perfiles privados marcados como privados?
+      1. ¿Cuantos posts llegaron por perfil? Si son doce clavados, los hashes
+         ya caducaron.
+      2. ¿Los captions son el texto real? Leerlos contra la pantalla.
+      3. ¿Algun privado quedo marcado como privado?
+      4. ¿El ratio de español tiene sentido? Si ronda el 3%, algo sigue mal.
 
-    Y el criterio de parada: si `captions_es_ratio` medio sigue cerca del 3%,
-    algo quedo leyendo el alt-text y **hay que detenerse**.
+    El orden importa: la 1 es la que invalida a las otras tres. Si solo llegaron
+    doce posts por perfil, el ratio esta calculado sobre una muestra truncada y
+    no hay nada que interpretar todavia.
     """
     dir_crudo = dir_crudo or DIR_CRUDO
     archivos = sorted(dir_crudo.glob("*.json"))[:n]
@@ -1560,80 +1789,211 @@ def revisar_piloto(*, dir_crudo: Path | None = None, n: int = 20) -> dict:
     print("PILOTO · %d perfiles · revision a mano" % len(filas))
     print("=" * 78)
 
-    estados: dict[str, int] = {}
-    ratios = []
-    for nombre, crudo, fila in filas:
-        e = fila.get("estado_perfil") or "?"
-        estados[e] = estados.get(e, 0) + 1
-        if fila.get("captions_es_ratio") is not None:
-            ratios.append(fila["captions_es_ratio"])
+    # ══ 1 · CUANTOS POSTS LLEGARON ════════════════════════════════════════════
+    print("")
+    print("1 · ¿CUANTOS POSTS LLEGARON POR PERFIL?")
+    print("-" * 78)
+
+    legibles = [(nom, c, f) for nom, c, f in filas
+                if c.get("estado_perfil") == EstadoPerfil.PUBLICO_LEIDO.value]
+    conteos = [len(c.get("posts") or []) for _, c, _ in legibles]
+    solicitados = [c.get("posts_solicitados") for _, c, _ in legibles]
+    pedido = solicitados[0] if solicitados else "?"
+
+    print("   perfiles publicos leidos: %d de %d" % (len(legibles), len(filas)))
+    print("   posts solicitados por perfil: %s" % pedido)
+    print("")
+    print("   %-34s %6s %8s %10s %s"
+          % ("perfil", "posts", "declara", "fin pag.", "truncada"))
+    for nom, c, f in legibles:
+        print("   %-34s %6d %8s %10s %s"
+              % (nom[:34], len(c.get("posts") or []),
+                 c.get("n_publicaciones_declaradas") if c.get("n_publicaciones_declaradas") is not None else "?",
+                 c.get("fin_de_paginacion"),
+                 f.get("paginacion_truncada")))
+
+    exactamente_doce = sum(1 for n_c in conteos if n_c == POSTS_PRIMERA_PAGINA)
+    truncadas = sum(1 for _, _, f in filas if f.get("paginacion_truncada") is True)
 
     print("")
-    print("1 · ESTADOS DE PERFIL")
-    for e, n_e in sorted(estados.items()):
-        print("   %-16s %d" % (e, n_e))
-    if "privado" not in estados:
+    if legibles and exactamente_doce == len(legibles):
+        print("   !!! DETENERSE. Los %d perfiles legibles trajeron EXACTAMENTE %d"
+              % (len(legibles), POSTS_PRIMERA_PAGINA))
+        print("       posts, que es lo que devuelve la primera pagina del JSON del")
+        print("       perfil. La paginacion NO corrio: el query_hash del timeline")
+        print("       caduco.")
         print("")
-        print("   ⚠ NINGUN perfil privado en %d. Es posible, pero es la misma" % len(filas))
-        print("     forma del bug viejo: ig_is_private salia 0 en las 5.620 filas.")
-        print("     Confirma a mano abriendo dos o tres perfiles.")
+        print("       Donde se arregla: QUERY_HASH_TIMELINE en")
+        print("       instagram/extraccion.py. Se saca del DevTools del navegador")
+        print("       mirando la peticion a /graphql/query/ al hacer scroll en un")
+        print("       perfil.")
+        print("")
+        print("       Los crudos NO se pierden: estan en disco y se re-parsean")
+        print("       gratis cuando el hash este bien. Pero hay que volver a")
+        print("       raspar, porque los posts 13 a 30 nunca llegaron.")
+    elif exactamente_doce and legibles:
+        print("   !! %d de %d perfiles legibles trajeron exactamente %d posts."
+              % (exactamente_doce, len(legibles), POSTS_PRIMERA_PAGINA))
+        print("     Puede ser coincidencia, o el hash fallando de forma")
+        print("     intermitente. Revisa los `errores` de esos crudos.")
+    elif legibles:
+        print("   OK: la paginacion corrio. Conteos entre %d y %d."
+              % (min(conteos), max(conteos)))
 
-    print("")
-    print("2 · CAPTIONS REALES · los tres primeros de cada perfil")
-    for nombre, crudo, fila in filas[:6]:
+    if truncadas:
         print("")
-        print("   --- %s · @%s · %s ---"
-              % (nombre, fila.get("handle"), fila.get("estado_perfil")))
-        posts = (crudo.get("posts") or [])[:3]
-        if not posts:
-            print("      (sin posts: %s)" % (crudo.get("estado_evidencia") or "?"))
-        for p in posts:
+        print("   %d perfiles quedaron con paginacion_truncada = true." % truncadas)
+        print("   Su captions_es_ratio esta en null a proposito: un ratio sobre")
+        print("   una muestra truncada no es una medicion peor, es otra cosa.")
+        for nom, c, f in filas:
+            if f.get("paginacion_truncada") is True:
+                print("      %-30s %s" % (nom[:30], c.get("motivo_truncamiento")))
+
+    # errores de paginacion declarados en el crudo
+    con_error_pag = [(nom, e) for nom, c, _ in filas
+                     for e in (c.get("errores") or []) if "paginacion" in e.lower()]
+    if con_error_pag:
+        print("")
+        print("   Errores de paginacion registrados:")
+        for nom, e in con_error_pag[:6]:
+            print("      %-26s %s" % (nom[:26], e[:110]))
+
+    # ══ 2 · LOS CAPTIONS SON REALES ═══════════════════════════════════════════
+    print("")
+    print("2 · ¿LOS CAPTIONS SON EL TEXTO REAL? · leelos contra la pantalla")
+    print("-" * 78)
+    if not legibles:
+        print("   (ningun perfil publico leido: nada que comparar)")
+    for nom, crudo, fila in legibles[:8]:
+        print("")
+        print("   --- @%s · %s · %d posts ---"
+              % (fila.get("handle"), nom[:30], len(crudo.get("posts") or [])))
+        print("   https://www.instagram.com/%s/" % (fila.get("handle") or ""))
+        for p in (crudo.get("posts") or [])[:3]:
             caption = re.sub(r"\s+", " ", p.get("caption") or "").strip()
             alt = re.sub(r"\s+", " ", p.get("accesibilidad_alt") or "").strip()
             print("      caption: %s" % (caption[:110] or "(vacio)"))
             if alt:
                 print("      alt    : %s" % alt[:110])
-                print("               ^ si el caption se parece a esto, el parser")
-                print("                 esta leyendo el alt-text. PARAR.")
+        print("      ^ abri el enlace y compara. Si el caption se parece al alt,")
+        print("        el parser esta leyendo el alt-text. PARAR.")
 
+    # ══ 3 · LOS PRIVADOS ══════════════════════════════════════════════════════
     print("")
-    print("3 · RATIO DE ESPAÑOL")
+    print("3 · ¿ALGUN PRIVADO QUEDO MARCADO COMO PRIVADO?")
+    print("-" * 78)
+    estados: dict[str, int] = {}
+    for _, _, f in filas:
+        e = f.get("estado_perfil") or "?"
+        estados[e] = estados.get(e, 0) + 1
+    for e, n_e in sorted(estados.items()):
+        print("   %-16s %d" % (e, n_e))
+
+    privados = [(nom, f) for nom, _, f in filas
+                if f.get("estado_perfil") == "privado"]
+    print("")
+    if privados:
+        print("   OK: %d marcados como privados." % len(privados))
+        for nom, f in privados[:5]:
+            print("      @%-24s captions_es_ratio=%r (tiene que estar vacio)"
+                  % (f.get("handle"), f.get("captions_es_ratio")))
+    else:
+        print("   !! NINGUN perfil privado en %d." % len(filas))
+        print("     Es posible en una muestra chica, pero es la misma forma del")
+        print("     bug viejo: ig_is_private salia 0 en las 5.620 filas.")
+        print("     Abri tres o cuatro de estos perfiles y confirma que de verdad")
+        print("     son publicos.")
+
+    # ══ 4 · EL RATIO DE ESPAÑOL ═══════════════════════════════════════════════
+    print("")
+    print("4 · ¿EL RATIO DE ESPAÑOL TIENE SENTIDO?")
+    print("-" * 78)
+    ratios = [f["captions_es_ratio"] for _, _, f in filas
+              if f.get("captions_es_ratio") is not None]
+    sin_ratio_por_truncar = truncadas
+
     if ratios:
         media = statistics.fmean(ratios)
         print("   filas con ratio: %d de %d" % (len(ratios), len(filas)))
+        if sin_ratio_por_truncar:
+            print("   (%d sin ratio por muestra truncada, no por falta de español)"
+                  % sin_ratio_por_truncar)
         print("   media   : %.1f%%" % (media * 100))
         print("   mediana : %.1f%%" % (statistics.median(ratios) * 100))
         print("")
+        for nom, _, f in filas:
+            if f.get("captions_es_ratio") is not None:
+                print("      @%-24s %5.1f%%  sobre %s captions"
+                      % (f.get("handle"), f["captions_es_ratio"] * 100,
+                         f.get("captions_n")))
+        print("")
         if media <= 0.06:
-            print("   ⚠⚠ DETENERSE. La media es %.1f%%, cerca del 3,29%% que daba" % (media * 100))
-            print("      el analisis por alt-text. Antes de lanzar sobre los 1.000:")
-            print("      abre tres perfiles en el navegador y compara sus captions")
-            print("      con lo que hay en ig_raw/.")
+            print("   !!! DETENERSE. La media es %.1f%%, la vecindad del 3,29%% que"
+                  % (media * 100))
+            print("      daba el analisis por alt-text. Antes de lanzar el lote:")
+            print("      abri tres perfiles y compara sus captions con ig_raw/.")
         else:
-            print("   La media NO esta cerca del 3%%, asi que el detector esta")
-            print("   viendo texto real. Igual conviene abrir dos perfiles y")
-            print("   comparar contra la pantalla.")
+            print("   La media NO ronda el 3%, asi que el detector esta viendo")
+            print("   texto real. Igual conviene abrir dos perfiles y comparar.")
     else:
-        print("   ninguna fila tiene ratio. Revisa el estado de los perfiles.")
+        print("   Ninguna fila tiene ratio.")
+        if sin_ratio_por_truncar:
+            print("   Motivo: %d con muestra truncada. Arregla la paginacion (1)"
+                  % sin_ratio_por_truncar)
+            print("   antes de sacar conclusiones de idioma.")
+        else:
+            print("   Revisa los estados de perfil en (3).")
+
+    # ══ extra · S6 y S8 ═══════════════════════════════════════════════════════
+    print("")
+    print("EXTRA · S6 y S8, las dos categorias que estaban vacias")
+    print("-" * 78)
+    con_lender = [f for _, _, f in filas if f.get("menciona_lender")]
+    con_preg = [f for _, _, f in filas
+                if (f.get("comentarios_pregunta_calificacion") or 0) > 0]
+    print("   con cuenta hipotecaria etiquetada (S6): %d de %d"
+          % (len(con_lender), len(filas)))
+    for f in con_lender[:6]:
+        print("      @%-24s %s" % (f.get("handle"),
+                                   f.get("cuentas_hipotecarias_etiquetadas")))
+    print("   con preguntas de calificacion (S8): %d de %d"
+          % (len(con_preg), len(filas)))
+    for f in con_preg[:6]:
+        print("      @%-24s %d preguntas sobre %s comentarios"
+              % (f.get("handle"), f.get("comentarios_pregunta_calificacion"),
+                 f.get("comentarios_n")))
+
+    # ══ veredicto ═════════════════════════════════════════════════════════════
+    hashes_caducados = bool(legibles) and exactamente_doce == len(legibles)
+    sospecha_alt = bool(ratios) and statistics.fmean(ratios) <= 0.06
+    parar = hashes_caducados or sospecha_alt
 
     print("")
-    print("4 · S6 y S8 · las dos categorias que estaban vacias")
-    con_lender = [f for _, _, f in filas if f.get("menciona_lender")]
-    con_preg = [f for _, _, f in filas if (f.get("comentarios_pregunta_calificacion") or 0) > 0]
-    print("   con cuenta hipotecaria etiquetada: %d de %d" % (len(con_lender), len(filas)))
-    for f in con_lender[:5]:
-        print("      @%s -> %s" % (f.get("handle"), f.get("cuentas_hipotecarias_etiquetadas")))
-    print("   con preguntas de calificacion en comentarios: %d de %d"
-          % (len(con_preg), len(filas)))
-    for f in con_preg[:5]:
-        print("      @%s -> %d preguntas"
-              % (f.get("handle"), f.get("comentarios_pregunta_calificacion")))
+    print("=" * 78)
+    if parar:
+        print("VEREDICTO: NO LANZAR EL LOTE")
+        if hashes_caducados:
+            print("  · la paginacion no corre: query_hash caducado")
+        if sospecha_alt:
+            print("  · el ratio de español ronda el 3%: revisar la fuente del texto")
+    else:
+        print("VEREDICTO: el piloto no muestra los dos fallos conocidos.")
+        print("  Falta lo que solo se puede hacer a mano: abrir tres perfiles y")
+        print("  comparar sus captions contra la pantalla.")
+    print("=" * 78)
 
     return {
         "perfiles": len(filas),
+        "publicos_leidos": len(legibles),
+        "posts_por_perfil": conteos,
+        "exactamente_doce": exactamente_doce,
+        "hashes_caducados": hashes_caducados,
+        "paginacion_truncada": truncadas,
         "por_estado": estados,
+        "privados": len(privados),
         "captions_es_ratio_media": statistics.fmean(ratios) if ratios else None,
-        "sospecha_alt_text": bool(ratios) and statistics.fmean(ratios) <= 0.06,
+        "sospecha_alt_text": sospecha_alt,
+        "parar": parar,
     }
 
 
@@ -1654,7 +2014,10 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--parsear", action="store_true",
                     help="pasada 2: crudo -> ig_signals.csv")
     ap.add_argument("--piloto", type=int, metavar="N", default=None,
-                    help="pasada 1 sobre N perfiles (el brief pide 20)")
+                    help="pasada 1 sobre los N primeros del Top 300 (pedido: 20)")
+    ap.add_argument("--solo-top300", action="store_true",
+                    help="recorta el objetivo a la hoja Top 300 "
+                         "(implicito en --piloto)")
     ap.add_argument("--revisar-piloto", action="store_true",
                     help="imprime la revision a mano del piloto")
     ap.add_argument("--limite", type=int, default=None)
@@ -1686,7 +2049,10 @@ def _main(argv: list[str] | None = None) -> int:
             return 0 if iniciar_sesion_instagram(p) else 1
 
     if args.objetivo:
-        _, informe = cargar_objetivo(excluir_descartados=args.excluir_descartados)
+        _, informe = cargar_objetivo(
+            excluir_descartados=args.excluir_descartados,
+            solo_top300=args.solo_top300,
+        )
         print(json.dumps(informe, ensure_ascii=False, indent=2, default=str))
         return 0
 
@@ -1696,10 +2062,13 @@ def _main(argv: list[str] | None = None) -> int:
 
     if args.piloto is not None or args.lote:
         n = args.piloto if args.piloto is not None else args.limite
+        # El piloto sale del Top 300 por definicion: son los de mayor SCORE
+        # ACCION, o sea los perfiles donde de verdad vamos a mirar los captions.
         resumen = correr_lote(
             limite=n,
             reanudar=not args.desde_cero,
             excluir_descartados=args.excluir_descartados,
+            solo_top300=args.solo_top300 or args.piloto is not None,
             headless=not args.con_ventana,
             con_comentarios=not args.sin_comentarios,
         )

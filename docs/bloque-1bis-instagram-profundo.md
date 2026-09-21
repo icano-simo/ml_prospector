@@ -264,29 +264,178 @@ el veredicto de la metodología y TIER es el score viejo.
 
 ---
 
-## El piloto de 20, antes de los 1.000
+## Muestra truncada · un ratio truncado no es un ratio peor
+
+Si el perfil declara N publicaciones y se recuperaron **menos del 60% de las
+solicitadas sin que haya llegado el fin de la paginación**, se marca
+`paginacion_truncada = true` y **`captions_es_ratio` va a null**.
+
+La distinción entre «no habla español» y «no lo leímos» ya costó 1.075 perfiles
+una vez. Un ratio calculado sobre una muestra truncada no es una medición peor:
+es otra cosa.
+
+### Cómo se decide
+
+`_evaluar_truncamiento()` en `extraccion.py` escribe cinco campos **en el
+crudo**, porque son hechos de la captura y no derivaciones:
+
+```
+posts_solicitados            30
+posts_recuperados            12
+n_publicaciones_declaradas   340
+posts_esperados              30      <- min(solicitados, declaradas)
+fin_de_paginacion            False
+paginacion_truncada          True
+motivo_truncamiento          "se recuperaron 12 de 30 esperados (40%,
+                              umbral 60%) y la paginacion no llego al final.
+                              El perfil declara 340 publicaciones."
+```
+
+Dos decisiones que evitan falsos positivos:
+
+**`posts_esperados = min(solicitados, declaradas)`.** Pedirle 30 posts a quien
+tiene 8 no es un truncamiento: es un perfil chico. Si declara 8 y trajimos 8 con
+`fin_de_paginacion = true`, la muestra está **completa**, no al 27%.
+
+**`fin_de_paginacion` gana sobre el umbral.** Si el timeline se agotó, no hay
+nada truncado por definición, cualquiera sea el conteo.
+
+Y `fin_de_paginacion` distingue dos cosas que antes se confundían: *«no hay más
+posts»* de *«no pudimos seguir pidiendo»*. `_mas_posts_por_json()` ahora devuelve
+`(posts, llego_al_final, fallo)` — y cuando el endpoint GraphQL no responde,
+devuelve `False` y deja el motivo en `errores`, en vez de cortar el bucle en
+silencio como si se hubiera acabado el timeline.
+
+### Qué se anula y qué no
+
+| campo | con muestra truncada |
+|---|---|
+| `captions_es_ratio` | **null** |
+| `captions_n` | **se conserva** — es la evidencia de por qué el ratio está vacío |
+| `paginacion_truncada` | `true` |
+| `estado_perfil` | sigue siendo `publico_leido`: el perfil SÍ se leyó, incompleto |
+
+En un perfil privado o bloqueado, `paginacion_truncada` es **null**, no `false`:
+no hubo timeline que truncar, y el estado ya dice qué pasó.
+
+> **Lo que NO hice, y es una decisión tuya.** El mismo argumento aplica a
+> `comentarios_es_ratio` —los comentarios vienen de esos mismos posts truncados—
+> y a `hueco_max_dias`, que sobre una ventana recortada **subestima** los huecos.
+> El pedido nombraba `captions_es_ratio`, así que anulé ese y nada más. Cada uno
+> de los otros es una línea en `parsear_crudo`.
+
+---
+
+## El piloto de 20 · desde el Top 300
 
 ```bash
-python -m instagram.finder --iniciar-sesion          # una sola vez
+python -m instagram.finder --iniciar-sesion              # una sola vez
+python -m instagram.finder --objetivo --solo-top300      # ver la lista
 python -m instagram.finder --piloto 20 --con-ventana
 python -m instagram.finder --parsear
 python -m instagram.finder --revisar-piloto
 ```
 
-`revisar_piloto()` no deja las tres preguntas del brief a criterio de quien
-mire: las imprime.
+`--piloto` implica `--solo-top300`: la hoja está ordenada por **SCORE ACCIÓN
+SEPT descendente**, así que los primeros 20 son los mejores prospectos, que es
+donde tiene sentido mirar los captions contra la pantalla.
 
-1. **¿los captions son los reales?** Imprime los tres primeros captions de cada
-   perfil **junto al `accessibility_caption`** de Meta, con la advertencia: *«si
-   el caption se parece a esto, el parser está leyendo el alt-text. PARAR»*.
-2. **¿el ratio de español tiene sentido?** Imprime media y mediana, y si la
-   media es **≤ 6%** escribe `⚠⚠ DETENERSE`, porque es la vecindad del 3,29% que
-   daba el alt-text.
-3. **¿los privados aparecen como privados?** Si no hay **ningún** privado en 20,
-   avisa que es la misma forma del bug viejo (`ig_is_private` en 0 en las 5.620
-   filas) y pide confirmar a mano.
+### El cruce con Top 300 tuvo un bug que vale contar
 
-Y de paso reporta S6 y S8, que son las dos categorías que estaban vacías.
+La hoja `Top 300` **no tiene columna de handle**, solo `IG url`. Así que hay que
+cruzarla con `Realtors PACS` por email, con el nombre como respaldo.
+
+El primer cruce dio **301 filas sobre 300**, y con un `TIER D` adentro — cuando
+la hoja es solo Tier A y B. Ese `TIER D` fue la señal: el cruce por nombre
+estaba matcheando dos veces la misma fila.
+
+Hay **dos ANDREA SAAVEDRA** en el libro. La del Top 300 cruzaba por email; la
+otra, Tier D, cruzaba por nombre contra la misma fila.
+
+Ahora el cruce es **uno a uno**: primero email, que es la llave confiable;
+después nombre, solo para las filas que nadie reclamó. Y los descartes quedan
+nombrados en la salida:
+
+```
+"descartados_por_nombre_ambiguo": [
+  "ANDREA SAAVEDRA (D - BAJO AJUSTE) coincide por nombre con el puesto 217,
+   que ya reclamo otro registro por email"
+]
+```
+
+Resultado: **300 exactas, 0 sin cruzar, 168 Tier A + 132 Tier B** — idéntico a
+la hoja.
+
+### Las cuatro preguntas, en tu orden
+
+`revisar_piloto()` las imprime, y el orden importa: **la 1 invalida a las otras
+tres.**
+
+**1 · ¿Cuántos posts llegaron por perfil?** Tabla por perfil con posts
+recuperados, publicaciones declaradas, `fin_de_paginacion` y `paginacion_truncada`.
+Y el chequeo que decide:
+
+```
+!!! DETENERSE. Los 4 perfiles legibles trajeron EXACTAMENTE 12
+    posts, que es lo que devuelve la primera pagina del JSON del
+    perfil. La paginacion NO corrio: el query_hash del timeline
+    caduco.
+
+    Donde se arregla: QUERY_HASH_TIMELINE en instagram/extraccion.py.
+    Se saca del DevTools del navegador mirando la peticion a
+    /graphql/query/ al hacer scroll en un perfil.
+
+    Los crudos NO se pierden: estan en disco y se re-parsean gratis
+    cuando el hash este bien. Pero hay que volver a raspar, porque
+    los posts 13 a 30 nunca llegaron.
+```
+
+**2 · ¿Los captions son el texto real?** Los tres primeros captions de cada
+perfil, **junto al `accessibility_caption` de Meta** para comparar, y el enlace
+`instagram.com/handle/` para abrir al lado.
+
+**3 · ¿Algún privado quedó marcado como privado?** Si hay, los lista con su
+`captions_es_ratio` para confirmar que está vacío. Si no hay **ninguno**, avisa
+que es la misma forma del bug viejo y pide confirmar a mano.
+
+**4 · ¿El ratio de español tiene sentido?** Media, mediana y el ratio por
+perfil con su denominador. Si la media es **≤ 6%**, `DETENERSE`.
+
+Y cierra con un veredicto explícito.
+
+### Probado en los dos escenarios que deciden
+
+Corrí la revisión sobre dos conjuntos sintéticos:
+
+| | posts/perfil | truncadas | privados | ratio | veredicto |
+|---|---|---|---|---|---|
+| **A** hash caducado | 12 clavados | 4 de 4 | 0 | `None` | **NO LANZAR** |
+| **B** paginación corre | 28 | 0 | 1 | 71,4% | sigue |
+
+Lo que hace bien el orden, en el escenario A:
+
+```
+4 · ¿EL RATIO DE ESPAÑOL TIENE SENTIDO?
+   Ninguna fila tiene ratio.
+   Motivo: 4 con muestra truncada. Arregla la paginacion (1)
+   antes de sacar conclusiones de idioma.
+```
+
+En el escenario B, el privado sale bien marcado:
+
+```
+   OK: 1 marcados como privados.
+      @xochiltherealtor    captions_es_ratio=None (tiene que estar vacio)
+```
+
+Y de paso la revisión reporta S6 y S8, que son las dos categorías que estaban
+vacías.
+
+> **Nota operativa:** los glifos `⚠` se cambiaron por `!!!`. La consola de
+> Windows usa cp1252 y no puede imprimirlos: un `UnicodeEncodeError` corta la
+> salida **justo donde estaba la advertencia**. Hay un verificador en el
+> scratchpad que revisa que ninguna línea emitida por `print()` o `logger` tenga
+> caracteres fuera de cp1252.
 
 ---
 
@@ -315,6 +464,7 @@ app que lo consume.
 | `comentarios_pregunta_calificacion` | **cuántos** comentarios de terceros preguntan por enganche, crédito, calificación, ITIN o documentos |
 | `menciona_itin/dpa/credito/va/fha/primera_casa` | **conteo de posts** que lo mencionan (0 si ninguno, vacío si no se leyó) |
 | `cuentas_hipotecarias_etiquetadas` | todas, con su frecuencia: `@maria.loanofficer (5)` |
+| `paginacion_truncada` | `true` si la muestra quedó incompleta. Va **al final** para no mover el orden que ya consume la app |
 
 > **Una ambigüedad que resolví y conviene que revises.** El brief define
 > `menciona_lender` como un nombre y `comentarios_pregunta_calificacion` como un
@@ -392,7 +542,7 @@ forma de distinguir «el detector anda» de «el detector devuelve algo».
 
 ## Pruebas
 
-**36 nuevas, 182 en total, 0 fallas.** Sin navegador, sin red, sin `pandas`.
+**54 nuevas, 200 en total, 0 fallas.** Sin navegador, sin red, sin `pandas`.
 
 ```bash
 python tests/test_instagram_profundo.py
@@ -410,6 +560,21 @@ Las que vale la pena conocer por nombre:
 - `test_el_crudo_guardado_conserva_el_objetivo_y_no_deriva_nada`
 - `test_ida_y_vuelta_por_disco_con_bom_y_comillas`
 - `test_los_cinco_estados_del_brief_y_nada_mas`
+
+Y las del truncamiento y el Top 300:
+
+- `test_doce_de_treinta_con_mas_paginas_es_truncada` — el caso del hash caducado
+- `test_dieciocho_de_treinta_alcanza_el_60_por_ciento` — el borde exacto
+- `test_diecisiete_de_treinta_no_alcanza` — el otro lado del borde
+- `test_perfil_chico_agotado_no_es_truncamiento` — 8 de 8 es completo
+- `test_perfil_chico_sin_llegar_al_final_se_mide_contra_lo_declarado` — 7 de 10, no de 30
+- `test_fin_de_paginacion_gana_sobre_el_umbral`
+- `test_privado_no_tiene_truncamiento_sino_estado` — `null`, no `false`
+- `test_el_piloto_detecta_los_doce_clavados`
+- `test_el_piloto_no_alarma_cuando_la_paginacion_corre`
+- `test_el_piloto_alarma_si_el_ratio_ronda_el_tres_por_ciento`
+- `test_el_cruce_con_top300_es_uno_a_uno` — el que caza las 301 sobre 300
+- `test_top300_conserva_el_orden_de_la_hoja`
 
 ---
 
@@ -440,11 +605,14 @@ rechazaba `ig_signals.csv` por sus columnas `email` y `nombre`.
 2. **Los endpoints internos de Instagram son la pieza frágil y no verificada.**
    `/api/v1/users/web_profile_info/` es estable en la práctica, pero los dos
    `query_hash` de GraphQL —paginación del timeline y comentarios— **caducan sin
-   aviso**. Si eso pasa: los primeros ~12 posts siguen llegando por el JSON del
-   perfil, la paginación se corta en silencio y los comentarios caen al respaldo
-   por DOM. **El piloto de 20 tiene que confirmar cuántos posts y cuántos
-   comentarios llegan de verdad** antes de lanzar las diez horas. Es lo primero
-   que hay que mirar.
+   aviso**.
+
+   Esto ya **no** se corta en silencio: la paginación devuelve
+   `fin_de_paginacion = False` con el motivo en `errores`, el perfil queda con
+   `paginacion_truncada = true`, su `captions_es_ratio` va a null, y
+   `--revisar-piloto` grita `DETENERSE` con la ubicación del arreglo. Pero el
+   hash sigue siendo algo que **hay que actualizar a mano** cuando caduque, y
+   **el piloto de 20 es lo que lo detecta.** Es lo primero que hay que mirar.
 
 3. **`tipo_post_reel_pct` no distingue reel de video.** El JSON de Instagram
    marca los dos como `GraphVideo`; no hay un campo que los separe. Todo video
