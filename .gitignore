@@ -27,6 +27,15 @@ data_inputIA/
 # Cache crudo del API de Census (regenerable, 26 MB)
 latino_re_engine/data/raw/
 
+# Referencia de FIPS y crosswalks descargados (regenerables con --descargar)
+geo/cache/
+hmda/cache/
+hmda/salida/
+
+# Capturas de Model Match (traen contactos de agentes)
+docs/capturas/
+modelmatch/capturas/
+
 # Virtual environments
 .venv/
 venv/
