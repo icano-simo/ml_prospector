@@ -168,6 +168,56 @@ def extraer_conteos_de_meta(contenido_meta: str | None) -> tuple[int | None, int
     return buscar("followers"), buscar("following"), buscar(r"posts?")
 
 
+def extraer_nombre_de_meta(contenido_meta: str | None) -> str | None:
+    """El nombre visible sale del meta description, no del <title>.
+
+    `1,351 Followers, 1,247 Following, 23 Posts - Javier Hernandez
+     (@javierhernandezrealtor) on Instagram: "..."`  ->  `Javier Hernandez`
+
+    El <title> no sirve: en `domcontentloaded` todavia dice solo "Instagram" y
+    recien se completa cuando hidrata. Medido: `nombre_visible` salia None en
+    todos los perfiles, y eso debilita la verificacion de handle -- que es
+    justamente lo que compara el nombre del perfil con el del libro.
+    """
+    if not contenido_meta:
+        return None
+    m = re.search(r"-\s*(.+?)\s*\(@[A-Za-z0-9_.]+\)\s*on Instagram", contenido_meta)
+    if m:
+        nombre = m.group(1).strip()
+        return nombre or None
+    return None
+
+
+#: Categorias que Instagram muestra en una cuenta profesional. Se busca la
+#: linea exacta dentro del bloque del header, que trae mucho mas que eso.
+_CATEGORIAS_CONOCIDAS = (
+    "Real Estate Agent", "Real Estate", "Real Estate Service",
+    "Entrepreneur", "Public Figure", "Digital Creator", "Personal Blog",
+    "Local Service", "Financial Service", "Mortgage Brokers",
+    "Agente inmobiliario", "Bienes raices", "Empresario",
+    "Figura publica", "Creador digital", "Blog personal",
+)
+
+
+def extraer_categoria(texto_header: str | None) -> str | None:
+    """La categoria declarada, de una linea del header.
+
+    El selector del header devuelve el bloque entero -- nombre, conteos, bio y
+    enlace, todo junto. Sin este filtro, `categoria_declarada` quedaba con
+    doscientos caracteres de texto pegado.
+    """
+    if not texto_header:
+        return None
+    lineas = [ln.strip() for ln in str(texto_header).splitlines() if ln.strip()]
+    for linea in lineas:
+        if len(linea) > 40:
+            continue
+        for categoria in _CATEGORIAS_CONOCIDAS:
+            if linea.lower() == categoria.lower():
+                return linea
+    return None
+
+
 def extraer_bio_de_meta(contenido_meta: str | None) -> str | None:
     """La bio va despues de 'on Instagram:' en el meta description."""
     if not contenido_meta:
@@ -666,6 +716,374 @@ def _perfil_crudo_de_json(usuario: dict) -> dict:
     }
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# DOM CON SESION · la via que si funciona
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Medido el 2026-09-21 con sesion iniciada: el endpoint interno
+# /api/v1/users/web_profile_info/ devuelve **HTTP 429** de forma sostenida para
+# una cuenta nueva, incluso tras esperar y calentar la sesion. El cuerpo del 429
+# es la pagina HTML con `class="logged-in"`, asi que la sesion esta bien: lo que
+# esta limitado es el endpoint.
+#
+# Pero el DOM con sesion **si** da lo que hace falta, y esto tambien es medido
+# sobre @javierhernandezrealtor:
+#
+#   meta[name=description]        seguidores, seguidos, n_posts, nombre, BIO
+#   og:description del post       caption completo, likes, n_comentarios, AUTOR
+#   time[datetime]                fecha exacta (2023-05-20T14:55:22.000Z)
+#   el propio caption             @menciones
+#   la pagina del post            geotag ("Chicago, Illinois")
+#   ancla en los botones "Reply"  los comentarios con su autor
+#
+# Lo unico que no se alcanza son las cuentas etiquetadas EN LA FOTO, que
+# requieren un clic sobre la imagen. Las @menciones del caption si, y son la via
+# principal de S6.
+
+#: Marcador de tiempo relativo que Instagram pone en cada comentario: "45w",
+#: "3d", "17h", "2m". Sirve para reconocer un bloque de comentario.
+_RE_HACE = re.compile(r"\b\d+\s*[smhdw]\b", re.IGNORECASE)
+
+#: Texto del boton que tiene TODO comentario. Es el ancla, y se usa por texto
+#: visible y no por clase CSS: las clases de Instagram son ofuscadas y cambian
+#: en cada deploy; "Reply" y "Responder" no.
+_TEXTOS_RESPONDER = ("reply", "responder")
+
+#: Enlace que es un perfil y nada mas: /usuario/
+_RE_ENLACE_PERFIL = re.compile(r"^/([A-Za-z0-9_.]{2,30})/$")
+
+
+def _autor_de_og(og: str) -> str | None:
+    """`154 likes, 29 comments - javierhernandezrealtor on May 20, 2023: "..."`
+
+    El autor es lo que permite descartar los posts que NO son del realtor. La
+    grilla del perfil trae enlaces a posts de otras cuentas -- medido: 2 de 23
+    en un perfil -- y sin esta comprobacion esos captions entrarian como si
+    fueran suyos.
+    """
+    if not og:
+        return None
+    m = re.search(r"-\s*([A-Za-z0-9_.]{2,30})\s+on\s+\w+\s+\d{1,2},\s*\d{4}", og)
+    return m.group(1).lower() if m else None
+
+
+def _caption_de_og(og: str) -> str | None:
+    """El caption va despues de `: "` y hasta el final."""
+    if not og:
+        return None
+    m = re.search(r':\s*["“](.*)["”]\s*$', og, re.DOTALL)
+    if m:
+        return m.group(1).strip() or None
+    idx = og.find(': "')
+    if idx != -1:
+        return og[idx + 3:].rstrip('"”').strip() or None
+    return None
+
+
+def _urls_de_posts_propios(page, handle: str, n_posts: int
+                           ) -> tuple[list[str], bool]:
+    """URLs de los posts DEL PERFIL, con scroll. Devuelve (urls, fin_del_grid).
+
+    Filtra por prefijo de ruta: un post propio es `/p/CODIGO/` o
+    `/handle/...`. Los `/otracuenta/reel/...` que Instagram mete al costado
+    quedan fuera.
+    """
+    esperado = handle.strip().lstrip("@").lower()
+    vistos: list[str] = []
+    ajenos = 0
+    sin_avance = 0
+
+    while len(vistos) < n_posts and sin_avance < 3:
+        antes = len(vistos)
+        try:
+            enlaces = page.query_selector_all("a[href*='/p/'], a[href*='/reel/']")
+        except Exception:  # noqa: BLE001
+            break
+        for a in enlaces:
+            href = a.get_attribute("href") or ""
+            if not href:
+                continue
+            ruta = href if href.startswith("/") else re.sub(
+                r"^https?://[^/]+", "", href
+            )
+            propio = (
+                ruta.startswith("/p/")
+                or ruta.startswith("/reel/")
+                or ruta.startswith("/%s/" % esperado)
+            )
+            if not propio:
+                ajenos += 1
+                continue
+            completo = "https://www.instagram.com" + ruta
+            if completo not in vistos:
+                vistos.append(completo)
+
+        if len(vistos) >= n_posts:
+            break
+        try:
+            page.evaluate("window.scrollBy(0, window.innerHeight * 1.6)")
+        except Exception:  # noqa: BLE001
+            break
+        pausa(PAUSA_TRAS_SCROLL)
+        sin_avance = sin_avance + 1 if len(vistos) == antes else 0
+
+    # Si el scroll dejo de traer posts nuevos tres veces, se agoto la grilla.
+    fin_del_grid = sin_avance >= 3 and len(vistos) < n_posts
+    if ajenos:
+        logger.debug("@{}: {} enlaces a posts de otras cuentas descartados",
+                     esperado, ajenos)
+    return vistos[:n_posts], fin_del_grid
+
+
+def _comentarios_dom(page, handle_agente: str, n: int) -> list[dict]:
+    """Comentarios del post, anclados en los botones "Reply"/"Responder".
+
+    Cada comentario de Instagram tiene ese boton. Se sube desde ahi hasta el
+    bloque que contiene el handle del autor y su texto, que es la unica forma
+    estable de identificarlo sin depender de clases ofuscadas.
+    """
+    try:
+        crudos = page.evaluate(
+            """(textos) => {
+              const esResponder = (e) => {
+                const t = (e.innerText || '').trim().toLowerCase();
+                return textos.includes(t);
+              };
+              const anclas = Array.from(
+                document.querySelectorAll("div[role='button'],button,span")
+              ).filter(esResponder);
+
+              const salida = [];
+              const vistos = new Set();
+              for (const a of anclas) {
+                let n = a, bloque = null;
+                for (let i = 0; i < 6 && n; i++) {
+                  n = n.parentElement;
+                  if (!n) break;
+                  const enlaces = Array.from(n.querySelectorAll("a[href^='/']"))
+                    .map(x => x.getAttribute('href') || '')
+                    .filter(h => /^\\/[A-Za-z0-9_.]{2,30}\\/$/.test(h));
+                  const t = (n.innerText || '').replace(/\\s+/g, ' ').trim();
+                  if (enlaces.length && t.length > 12) {
+                    bloque = {handle: enlaces[0], texto: t};
+                    break;
+                  }
+                }
+                if (!bloque) continue;
+                const clave = bloque.handle + '|' + bloque.texto.slice(0, 60);
+                if (vistos.has(clave)) continue;
+                vistos.add(clave);
+                salida.push(bloque);
+              }
+              return salida;
+            }""",
+            list(_TEXTOS_RESPONDER),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("no se pudieron leer comentarios por DOM: {}", exc)
+        return []
+
+    salida: list[dict] = []
+    for bruto in crudos:
+        autor = (bruto.get("handle") or "").strip("/").lower()
+        texto = bruto.get("texto") or ""
+        # El bloque viene como "autor 45w el texto 1 like Reply ...". Se quita
+        # el handle del principio, el marcador de tiempo y la cola de botones.
+        limpio = texto
+        if autor and limpio.lower().startswith(autor):
+            limpio = limpio[len(autor):]
+        limpio = _RE_HACE.sub(" ", limpio, count=1)
+        limpio = re.sub(
+            r"\b\d+\s*(?:likes?|me gusta)\b", " ", limpio, flags=re.IGNORECASE
+        )
+        for cola in ("View all", "Ver todas", "Ver las", "Reply", "Responder",
+                     "Hide replies", "Ocultar"):
+            idx = limpio.find(cola)
+            if idx > 0:
+                limpio = limpio[:idx]
+        limpio = re.sub(r"\s+", " ", limpio).strip(" ·-–—")
+        if not limpio:
+            continue
+        salida.append({
+            "id": None,
+            "texto": limpio,
+            "timestamp": None,
+            "autor_handle": autor or None,
+            "autor_verificado": None,
+            "likes": None,
+        })
+        if len(salida) >= n:
+            break
+    return salida
+
+
+def _leer_post_dom(page, url: str, handle_esperado: str) -> dict | None:
+    """Un post por DOM con sesion. None si no es del perfil esperado."""
+    codigo = _ir(page, url)
+    if codigo in (401, 403, 429):
+        logger.warning("bloqueo leyendo {} (HTTP {}): corto", url, codigo)
+        return {"__bloqueado__": True, "http": codigo}
+    pausa(PAUSA_ENTRE_POSTS)
+
+    og = _atributo(page, "meta[property='og:description']", "content") or ""
+    autor = _autor_de_og(og)
+    esperado = handle_esperado.strip().lstrip("@").lower()
+
+    if autor and autor != esperado:
+        # La grilla trae posts de otras cuentas. Este es el filtro que evita
+        # meter el caption de otra persona en la fila de nuestro realtor.
+        logger.debug("descarto {}: el autor es @{} y no @{}", url, autor, esperado)
+        return None
+
+    fecha_iso = _atributo(page, "time[datetime]", "datetime")
+    likes = comentarios = None
+    m = re.search(r"([\d,.]+[KkMm]?)\s*likes?", og, re.IGNORECASE)
+    if m:
+        likes = parsear_conteo(m.group(1))
+    m = re.search(r"([\d,.]+[KkMm]?)\s*comments?", og, re.IGNORECASE)
+    if m:
+        comentarios = parsear_conteo(m.group(1))
+
+    return {
+        "shortcode": url.rstrip("/").rsplit("/", 1)[-1] or None,
+        "id": None,
+        "caption": _caption_de_og(og),
+        "timestamp": None,
+        "fecha_iso": fecha_iso,
+        "typename": "GraphVideo" if "/reel/" in url else "GraphImage",
+        "es_video": "/reel/" in url,
+        "likes": likes,
+        "n_comentarios": comentarios,
+        "comentarios_deshabilitados": None,
+        "etiquetadas": [],
+        "ubicacion": {"nombre": _geotag(page)} if _geotag(page) else None,
+        "accesibilidad_alt": None,
+        "n_hijos": 0,
+        "autor_confirmado": autor,
+        "og_description": og,
+    }
+
+
+def capturar_por_dom_con_sesion(
+    page,
+    handle: str,
+    *,
+    n_posts: int = N_POSTS_CRUDO,
+    n_comentarios: int = N_COMENTARIOS_CRUDO,
+    con_comentarios: bool = True,
+) -> dict:
+    """Captura cruda por DOM, con sesion iniciada. La via que funciona hoy.
+
+    Cuesta una navegacion por post -- mas otra si se leen comentarios -- asi que
+    es mucho mas lenta que el JSON. Pero da caption real, fecha exacta, likes,
+    conteo de comentarios, autor verificado, @menciones, geotag y comentarios.
+    """
+    limpio = handle.strip().lstrip("@").rstrip("/")
+    crudo: dict = {
+        "esquema": "ig-crudo-v1",
+        "handle_pedido": limpio,
+        "capturado_en": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+        "via": "dom_con_sesion",
+        "estado_perfil": None,
+        "estado_evidencia": None,
+        "http_status": None,
+        "perfil": None,
+        "posts": [],
+        "comentarios_por_post": {},
+        "destino_enlace_bio": None,
+        "errores": [],
+        "posts_solicitados": n_posts,
+        "posts_recuperados": 0,
+        "fin_de_paginacion": None,
+        "paginacion_truncada": None,
+        "motivo_truncamiento": None,
+        "posts_ajenos_descartados": 0,
+    }
+
+    url_perfil = IG_BASE + limpio + "/"
+    codigo = _ir(page, url_perfil)
+    crudo["http_status"] = codigo
+    pausa(PAUSA_TRAS_SCROLL)
+
+    titulo = ""
+    cuerpo = ""
+    try:
+        titulo = page.title() or ""
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        cuerpo = page.inner_text("body") or ""
+    except Exception:  # noqa: BLE001
+        pass
+
+    meta = _atributo(page, "meta[name=description]", "content")
+    seguidores, siguiendo, n_declarados = extraer_conteos_de_meta(meta)
+
+    diag = diagnosticar(
+        handle=limpio, codigo_http=codigo, titulo=titulo, texto_body=cuerpo,
+        hay_meta_description=bool(meta),
+        n_articulos_con_posts=len(
+            page.query_selector_all("a[href*='/p/'], a[href*='/reel/']")
+            if codigo not in (401, 403, 429, 404) else []
+        ),
+    )
+    crudo["estado_perfil"] = diag.estado.value
+    crudo["estado_evidencia"] = diag.evidencia
+
+    crudo["perfil"] = {
+        "handle": limpio,
+        # El nombre sale del meta, no del <title>: en domcontentloaded el
+        # titulo todavia dice solo "Instagram".
+        "nombre_visible": (extraer_nombre_de_meta(meta)
+                           or _nombre_desde_titulo(titulo)),
+        "bio": extraer_bio_de_meta(meta),
+        "seguidores": seguidores,
+        "seguidos": siguiendo,
+        "n_publicaciones": n_declarados,
+        "enlace_bio": _link_de_bio(page),
+        "es_privado": diag.estado is EstadoPerfil.PRIVADO,
+        "es_cuenta_empresa": None,
+        "categoria_declarada": extraer_categoria(_texto(page, "header section")
+                                                 or _texto(page, "header")),
+        "titulos_destacadas": _titulos_de_destacadas(page),
+    }
+
+    if diag.estado is not EstadoPerfil.PUBLICO_LEIDO:
+        _evaluar_truncamiento(crudo, n_posts)
+        return crudo
+
+    urls, fin_del_grid = _urls_de_posts_propios(page, limpio, n_posts)
+    crudo["fin_de_paginacion"] = fin_del_grid
+
+    for url in urls:
+        post = _leer_post_dom(page, url, limpio)
+        if post is None:
+            crudo["posts_ajenos_descartados"] += 1
+            continue
+        if post.get("__bloqueado__"):
+            crudo["estado_perfil"] = EstadoPerfil.BLOQUEADO.value
+            crudo["estado_evidencia"] = (
+                "HTTP %s leyendo un post: se corta el perfil" % post.get("http")
+            )
+            crudo["errores"].append(
+                "bloqueo a mitad del perfil: los posts leidos hasta aca quedan, "
+                "pero la muestra esta incompleta"
+            )
+            break
+        crudo["posts"].append(post)
+
+        if con_comentarios and (post.get("n_comentarios") or 0) > 0:
+            shortcode = post.get("shortcode")
+            if shortcode:
+                crudo["comentarios_por_post"][shortcode] = _comentarios_dom(
+                    page, limpio, n_comentarios,
+                )
+        pausa(PAUSA_ENTRE_POSTS)
+
+    _evaluar_truncamiento(crudo, n_posts)
+    return crudo
+
+
 def capturar_crudo(
     page,
     handle: str,
@@ -674,6 +1092,7 @@ def capturar_crudo(
     n_comentarios: int = N_COMENTARIOS_CRUDO,
     con_comentarios: bool = True,
     resolver_enlace_bio: bool = True,
+    forzar_dom: bool = False,
 ) -> dict:
     """Captura CRUDA de un perfil. No deriva nada.
 
@@ -716,6 +1135,12 @@ def capturar_crudo(
         crudo["estado_evidencia"] = "no habia handle candidato"
         return crudo
 
+    if forzar_dom:
+        return capturar_por_dom_con_sesion(
+            page, limpio, n_posts=n_posts, n_comentarios=n_comentarios,
+            con_comentarios=con_comentarios,
+        )
+
     # ── 1 · JSON del perfil ───────────────────────────────────────────────────
     datos = _pedir_json(page, API_PERFIL % limpio)
     usuario = None
@@ -743,47 +1168,17 @@ def capturar_crudo(
                 % len(crudo["posts"])
             )
     else:
-        # ── 2 · Respaldo por DOM ──────────────────────────────────────────────
-        perfil_dom = leer_perfil(page, limpio, con_comentarios=False)
-        crudo["via"] = "dom"
-        crudo["http_status"] = perfil_dom.diagnostico.codigo_http
-        crudo["estado_perfil"] = perfil_dom.diagnostico.estado.value
-        crudo["estado_evidencia"] = perfil_dom.diagnostico.evidencia
-        crudo["perfil"] = {
-            "handle": perfil_dom.handle,
-            "nombre_visible": perfil_dom.nombre_perfil,
-            "bio": perfil_dom.bio,
-            "seguidores": perfil_dom.seguidores,
-            "seguidos": perfil_dom.siguiendo,
-            "n_publicaciones": perfil_dom.n_posts_declarados,
-            "enlace_bio": perfil_dom.link_de_bio,
-            "titulos_destacadas": list(perfil_dom.titulos_de_destacadas),
-            "categoria_declarada": perfil_dom.categoria_declarada,
-            "es_privado": None,
-        }
-        crudo["posts"] = [
-            {
-                "shortcode": (p.url or "").rstrip("/").rsplit("/", 1)[-1] or None,
-                "caption": p.caption or None,
-                "timestamp": None,
-                "fecha_iso": p.fecha.isoformat() if p.fecha else None,
-                "typename": p.tipo.value,
-                "likes": p.likes,
-                "n_comentarios": p.n_comentarios,
-                "etiquetadas": [],
-                "ubicacion": {"nombre": p.geotag} if p.geotag else None,
-            }
-            for p in perfil_dom.posts[:n_posts]
-        ]
-        crudo["errores"].append(
-            "el endpoint JSON no respondio; se uso el DOM, que trae menos "
-            "campos (sin cuentas etiquetadas ni timestamp exacto)"
+        # ── 2 · El JSON no respondio: se va por DOM con sesion ────────────────
+        #
+        # No es un "respaldo pobre": medido, el DOM con sesion da caption real,
+        # fecha exacta, likes, autor verificado, geotag y comentarios. Lo unico
+        # que pierde son las cuentas etiquetadas EN LA FOTO.
+        logger.info("@{}: el endpoint JSON no respondio, voy por DOM con sesion",
+                    limpio)
+        return capturar_por_dom_con_sesion(
+            page, limpio, n_posts=n_posts, n_comentarios=n_comentarios,
+            con_comentarios=con_comentarios,
         )
-        # El scroll del DOM no puede afirmar "se agoto el timeline": deja de
-        # avanzar y no sabemos si es el final o si Instagram corto. Se declara
-        # como NO final, que es lo conservador: si se recuperaron pocos posts,
-        # la muestra queda marcada como truncada.
-        crudo["fin_de_paginacion"] = False
 
     # ── 3 · Mas posts por paginacion del JSON ────────────────────────────────
     if (crudo["via"] == "json"

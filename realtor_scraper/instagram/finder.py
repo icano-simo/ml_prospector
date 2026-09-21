@@ -1121,6 +1121,7 @@ def correr_lote(
     headless: bool = True,
     dir_crudo: Path | None = None,
     con_comentarios: bool = True,
+    n_posts: int = extraccion.N_POSTS_CRUDO,
     pausa_perfiles: tuple[float, float] = PAUSA_ENTRE_PERFILES_LOTE,
 ) -> dict:
     """Pasada 1: raspa y guarda el crudo. No deriva nada.
@@ -1169,9 +1170,16 @@ def correr_lote(
 
     logger.info("Objetivo: {} · ya hechos: {} · pendientes en esta corrida: {}",
                 len(objetivos), len(hechos), len(pendientes))
-    logger.info("Ritmo: {:.0f}-{:.0f} s por perfil -> ~{:.1f} h para los pendientes",
-                pausa_perfiles[0], pausa_perfiles[1],
-                len(pendientes) * sum(pausa_perfiles) / 2 / 3600)
+    # El costo real lo domina la lectura de posts, no la pausa entre perfiles.
+    # Medido por DOM con sesion: ~8,5 s por post, una navegacion cada uno.
+    seg_por_perfil = sum(pausa_perfiles) / 2 + n_posts * 8.5
+    logger.info(
+        "Ritmo: {} posts por perfil a ~8,5 s cada uno, mas {:.0f}-{:.0f} s "
+        "entre perfiles -> ~{:.0f} min por perfil, ~{:.1f} h para los {} "
+        "pendientes",
+        n_posts, pausa_perfiles[0], pausa_perfiles[1], seg_por_perfil / 60,
+        len(pendientes) * seg_por_perfil / 3600, len(pendientes),
+    )
 
     resumen = {
         "esquema": ESQUEMA_CSV,
@@ -1219,25 +1227,31 @@ def correr_lote(
             )
             return resumen
 
+        # El endpoint JSON es la via rapida, pero NO es la unica. Medido el
+        # 2026-09-21: para una cuenta nueva devuelve 429 de forma sostenida, y
+        # el DOM con sesion si da caption real, fecha exacta, likes, autor
+        # verificado, geotag y comentarios.
+        #
+        # Asi que si el endpoint no responde, el lote SIGUE por DOM y lo
+        # declara. No se detiene, pero tampoco se calla: la via queda escrita
+        # en cada crudo y en el manifiesto.
         api_ok, api_evidencia = confirmar_acceso_a_la_api(page)
         resumen["api"] = {"responde": api_ok, "evidencia": api_evidencia}
-        if not api_ok:
-            contexto.close()
-            resumen["detenido_por"] = "api_no_responde"
-            resumen["terminado_en"] = dt.datetime.now().isoformat(timespec="seconds")
-            logger.error(
-                "Las cookies de sesion estan, pero el endpoint JSON no "
-                "responde. {}\n\n"
-                "Suele ser un desafio pendiente en la cuenta. Abri Instagram a "
-                "mano con esa cuenta, resolvelo, y volve a correr.\n\n"
-                "ME DETENGO en vez de seguir: sin el endpoint, cada perfil cae "
-                "al respaldo por DOM y el lote sale sin cuentas etiquetadas ni "
-                "fechas exactas, pero sin que nada falle.\n", api_evidencia,
-            )
-            return resumen
+        resumen["via"] = "json" if api_ok else "dom_con_sesion"
 
         logger.info("Sesion OK: {}", evidencia)
-        logger.info("API OK: {}", api_evidencia)
+        if api_ok:
+            logger.info("API OK: {}", api_evidencia)
+        else:
+            logger.warning(
+                "El endpoint JSON no responde: {}\n"
+                "SIGO POR DOM CON SESION, que da caption, fecha, likes, autor "
+                "verificado, geotag y comentarios. Lo unico que se pierde son "
+                "las cuentas etiquetadas EN LA FOTO; las @menciones del caption "
+                "si se leen, y son la via principal de S6.\n"
+                "Cuesta una navegacion por post, asi que es mas lento.",
+                api_evidencia,
+            )
 
         for i, objetivo in enumerate(pendientes, start=1):
             handle = (objetivo.handle_del_libro or "").strip().lstrip("@")
@@ -1256,6 +1270,10 @@ def correr_lote(
             if handle:
                 crudo = extraccion.capturar_crudo(
                     page, handle, con_comentarios=con_comentarios,
+                    n_posts=n_posts,
+                    # Si ya sabemos que el endpoint no responde, no se lo
+                    # golpea una vez por perfil: se va directo por DOM.
+                    forzar_dom=not api_ok,
                 )
             else:
                 crudo = {
@@ -2056,6 +2074,10 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--excluir-descartados", action="store_true",
                     help="saca del objetivo a los DESCARTADO y RECLASIFICADO")
     ap.add_argument("--sin-comentarios", action="store_true")
+    ap.add_argument("--posts", type=int, default=extraccion.N_POSTS_CRUDO,
+                    metavar="N",
+                    help="posts por perfil (el brief pide 15-30; por DOM cada "
+                         "uno cuesta ~8,5 s)")
     ap.add_argument("--con-ventana", action="store_true",
                     help="no headless: obligatorio en el piloto")
     args = ap.parse_args(argv)
@@ -2101,6 +2123,7 @@ def _main(argv: list[str] | None = None) -> int:
             solo_top300=args.solo_top300 or args.piloto is not None,
             headless=not args.con_ventana,
             con_comentarios=not args.sin_comentarios,
+            n_posts=args.posts,
         )
         print(json.dumps(resumen, ensure_ascii=False, indent=2, default=str))
         if args.piloto is not None:
