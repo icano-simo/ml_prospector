@@ -739,6 +739,27 @@ falla en vez de publicar un teléfono.
    en el CSV como su propia columna, así que la cifra es auditable, pero si
    querés el ratio sobre los *clasificables* hay que agregar una columna.
 
+   **Y hay un caso que el detector colapsa: el caption bilingüe.** Hay agentes
+   que escriben el mismo post dos veces, inglés arriba, español abajo,
+   separados por una línea de guiones bajos. `@j_pantojagrp` tiene uno de 1.182
+   caracteres así. El detector devuelve **un** idioma para todo el texto —
+   `es`, con confianza **1,00** sobre algo que es mitad y mitad. La confianza
+   miente; el veredicto, no tanto.
+
+   **Medido antes de decidir: 3 de 132 captions, el 2,3%.** Con ese número no
+   toqué nada, y la razón importa más que el número: contar el bilingüe como
+   español **es** el comportamiento correcto. Un agente que escribe cada post
+   en los dos idiomas está sirviendo a una audiencia hispanohablante, y
+   mandarlo a `MIXTO` lo sacaría del numerador — o sea que subestimaría
+   justamente al agente que más nos interesa. Lo que queda mal es la confianza
+   de 1,00, y es interna: el portón está en 0,60, así que un caption bilingüe
+   pasa como español, que es lo que se quiere.
+
+   Si el bilingüe pasara del 2% al 20% en el lote grande, esto cambia de
+   tamaño: ahí sí vale una columna que lo declare, porque «escribe en los dos»
+   y «escribe la mitad en español» son intensidades distintas de P-Q14 y hoy
+   dan el mismo número.
+
 5. **El tiempo real es otro, y hay que decidirlo.** La estimación de 10 horas
    para 1.203 perfiles asumía el JSON. Con el endpoint en 429 y la captura por
    DOM, lo medido es **~8,5 s por post**, así que:
