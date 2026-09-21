@@ -18,3 +18,18 @@ tqdm>=4.66.0
 fake-useragent>=1.4.0
 patchright>=1.0.0
 playwright>=1.44.0
+
+# Detector de idioma. NO es opcional.
+#
+# Medido el 2026-09-21 sobre 17 captions realistas de agentes inmobiliarios:
+# lingua 17/17, langdetect 15/17. Y los dos fallos de langdetect son el caso
+# que importa -- "¡Vendida! 🏡🔑 Felicidades" clasificado como portugues con
+# confianza 1,00 -- asi que ningun umbral los habria filtrado.
+#
+# La ventaja decisiva es poder restringir el espacio de hipotesis a
+# {español, ingles}, que elimina la confusion con portugues e italiano.
+#
+# Sin este paquete, instagram/idioma.py falla ruidosamente en vez de degradarse
+# a conteo de palabras clave: ese metodo es el que produjo un 3,29% de
+# contenido en español sobre un lote seleccionado por mercado latino.
+lingua-language-detector>=2.0.0

@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.join(RAIZ, "realtor_scraper"))
 SUITES = [
     ("guardas", "tests.test_guardas", "las reglas de guardia de PACS-H"),
     ("instagram", "tests.test_instagram", "estado, verificacion, idioma, posts, comentarios"),
+    ("instagram_profundo", "tests.test_instagram_profundo",
+     "captura cruda, parser y contrato de ig_signals.csv"),
     ("modelmatch", "tests.test_modelmatch", "las cuatro trampas verificadas"),
     ("identidad", "tests.test_identidad", "normalizacion, cascada, registro"),
     ("hmda", "tests.test_hmda", "fallout y mix, con el denominador correcto"),

@@ -29,6 +29,7 @@ import json
 import random
 import re
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 
 from loguru import logger
@@ -209,7 +210,7 @@ def _ir(page, url: str, timeout_ms: int = 25_000) -> int | None:
         respuesta = page.goto(url, wait_until="domcontentloaded", timeout=timeout_ms)
         return respuesta.status if respuesta else None
     except Exception as exc:  # noqa: BLE001
-        logger.debug("navegacion a %s fallo: %s", url, exc)
+        logger.debug("navegacion a {} fallo: {}", url, exc)
         return None
 
 
@@ -277,7 +278,7 @@ def leer_perfil(page, handle: str, *, con_comentarios: bool = True) -> PerfilCru
     )
 
     if not diag.estado.contenido_legible:
-        logger.info("@%s: %s (%s)", handle, diag.estado.value, diag.evidencia)
+        logger.info("@{}: {} ({})", handle, diag.estado.value, diag.evidencia)
         return perfil
 
     perfil.posts = _leer_posts(page, enlaces_post)
@@ -372,7 +373,7 @@ def _leer_posts(page, urls: list[str]) -> list[Post]:
     for url in urls:
         codigo = _ir(page, url)
         if codigo in (401, 403, 429):
-            logger.warning("bloqueo leyendo %s (HTTP %s): corto el perfil", url, codigo)
+            logger.warning("bloqueo leyendo {} (HTTP {}): corto el perfil", url, codigo)
             break
         pausa(PAUSA_ENTRE_POSTS)
 
@@ -450,7 +451,7 @@ def _leer_comentarios(page, posts: list[Post], handle_agente: str
             continue
         codigo = _ir(page, post.url)
         if codigo in (401, 403, 429):
-            logger.warning("bloqueo leyendo comentarios (HTTP %s): corto", codigo)
+            logger.warning("bloqueo leyendo comentarios (HTTP {}): corto", codigo)
             break
         pausa(PAUSA_ENTRE_POSTS)
 
@@ -510,6 +511,364 @@ def resolver_destino_de_link(page, url: str | None) -> str | None:
         return url
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CAPTURA CRUDA · Bloque 1-bis
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Crudo primero, parser despues.
+#
+# `capturar_crudo` devuelve un dict serializable a JSON con TODO lo extraido y
+# NADA derivado: ni idioma, ni qualifiers, ni ratios. El parser corre en un
+# segundo paso sobre esos archivos.
+#
+# La razon es economica. Si el parser falla, se arregla y se re-parsea en
+# segundos. Si no se guardo el crudo, cada bug del parser cuesta una pasada
+# entera contra Instagram: 1.203 perfiles a 30 s son 10 horas, y cada pasada
+# gasta la cuota de una cuenta que se puede bloquear.
+#
+# Por eso esta funcion no interpreta nada. Interpretar es lo unico que se puede
+# repetir gratis.
+
+#: Posts a capturar por perfil. El brief pide 15 a 30.
+N_POSTS_CRUDO = 30
+#: Comentarios por post. El brief pide hasta 20.
+N_COMENTARIOS_CRUDO = 20
+
+#: Endpoint JSON de Instagram para el perfil. Con sesion iniciada responde con
+#: el perfil completo, incluidos los 12 primeros posts con su caption real.
+#: Es mucho mas estable que el DOM, que cambia con cada deploy.
+API_PERFIL = (
+    "https://www.instagram.com/api/v1/users/web_profile_info/?username=%s"
+)
+
+#: Cabecera que Instagram exige en sus endpoints internos.
+APP_ID = "936619743392459"
+
+
+def _pedir_json(page, url: str) -> dict | None:
+    """Pide un endpoint JSON de Instagram desde la sesion del navegador.
+
+    Se hace con `page.request`, que reusa las cookies del contexto: no hay que
+    replicar la sesion ni manejar tokens.
+    """
+    try:
+        respuesta = page.request.get(url, headers={
+            "X-IG-App-ID": APP_ID,
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": IG_BASE,
+            "Accept": "*/*",
+        }, timeout=30_000)
+        if respuesta.status != 200:
+            logger.debug("JSON {} -> HTTP {}", url, respuesta.status)
+            return None
+        return respuesta.json()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("JSON {} fallo: {}", url, exc)
+        return None
+
+
+def _nodo_a_post_crudo(nodo: dict) -> dict:
+    """Un nodo de la respuesta JSON de Instagram, sin interpretar.
+
+    Solo se renombra y se aplana. Los valores van tal como vienen.
+    """
+    bordes_caption = ((nodo.get("edge_media_to_caption") or {}).get("edges") or [])
+    caption = None
+    if bordes_caption:
+        caption = ((bordes_caption[0] or {}).get("node") or {}).get("text")
+
+    etiquetadas = []
+    for borde in ((nodo.get("edge_media_to_tagged_user") or {}).get("edges") or []):
+        usuario = ((borde or {}).get("node") or {}).get("user") or {}
+        if usuario.get("username"):
+            etiquetadas.append(usuario["username"])
+
+    ubicacion = nodo.get("location") or {}
+
+    return {
+        "shortcode": nodo.get("shortcode"),
+        "id": nodo.get("id"),
+        "caption": caption,
+        "timestamp": nodo.get("taken_at_timestamp"),
+        "typename": nodo.get("__typename"),
+        "es_video": nodo.get("is_video"),
+        "duracion_video": nodo.get("video_duration"),
+        "vistas_video": nodo.get("video_view_count"),
+        "likes": ((nodo.get("edge_liked_by") or {}).get("count")
+                  if nodo.get("edge_liked_by") else
+                  (nodo.get("edge_media_preview_like") or {}).get("count")),
+        "n_comentarios": (nodo.get("edge_media_to_comment")
+                          or nodo.get("edge_media_preview_comment")
+                          or {}).get("count"),
+        "comentarios_deshabilitados": nodo.get("comments_disabled"),
+        "etiquetadas": etiquetadas,
+        "ubicacion": {
+            "id": ubicacion.get("id"),
+            "nombre": ubicacion.get("name"),
+            "slug": ubicacion.get("slug"),
+        } if ubicacion else None,
+        "accesibilidad_alt": nodo.get("accessibility_caption"),
+        "n_hijos": len(((nodo.get("edge_sidecar_to_children") or {}).get("edges") or [])),
+    }
+
+
+def _comentarios_crudos_de_json(datos: dict) -> list[dict]:
+    """Comentarios de la respuesta de un post, sin interpretar."""
+    salida: list[dict] = []
+    for clave in ("edge_media_to_parent_comment", "edge_media_to_comment"):
+        bordes = ((datos.get(clave) or {}).get("edges") or [])
+        for borde in bordes[:N_COMENTARIOS_CRUDO]:
+            nodo = (borde or {}).get("node") or {}
+            propietario = nodo.get("owner") or {}
+            salida.append({
+                "id": nodo.get("id"),
+                "texto": nodo.get("text"),
+                "timestamp": nodo.get("created_at"),
+                "autor_handle": propietario.get("username"),
+                "autor_verificado": propietario.get("is_verified"),
+                "likes": (nodo.get("edge_liked_by") or {}).get("count"),
+            })
+        if salida:
+            break
+    return salida[:N_COMENTARIOS_CRUDO]
+
+
+def _perfil_crudo_de_json(usuario: dict) -> dict:
+    """El bloque de perfil, sin interpretar."""
+    destacadas = []
+    for borde in ((usuario.get("edge_highlight_reels") or {}).get("edges") or []):
+        nodo = (borde or {}).get("node") or {}
+        if nodo.get("title"):
+            destacadas.append(nodo["title"])
+
+    return {
+        "handle": usuario.get("username"),
+        "nombre_visible": usuario.get("full_name"),
+        "bio": usuario.get("biography"),
+        "bio_entidades": usuario.get("biography_with_entities"),
+        "seguidores": (usuario.get("edge_followed_by") or {}).get("count"),
+        "seguidos": (usuario.get("edge_follow") or {}).get("count"),
+        "n_publicaciones": (usuario.get("edge_owner_to_timeline_media") or {}).get("count"),
+        "enlace_bio": usuario.get("external_url"),
+        "enlace_bio_sin_redirigir": usuario.get("external_url_linkshimmed"),
+        "es_privado": usuario.get("is_private"),
+        "es_verificado": usuario.get("is_verified"),
+        "es_cuenta_empresa": usuario.get("is_business_account"),
+        "es_cuenta_profesional": usuario.get("is_professional_account"),
+        "categoria_declarada": (usuario.get("category_name")
+                                or usuario.get("business_category_name")),
+        "categoria_empresa_general": usuario.get("overall_category_name"),
+        "email_empresa": usuario.get("business_email"),
+        "telefono_empresa": usuario.get("business_phone_number"),
+        "direccion_empresa": usuario.get("business_address_json"),
+        "titulos_destacadas": destacadas,
+        "id_usuario": usuario.get("id"),
+    }
+
+
+def capturar_crudo(
+    page,
+    handle: str,
+    *,
+    n_posts: int = N_POSTS_CRUDO,
+    n_comentarios: int = N_COMENTARIOS_CRUDO,
+    con_comentarios: bool = True,
+    resolver_enlace_bio: bool = True,
+) -> dict:
+    """Captura CRUDA de un perfil. No deriva nada.
+
+    Estrategia: JSON primero, DOM como respaldo. El JSON de Instagram es mucho
+    mas estable que su DOM y trae el caption real, la fecha exacta en epoch, las
+    cuentas etiquetadas y la ubicacion sin tener que abrir cada post.
+
+    Devuelve siempre un dict, tambien cuando falla: el estado y la evidencia van
+    adentro. Un fallo tambien es un dato que hay que guardar.
+    """
+    ahora = dt.datetime.now(dt.timezone.utc)
+    limpio = (handle or "").strip().lstrip("@").rstrip("/")
+    crudo: dict = {
+        "esquema": "ig-crudo-v1",
+        "handle_pedido": limpio,
+        "capturado_en": ahora.isoformat(timespec="seconds"),
+        "via": None,
+        "estado_perfil": None,
+        "estado_evidencia": None,
+        "http_status": None,
+        "perfil": None,
+        "posts": [],
+        "comentarios_por_post": {},
+        "destino_enlace_bio": None,
+        "errores": [],
+    }
+
+    if not limpio:
+        crudo["estado_perfil"] = EstadoPerfil.SIN_HANDLE.value
+        crudo["estado_evidencia"] = "no habia handle candidato"
+        return crudo
+
+    # ── 1 · JSON del perfil ───────────────────────────────────────────────────
+    datos = _pedir_json(page, API_PERFIL % limpio)
+    usuario = None
+    if isinstance(datos, dict):
+        usuario = ((datos.get("data") or {}).get("user"))
+
+    if usuario:
+        crudo["via"] = "json"
+        crudo["perfil"] = _perfil_crudo_de_json(usuario)
+        crudo["json_perfil_bruto"] = datos
+
+        if usuario.get("is_private"):
+            crudo["estado_perfil"] = EstadoPerfil.PRIVADO.value
+            crudo["estado_evidencia"] = "is_private=true en el JSON del perfil"
+        else:
+            bordes = ((usuario.get("edge_owner_to_timeline_media") or {})
+                      .get("edges") or [])
+            crudo["posts"] = [
+                _nodo_a_post_crudo((b or {}).get("node") or {})
+                for b in bordes[:n_posts]
+            ]
+            crudo["estado_perfil"] = EstadoPerfil.PUBLICO_LEIDO.value
+            crudo["estado_evidencia"] = (
+                "JSON del perfil con %d posts en la primera pagina"
+                % len(crudo["posts"])
+            )
+    else:
+        # ── 2 · Respaldo por DOM ──────────────────────────────────────────────
+        perfil_dom = leer_perfil(page, limpio, con_comentarios=False)
+        crudo["via"] = "dom"
+        crudo["http_status"] = perfil_dom.diagnostico.codigo_http
+        crudo["estado_perfil"] = perfil_dom.diagnostico.estado.value
+        crudo["estado_evidencia"] = perfil_dom.diagnostico.evidencia
+        crudo["perfil"] = {
+            "handle": perfil_dom.handle,
+            "nombre_visible": perfil_dom.nombre_perfil,
+            "bio": perfil_dom.bio,
+            "seguidores": perfil_dom.seguidores,
+            "seguidos": perfil_dom.siguiendo,
+            "n_publicaciones": perfil_dom.n_posts_declarados,
+            "enlace_bio": perfil_dom.link_de_bio,
+            "titulos_destacadas": list(perfil_dom.titulos_de_destacadas),
+            "categoria_declarada": perfil_dom.categoria_declarada,
+            "es_privado": None,
+        }
+        crudo["posts"] = [
+            {
+                "shortcode": (p.url or "").rstrip("/").rsplit("/", 1)[-1] or None,
+                "caption": p.caption or None,
+                "timestamp": None,
+                "fecha_iso": p.fecha.isoformat() if p.fecha else None,
+                "typename": p.tipo.value,
+                "likes": p.likes,
+                "n_comentarios": p.n_comentarios,
+                "etiquetadas": [],
+                "ubicacion": {"nombre": p.geotag} if p.geotag else None,
+            }
+            for p in perfil_dom.posts[:n_posts]
+        ]
+        crudo["errores"].append(
+            "el endpoint JSON no respondio; se uso el DOM, que trae menos "
+            "campos (sin cuentas etiquetadas ni timestamp exacto)"
+        )
+
+    # ── 3 · Mas posts por paginacion del JSON ────────────────────────────────
+    if (crudo["via"] == "json"
+            and crudo["estado_perfil"] == EstadoPerfil.PUBLICO_LEIDO.value
+            and len(crudo["posts"]) < n_posts):
+        pagina = ((usuario.get("edge_owner_to_timeline_media") or {})
+                  .get("page_info") or {})
+        cursor = pagina.get("end_cursor")
+        id_usuario = usuario.get("id")
+        if pagina.get("has_next_page") and cursor and id_usuario:
+            extra = _mas_posts_por_json(
+                page, id_usuario, cursor, n_posts - len(crudo["posts"]),
+            )
+            crudo["posts"].extend(extra)
+            crudo["estado_evidencia"] += " + %d por paginacion" % len(extra)
+
+    # ── 4 · Comentarios, post por post ───────────────────────────────────────
+    if con_comentarios and crudo["estado_perfil"] == EstadoPerfil.PUBLICO_LEIDO.value:
+        for post in crudo["posts"]:
+            shortcode = post.get("shortcode")
+            if not shortcode:
+                continue
+            if post.get("comentarios_deshabilitados"):
+                crudo["comentarios_por_post"][shortcode] = []
+                continue
+            if not post.get("n_comentarios"):
+                crudo["comentarios_por_post"][shortcode] = []
+                continue
+            comentarios = _comentarios_de_un_post(page, shortcode, n_comentarios)
+            crudo["comentarios_por_post"][shortcode] = comentarios
+            pausa((1.2, 2.8))
+
+    # ── 5 · Destino final del enlace de la bio ───────────────────────────────
+    if resolver_enlace_bio and crudo.get("perfil"):
+        enlace = crudo["perfil"].get("enlace_bio")
+        if enlace:
+            crudo["destino_enlace_bio"] = resolver_destino_de_link(page, enlace)
+
+    return crudo
+
+
+#: Consulta GraphQL para paginar el timeline. El hash es el que usa la web de
+#: Instagram; si cambia, la paginacion deja de funcionar y `capturar_crudo` lo
+#: registra en `errores` en vez de fallar. Los primeros 12 posts del JSON del
+#: perfil no dependen de esto.
+QUERY_HASH_TIMELINE = "e769aa130647d2354c40ea6a439bfc08"
+
+
+def _mas_posts_por_json(page, id_usuario: str, cursor: str, faltan: int) -> list[dict]:
+    salida: list[dict] = []
+    while faltan > 0 and cursor:
+        variables = json.dumps({
+            "id": str(id_usuario),
+            "first": min(faltan, 12),
+            "after": cursor,
+        })
+        url = ("https://www.instagram.com/graphql/query/?query_hash=%s&variables=%s"
+               % (QUERY_HASH_TIMELINE, urllib.parse.quote(variables)))
+        datos = _pedir_json(page, url)
+        medios = (((datos or {}).get("data") or {}).get("user") or {}).get(
+            "edge_owner_to_timeline_media"
+        ) or {}
+        bordes = medios.get("edges") or []
+        if not bordes:
+            break
+        for borde in bordes:
+            salida.append(_nodo_a_post_crudo((borde or {}).get("node") or {}))
+        faltan -= len(bordes)
+        pagina = medios.get("page_info") or {}
+        cursor = pagina.get("end_cursor") if pagina.get("has_next_page") else None
+        pausa((1.5, 3.0))
+    return salida
+
+
+#: Consulta GraphQL para los comentarios de un post.
+QUERY_HASH_COMENTARIOS = "bc3296d1ce80a24b1b6e40b1e72903f5"
+
+
+def _comentarios_de_un_post(page, shortcode: str, n: int) -> list[dict]:
+    """Comentarios de un post. JSON primero, DOM como respaldo."""
+    variables = json.dumps({"shortcode": shortcode, "first": min(n, 24)})
+    url = ("https://www.instagram.com/graphql/query/?query_hash=%s&variables=%s"
+           % (QUERY_HASH_COMENTARIOS, urllib.parse.quote(variables)))
+    datos = _pedir_json(page, url)
+    medios = ((datos or {}).get("data") or {}).get("shortcode_media")
+    if medios:
+        return _comentarios_crudos_de_json(medios)
+
+    # Respaldo: abrir el post y leer el DOM.
+    codigo = _ir(page, "%sp/%s/" % (IG_BASE, shortcode))
+    if codigo in (401, 403, 429):
+        return []
+    pausa(PAUSA_ENTRE_POSTS)
+    return [
+        {"id": None, "texto": texto, "timestamp": None,
+         "autor_handle": autor, "autor_verificado": None, "likes": None}
+        for autor, texto in _comentarios_del_post(page)[:n]
+    ]
+
+
 def leer_con_backoff(page, handle: str, *, con_comentarios: bool = True) -> PerfilCrudo:
     """Reintenta con backoff exponencial solo si el estado es BLOQUEADO.
 
@@ -521,7 +880,7 @@ def leer_con_backoff(page, handle: str, *, con_comentarios: bool = True) -> Perf
     while perfil.diagnostico.estado is EstadoPerfil.BLOQUEADO and intento < len(BACKOFF):
         espera = BACKOFF[intento] * random.uniform(0.85, 1.25)
         logger.warning(
-            "@%s bloqueado (%s). Espero %.0fs antes del reintento %d/%d",
+            "@{} bloqueado ({}). Espero {:.0f}s antes del reintento {}/{}",
             handle, perfil.diagnostico.evidencia, espera, intento + 1, len(BACKOFF),
         )
         time.sleep(espera)
