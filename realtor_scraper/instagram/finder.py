@@ -1146,6 +1146,7 @@ def correr_lote(
 
     from navegador import (
         PERFIL_IG_DIR,
+        confirmar_acceso_a_la_api,
         crear_contexto,
         sesion_de_instagram_iniciada,
     )
@@ -1195,6 +1196,13 @@ def correr_lote(
         contexto = crear_contexto(p, headless=headless, perfil_dir=PERFIL_IG_DIR)
         page = contexto.new_page()
 
+        # Dos comprobaciones distintas, y las dos son necesarias:
+        #   1. las cookies de sesion existen  -> estamos autenticados
+        #   2. el endpoint JSON responde      -> la cuenta no tiene un desafio
+        #
+        # La segunda no es redundante: las cookies pueden estar y la cuenta
+        # tener un checkpoint pendiente, y entonces cada perfil cae al respaldo
+        # por DOM sin que nada falle.
         hay_sesion, evidencia = sesion_de_instagram_iniciada(page)
         resumen["sesion"] = {"iniciada": hay_sesion, "evidencia": evidencia}
         if not hay_sesion:
@@ -1202,15 +1210,34 @@ def correr_lote(
             resumen["detenido_por"] = "sin_sesion"
             resumen["terminado_en"] = dt.datetime.now().isoformat(timespec="seconds")
             logger.error(
-                "NO hay sesion de Instagram ({}). Sin sesion se lee una version "
-                "recortada del perfil: bio y contadores si, posts y comentarios "
-                "no. Eso no da error, da un lote entero de perfiles que parecen "
-                "vacios.\n\n"
+                "NO hay sesion de Instagram. {}\n\n"
+                "Sin sesion se lee una version recortada del perfil: bio y "
+                "contadores si, posts y comentarios no. Eso no da error, da un "
+                "lote entero de perfiles que parecen vacios.\n\n"
+                "    cd realtor_scraper\n"
                 "    python -m instagram.finder --iniciar-sesion\n", evidencia,
             )
             return resumen
 
+        api_ok, api_evidencia = confirmar_acceso_a_la_api(page)
+        resumen["api"] = {"responde": api_ok, "evidencia": api_evidencia}
+        if not api_ok:
+            contexto.close()
+            resumen["detenido_por"] = "api_no_responde"
+            resumen["terminado_en"] = dt.datetime.now().isoformat(timespec="seconds")
+            logger.error(
+                "Las cookies de sesion estan, pero el endpoint JSON no "
+                "responde. {}\n\n"
+                "Suele ser un desafio pendiente en la cuenta. Abri Instagram a "
+                "mano con esa cuenta, resolvelo, y volve a correr.\n\n"
+                "ME DETENGO en vez de seguir: sin el endpoint, cada perfil cae "
+                "al respaldo por DOM y el lote sale sin cuentas etiquetadas ni "
+                "fechas exactas, pero sin que nada falle.\n", api_evidencia,
+            )
+            return resumen
+
         logger.info("Sesion OK: {}", evidencia)
+        logger.info("API OK: {}", api_evidencia)
 
         for i, objetivo in enumerate(pendientes, start=1):
             handle = (objetivo.handle_del_libro or "").strip().lstrip("@")

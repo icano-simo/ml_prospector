@@ -83,17 +83,27 @@ def calentar(page, url: str, timeout_ms: int = 30_000) -> bool:
 
 IG_HOME = "https://www.instagram.com/"
 
-#: Señales de que HAY sesion. Se busca cualquiera; Instagram cambia el DOM
-#: seguido y depender de una sola es garantizar un falso negativo.
-_SELECTORES_CON_SESION = (
-    "nav a[href='/direct/inbox/']",
-    "a[href^='/explore/']",
-    "svg[aria-label='Home']",
-    "svg[aria-label='Inicio']",
-    "a[href='/']:has(svg)",
-)
+#: LAS cookies que significan "hay sesion". No son heuristicas: son el token de
+#: autenticacion que emite Instagram al iniciar sesion.
+#:
+#: Antes esta comprobacion se hacia por selectores del DOM y **daba falso
+#: positivo**: `a[href^='/explore/']` existe tambien en la pagina sin sesion,
+#: asi que el lote arrancaba creyendo que estaba autenticado. Medido el
+#: 2026-09-21: DOM decia "sesion detectada", y el endpoint JSON devolvia 401
+#: con `require_login: true` y cero cookies de sesion.
+#:
+#: Es el mismo error que este proyecto viene corrigiendo en todas las capas: una
+#: señal indirecta leida como si fuera el hecho.
+COOKIES_DE_SESION = ("sessionid", "ds_user_id")
 
-#: Señales de que NO hay sesion.
+#: Señales de DOM. Sirven como evidencia SECUNDARIA para el mensaje de error,
+#: nunca como prueba de que hay sesion.
+_SELECTORES_DE_SESION_REAL = (
+    "nav a[href='/direct/inbox/']",
+    "svg[aria-label='New post']",
+    "svg[aria-label='Crear']",
+    "img[alt*='profile picture']",
+)
 _SELECTORES_SIN_SESION = (
     "input[name='username']",
     "form#loginForm",
@@ -104,6 +114,10 @@ _SELECTORES_SIN_SESION = (
 def sesion_de_instagram_iniciada(page, *, ir_a_home: bool = True) -> tuple[bool, str]:
     """(hay sesion, evidencia). No levanta.
 
+    **El veredicto lo dan las cookies, no el DOM.** `sessionid` y `ds_user_id`
+    son el token que emite Instagram al autenticar; si no estan, no hay sesion,
+    cualquiera sea lo que muestre la pagina.
+
     Se comprueba **antes** de empezar el lote. Sin sesion, Instagram sirve una
     version recortada del perfil: se leen la bio y los contadores del meta, pero
     no los posts ni los comentarios. Y eso no produce un error: produce un lote
@@ -113,21 +127,80 @@ def sesion_de_instagram_iniciada(page, *, ir_a_home: bool = True) -> tuple[bool,
         if ir_a_home:
             page.goto(IG_HOME, wait_until="domcontentloaded", timeout=30_000)
             pausa((2.0, 3.5))
-        for selector in _SELECTORES_SIN_SESION:
-            if page.query_selector(selector):
-                return False, "hay formulario de login: %s" % selector
-        for selector in _SELECTORES_CON_SESION:
-            if page.query_selector(selector):
-                return True, "sesion detectada por %s" % selector
-        cuerpo = (page.inner_text("body") or "").lower()
-        if "log in" in cuerpo and "sign up" in cuerpo:
-            return False, "la pagina ofrece iniciar sesion o registrarse"
-        return False, (
-            "no se encontro ninguna señal de sesion ni de login. Instagram "
-            "cambio el DOM: hay que revisar los selectores de navegador.py"
+
+        try:
+            cookies = page.context.cookies(IG_HOME)
+        except Exception as exc:  # noqa: BLE001
+            return False, "no pude leer las cookies del contexto: %s" % exc
+
+        presentes = {c["name"] for c in cookies if (c.get("value") or "").strip()}
+        faltan = [c for c in COOKIES_DE_SESION if c not in presentes]
+
+        if faltan:
+            dom = [s for s in _SELECTORES_DE_SESION_REAL if page.query_selector(s)]
+            login = [s for s in _SELECTORES_SIN_SESION if page.query_selector(s)]
+            return False, (
+                "faltan las cookies de sesion %s. Hay %d cookies pero son "
+                "anonimas (%s). %s%sSin `sessionid` no hay sesion, aunque la "
+                "pagina se vea normal."
+                % (faltan, len(cookies), ", ".join(sorted(presentes)) or "ninguna",
+                   "Se ve el formulario de login. " if login else "",
+                   "El DOM muestra %s, que en la pagina sin sesion tambien "
+                   "aparece. " % dom if dom else "")
+            )
+
+        return True, (
+            "cookies de sesion presentes (%s) sobre %d cookies"
+            % (", ".join(COOKIES_DE_SESION), len(cookies))
         )
     except Exception as exc:  # noqa: BLE001
         return False, "no se pudo comprobar la sesion: %s" % exc
+
+
+def confirmar_acceso_a_la_api(page) -> tuple[bool, str]:
+    """Segunda comprobacion: el endpoint JSON responde de verdad?
+
+    Las cookies pueden estar y la cuenta tener un desafio pendiente. Esto lo
+    detecta pidiendo un perfil publico conocido antes de gastar el lote.
+    """
+    url = (IG_HOME + "api/v1/users/web_profile_info/?username=instagram")
+    try:
+        respuesta = page.request.get(url, headers={
+            "X-IG-App-ID": "936619743392459",
+            "X-Requested-With": "XMLHttpRequest",
+            "Referer": IG_HOME,
+            "Accept": "*/*",
+        }, timeout=30_000)
+    except Exception as exc:  # noqa: BLE001
+        return False, "la peticion al endpoint fallo: %s" % exc
+
+    if respuesta.status != 200:
+        cuerpo = ""
+        try:
+            cuerpo = respuesta.text()[:200].replace("\n", " ")
+        except Exception:  # noqa: BLE001
+            pass
+        return False, (
+            "el endpoint JSON devolvio HTTP %d. %s%s"
+            % (respuesta.status, cuerpo,
+               " · `require_login: true` significa que Instagram no reconoce la "
+               "sesion." if "require_login" in cuerpo else "")
+        )
+
+    try:
+        datos = respuesta.json()
+    except Exception as exc:  # noqa: BLE001
+        return False, "el endpoint respondio 200 pero no era JSON: %s" % exc
+
+    usuario = ((datos or {}).get("data") or {}).get("user")
+    if not usuario:
+        return False, "el endpoint respondio 200 pero sin datos de usuario"
+
+    bordes = ((usuario.get("edge_owner_to_timeline_media") or {}).get("edges") or [])
+    return True, (
+        "el endpoint responde: @%s con %d posts en la primera pagina"
+        % (usuario.get("username"), len(bordes))
+    )
 
 
 def iniciar_sesion_instagram(playwright_instance, *, timeout_min: int = 10) -> bool:
@@ -174,6 +247,7 @@ def iniciar_sesion_instagram(playwright_instance, *, timeout_min: int = 10) -> b
 
     limite = time.time() + timeout_min * 60
     ok = False
+    ultimo_aviso = 0.0
     while time.time() < limite:
         try:
             if page.is_closed():
@@ -183,8 +257,12 @@ def iniciar_sesion_instagram(playwright_instance, *, timeout_min: int = 10) -> b
         hay, evidencia = sesion_de_instagram_iniciada(page, ir_a_home=False)
         if hay:
             ok = True
-            print("Sesion iniciada: %s" % evidencia)
+            print("")
+            print("Cookies de sesion detectadas: %s" % evidencia)
             break
+        if time.time() - ultimo_aviso > 20:
+            ultimo_aviso = time.time()
+            print("   esperando... (%s)" % evidencia[:90])
         time.sleep(3)
 
     if not ok:
@@ -192,15 +270,35 @@ def iniciar_sesion_instagram(playwright_instance, *, timeout_min: int = 10) -> b
         try:
             page2 = contexto.new_page()
             ok, evidencia = sesion_de_instagram_iniciada(page2)
+            page = page2
             if ok:
-                print("Sesion iniciada: %s" % evidencia)
+                print("Cookies de sesion detectadas: %s" % evidencia)
             else:
-                print("NO se detecto sesion: %s" % evidencia)
+                print("")
+                print("NO hay sesion: %s" % evidencia)
         except Exception as exc:  # noqa: BLE001
             print("NO se pudo confirmar la sesion: %s" % exc)
+
+    # Segunda comprobacion, la que de verdad importa: que el endpoint responda.
+    # Las cookies pueden estar y la cuenta tener un desafio pendiente.
+    if ok:
+        try:
+            api_ok, api_evidencia = confirmar_acceso_a_la_api(page)
+            print("Endpoint JSON: %s" % api_evidencia)
+            if not api_ok:
+                print("")
+                print("Las cookies estan pero el endpoint no responde. Suele ser")
+                print("un desafio pendiente en la cuenta: abri Instagram a mano")
+                print("con esa cuenta y resolvelo antes de correr el lote.")
+                ok = False
+        except Exception as exc:  # noqa: BLE001
+            print("No se pudo comprobar el endpoint: %s" % exc)
 
     try:
         contexto.close()
     except Exception:  # noqa: BLE001
         pass
+
+    print("")
+    print("RESULTADO: %s" % ("sesion lista" if ok else "SIN sesion utilizable"))
     return ok

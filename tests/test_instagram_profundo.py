@@ -812,6 +812,94 @@ def test_el_piloto_alarma_si_el_ratio_ronda_el_tres_por_ciento():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ══ LA COMPROBACION DE SESION ═════════════════════════════════════════════════
+#
+# Esta comprobacion dio un FALSO POSITIVO el 2026-09-21: decia "sesion
+# detectada" porque encontraba `a[href^='/explore/']`, que tambien existe en la
+# pagina sin sesion. El endpoint JSON devolvia 401 con require_login=true y no
+# habia ni una cookie de sesion.
+#
+# El veredicto lo dan las cookies, que son el token, no el DOM.
+
+class _ContextoFalso:
+    def __init__(self, cookies):
+        self._cookies = cookies
+
+    def cookies(self, url):  # noqa: ARG002
+        return self._cookies
+
+
+class _PaginaFalsa:
+    def __init__(self, cookies, selectores_presentes=()):
+        self.context = _ContextoFalso(cookies)
+        self._presentes = set(selectores_presentes)
+
+    def goto(self, *a, **k):  # noqa: ARG002
+        return None
+
+    def query_selector(self, selector):
+        return object() if selector in self._presentes else None
+
+
+def _cookie(nombre, valor="x" * 20):
+    return {"name": nombre, "value": valor}
+
+
+def test_sin_cookies_de_sesion_no_hay_sesion_aunque_el_dom_diga_que_si():
+    """El falso positivo real: explore existe sin sesion."""
+    from navegador import sesion_de_instagram_iniciada
+
+    anonimas = [_cookie(n) for n in
+                ("csrftoken", "datr", "ig_did", "ig_nrcb", "mid", "wd")]
+    pagina = _PaginaFalsa(anonimas, selectores_presentes=["a[href^='/explore/']"])
+    hay, evidencia = sesion_de_instagram_iniciada(pagina, ir_a_home=False)
+
+    assert hay is False, "6 cookies anonimas no son una sesion"
+    assert "sessionid" in evidencia
+    assert "anonimas" in evidencia
+
+
+def test_con_sessionid_y_ds_user_id_si_hay_sesion():
+    from navegador import sesion_de_instagram_iniciada
+
+    cookies = [_cookie(n) for n in
+               ("sessionid", "ds_user_id", "csrftoken", "mid")]
+    hay, evidencia = sesion_de_instagram_iniciada(
+        _PaginaFalsa(cookies), ir_a_home=False)
+    assert hay is True
+    assert "sessionid" in evidencia
+
+
+def test_una_cookie_de_sesion_vacia_no_cuenta():
+    from navegador import sesion_de_instagram_iniciada
+
+    cookies = [{"name": "sessionid", "value": ""},
+               {"name": "ds_user_id", "value": "123"}]
+    hay, evidencia = sesion_de_instagram_iniciada(
+        _PaginaFalsa(cookies), ir_a_home=False)
+    assert hay is False
+    assert "sessionid" in evidencia
+
+
+def test_falta_ds_user_id_tampoco_alcanza():
+    from navegador import sesion_de_instagram_iniciada
+
+    hay, _ = sesion_de_instagram_iniciada(
+        _PaginaFalsa([_cookie("sessionid")]), ir_a_home=False)
+    assert hay is False
+
+
+def test_el_dom_solo_sirve_como_evidencia_secundaria():
+    """Si se ve el formulario de login, el mensaje lo dice."""
+    from navegador import sesion_de_instagram_iniciada
+
+    pagina = _PaginaFalsa([_cookie("mid")],
+                          selectores_presentes=["input[name='username']"])
+    hay, evidencia = sesion_de_instagram_iniciada(pagina, ir_a_home=False)
+    assert hay is False
+    assert "formulario de login" in evidencia
+
+
 # ══ TOP 300 ═══════════════════════════════════════════════════════════════════
 
 def test_el_cruce_con_top300_es_uno_a_uno():
