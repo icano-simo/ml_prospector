@@ -550,6 +550,7 @@ import datetime as dt  # noqa: E402
 import json  # noqa: E402
 import os  # noqa: E402
 import statistics  # noqa: E402
+import sys  # noqa: E402
 import unicodedata  # noqa: E402
 from collections import Counter  # noqa: E402
 from pathlib import Path  # noqa: E402
@@ -1927,7 +1928,24 @@ def revisar_piloto(*, dir_crudo: Path | None = None, n: int = 20) -> dict:
                  c.get("fin_de_paginacion"),
                  f.get("paginacion_truncada")))
 
-    exactamente_doce = sum(1 for n_c in conteos if n_c == POSTS_PRIMERA_PAGINA)
+    # Doce posts SOSPECHOSOS son doce que se cortaron ahi. Un perfil que
+    # declara 12 publicaciones, trajo 12 y llego al fin de la paginacion no
+    # tiene nada de raro: esta completo.
+    #
+    # Sin esta distincion el piloto grito "!! 1 de 13 perfiles trajeron
+    # exactamente 12" por @miguelsanchezz7_, que declara 12 y tiene 12. Una
+    # alarma que suena cuando todo esta bien entrena a ignorarla, y esta alarma
+    # en particular es la que decide si hay que parar el lote.
+    def _doce_sospechoso(c: dict) -> bool:
+        if len(c.get("posts") or []) != POSTS_PRIMERA_PAGINA:
+            return False
+        declaradas = c.get("n_publicaciones_declaradas")
+        completo = (c.get("fin_de_paginacion") is True
+                    and declaradas == POSTS_PRIMERA_PAGINA)
+        return not completo
+
+    sospechosos_doce = [nom for nom, c, _ in filas if _doce_sospechoso(c)]
+    exactamente_doce = len(sospechosos_doce)
     truncadas = sum(1 for _, _, f in filas if f.get("paginacion_truncada") is True)
 
     print("")
@@ -1950,7 +1968,9 @@ def revisar_piloto(*, dir_crudo: Path | None = None, n: int = 20) -> dict:
         print("   !! %d de %d perfiles legibles trajeron exactamente %d posts."
               % (exactamente_doce, len(legibles), POSTS_PRIMERA_PAGINA))
         print("     Puede ser coincidencia, o el hash fallando de forma")
-        print("     intermitente. Revisa los `errores` de esos crudos.")
+        print("     intermitente. Revisa los `errores` de esos crudos:")
+        for nom in sospechosos_doce[:6]:
+            print("        %s" % nom[:60])
     elif legibles:
         print("   OK: la paginacion corrio. Conteos entre %d y %d."
               % (min(conteos), max(conteos)))
@@ -2114,8 +2134,30 @@ def revisar_piloto(*, dir_crudo: Path | None = None, n: int = 20) -> dict:
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
+def _preparar_salida_de_consola() -> None:
+    """La consola de Windows es cp1252 y los captions estan llenos de emoji.
+
+    `--revisar-piloto` se caia con UnicodeEncodeError al imprimir el primer
+    caption con un emoji de casa, o sea en casi todos. El verificador que
+    escribi despues del problema anterior revisaba los literales de `print()`,
+    no el DATO de runtime -- y el dato aca lo escriben otras personas, asi que
+    va a traer emoji siempre.
+
+    Se pone `errors="replace"` a proposito: un caption con un glifo que la
+    consola no puede dibujar tiene que salir con un interrogante, no tumbar la
+    revision. La fuente completa esta en el JSON crudo.
+    """
+    for flujo in (sys.stdout, sys.stderr):
+        try:
+            flujo.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - si no se puede, se sigue igual
+            pass
+
+
 def _main(argv: list[str] | None = None) -> int:
     import argparse
+
+    _preparar_salida_de_consola()
 
     ap = argparse.ArgumentParser(
         description="Capa de Instagram: sesion, lote crudo, parser y CSV.",
@@ -2209,6 +2251,4 @@ def _main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    import sys
-
     sys.exit(_main())

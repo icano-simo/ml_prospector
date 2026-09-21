@@ -466,6 +466,81 @@ perfil con su denominador. Si la media es **≤ 6%**, `DETENERSE`.
 
 Y cierra con un veredicto explícito.
 
+### El resultado del piloto · 20 perfiles del Top 300, corridos de verdad
+
+Corrió el 21 de septiembre de 2026, 15:45 a 16:27, **42 minutos**.
+
+| | |
+|---|---|
+| perfiles | 20 · **13 públicos, 7 privados** |
+| `handle_confianza` | 16 alta, 4 media, **0 baja** |
+| `paginacion_truncada` | **0** |
+| vía | `dom_con_sesion` (el endpoint JSON en 429) |
+
+**1 · Posts por perfil: 20 en once perfiles, 12 y 9 en dos.** No son doce
+clavados. Los dos cortos declaran 12 y 9 publicaciones y trajeron todas, con
+`fin_de_paginacion = True`: están completos, no truncados.
+
+**2 · Los captions son el texto real.** Leídos contra pantalla:
+
+> *«Mucha gente cree que su puntaje de crédito no es lo suficientemente bueno
+> para comprar una casa»* — `@claudiahernandezrealtormiami`
+> *«Los números no mienten, las emociones sí. Un buen inversor no compra por
+> impulso»* — `@angelicaesnegocio`
+> *«¡OTRA PROPIEDAD VENDIDA! ¿Pensando en vender tu casa?»* — `@j_pantojagrp`
+
+Nada de eso se parece a un alt-text. Y aparece la prueba por el otro lado: el
+primer caption de `@anakaren_properties` es *«GEL X EXTRA SHORT ALMOND SHAPE
+@nallelymartinez_nailtech»* — el post de una manicura. Un alt-text nunca diría
+eso; es texto que escribió ella.
+
+**3 · Siete privados marcados como privados**, todos con `captions_es_ratio`
+vacío. Contra los **cero en 5.620** del dataset viejo.
+
+**4 · El ratio de español tiene sentido y no ronda el 3%.** Media **14,6%**,
+mediana 0%, y la distribución es bimodal, que es lo interesante:
+
+| Perfil | `captions_es_ratio` | sobre |
+|---|---|---|
+| `@angelicaesnegocio` | **85,0%** | 20 captions |
+| `@claudiahernandezrealtormiami` | **66,7%** | 18 |
+| `@j_pantojagrp` | 25,0% | 20 |
+| `@miguelsanchezz7_` | 8,3% | 12 |
+| `@homesbyeve` | 5,0% | 20 |
+| los otros 8 | 0,0% | 8 a 20 |
+
+Dos agentes que publican **mayoritariamente en español** —85% y 67%— donde el
+dataset viejo daba 3,3% para todo el mundo. La mediana en 0% no es un fallo:
+ocho de trece publican en inglés y eso también es una medición, ahora con su
+denominador al lado.
+
+### Lo que el piloto encontró y no estaba buscado
+
+Cuatro defectos, todos en columnas que salían en cero. La pregunta que los
+cazó fue siempre la misma: **¿qué columna sale vacía en los perfiles que sí se
+leyeron?** En un privado el vacío es correcto; en un perfil leído, hay que
+explicarlo.
+
+| Qué | Consecuencia si no se veía |
+|---|---|
+| el patrón de @menciones agarraba la cola de los emails | `menciona_lender = @titlecompanyx.com`: **un socio hipotecario inventado** |
+| `destino_enlace_bio` null en los 14 | S4 tirada, con el destino a la vista en la URL |
+| `enlace_bio` traía el badge de Threads | un valor falso, y el enlace real perdido |
+| `redactar()` no corría en la ruta del CSV | el teléfono de un tercero en el archivo que circula |
+
+Y dos ceros que son **medición correcta**, verificados antes de reportarlos:
+
+- **los 14 posts sin caption realmente no tienen caption.** El
+  `og:description` de los 14 es *«N likes, M comments - handle on DATE»*, sin
+  segmento de texto. Comprobado desde el crudo, sin volver a raspar;
+- **`designaciones` vacía en los 9**: ninguna bio lista ABR, GRI ni CRS. Sí
+  dicen `REALTOR®`, `Licensed Real Estate Broker` y una trae `DRE-02297845`,
+  que es material del Bloque 3, no de esta columna.
+
+**Y el cero que cambia otro bloque: S8.** 396 comentarios de terceros, 0
+preguntas de calificación, con el léxico acertando 6 de 6 sobre controles.
+Está en [bloque-2-s8.md](bloque-2-s8.md).
+
 ### Probado en los dos escenarios que deciden
 
 Corrí la revisión sobre dos conjuntos sintéticos:

@@ -1034,6 +1034,11 @@ def _leer_post_dom(page, url: str, handle_esperado: str) -> dict | None:
 
     return {
         "shortcode": url.rstrip("/").rsplit("/", 1)[-1] or None,
+        # La URL del post, que es el parametro de esta funcion y no se estaba
+        # guardando. Hace falta justo para lo que el brief pide del piloto:
+        # "leelos contra la pantalla". Sin ella hay que reconstruirla del
+        # shortcode a mano, y para un reel la ruta no es la misma.
+        "url": url,
         "id": None,
         "caption": _caption_de_og(og),
         "timestamp": None,

@@ -906,6 +906,40 @@ def test_el_piloto_detecta_los_doce_clavados():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_doce_de_doce_declarados_y_agotados_no_es_alarma():
+    """La falsa alarma real: @miguelsanchezz7_ declara 12 y trajo 12.
+
+    Una alarma que suena cuando todo esta bien entrena a ignorarla, y esta en
+    particular es la que decide si hay que parar el lote.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        dir_crudo.mkdir()
+        c = _crudo(posts=[_post("Caption con texto suficiente numero %d" % i,
+                                dias_atras=i) for i in range(12)])
+        c["posts_recuperados"] = 12
+        c["n_publicaciones_declaradas"] = 12
+        c["fin_de_paginacion"] = True
+        (dir_crudo / "uno.json").write_text(json.dumps(c), encoding="utf-8")
+
+        salida = io.StringIO()
+        with redirect_stdout(salida):
+            revisar_piloto(dir_crudo=dir_crudo)
+        texto = salida.getvalue()
+
+        assert "DETENERSE" not in texto, texto
+        assert "exactamente 12 posts" not in texto, (
+            "12 de 12 declarados y agotados es un perfil completo"
+        )
+        assert "la paginacion corrio" in texto
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_el_piloto_no_alarma_cuando_la_paginacion_corre():
     tmp = Path(tempfile.mkdtemp())
     try:
