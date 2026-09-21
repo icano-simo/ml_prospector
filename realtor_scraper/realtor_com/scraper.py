@@ -1,7 +1,47 @@
 """
 Step 1: Scrape Realtor.com agent search by ZIP to get agent names + basic info.
-Realtor.com is much less aggressively protected than Zillow.
 URL: https://www.realtor.com/realestateagents/{zip}/
+
+===========================================================================
+EVALUADO EL 2026-09-21 · NO SOBREVIVE · NO LE INVIERTAS TIEMPO
+===========================================================================
+
+El docstring original decia "Realtor.com is much less aggressively protected
+than Zillow". **Medido, no es cierto**, y hay dos razones independientes, cada
+una suficiente por si sola. Ver docs/bloque-2-s8.md.
+
+1 · robots.txt PROHIBE justo la pagina que necesitamos
+
+   El bloque `User-agent: *` de https://www.realtor.com/robots.txt trae 290
+   directivas. Entre ellas:
+
+       Disallow: /realestateagents/*agentname-
+       Disallow: /realestateagents/*_$
+
+   El primero es **el perfil individual del agente**, que es donde estan el
+   rating y las reviews -- lo unico que nos serviria para S8. La pagina de
+   busqueda por ZIP, que es la que este archivo raspa, si esta permitida, pero
+   solo da el listado.
+
+2 · HTTP 429 en la PRIMERA peticion
+
+   Sin ninguna peticion previa desde esta IP, con User-Agent de navegador:
+
+       GET /realestateagents/77036/        -> HTTP 429, Server: CloudFront
+       GET /realestateagents/Houston_TX/   -> HTTP 429, Server: CloudFront
+
+   Las dos devolvieron una pagina intersticial de ~19,6 KB con cero datos de
+   agentes: ni __NEXT_DATA__, ni ld+json, ni una sola tarjeta, ni un telefono.
+
+Es el mismo patron que Zillow: la escalada de evasion no termina en datos,
+termina en mas codigo de evasion. Y aca ademas hay un robots.txt explicito.
+
+El reemplazo de S8 son los comentarios de Instagram (Bloque 1, hecho) y
+Google Places API (google_places/, oficial y de pago).
+
+**Recomendacion: borrar este modulo.** Se conserva solo porque el Bloque 0
+pedia conservarlo *hasta evaluarlo*, y la evaluacion es esta. Es una decision
+de una linea.
 """
 import re
 import time
