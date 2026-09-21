@@ -254,6 +254,32 @@ real —(likes + comentarios) ÷ seguidores— se calcula en
 
 ---
 
+## Pruebas
+
+```bash
+python tests/correr_todo.py
+```
+
+**146 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
+propósito: son lo único verificable en cualquier máquina, y cuando algo falle en
+una corrida real, que pasen dice que el problema está en el selector o en el
+entorno y no en la lógica.
+
+| Suite | Pruebas | Qué cubre |
+|---|---|---|
+| `guardas` | 27 | las reglas de guardia de PACS-H |
+| `instagram` | 51 | estado del perfil, verificación de handle, idioma, posts, comentarios |
+| `modelmatch` | 15 | las cuatro trampas verificadas del perfil de prueba |
+| `identidad` | 35 | normalización, cascada de cruce, registro versionado |
+| `hmda` | 8 | fallout y mix, con el denominador correcto |
+| `google_places` | 10 | reviews, anonimato, denominadores |
+
+Y la verificación de los códigos de Census, que sale con 1 si alguno no existe:
+
+```bash
+cd latino_re_engine/latino_re_engine && python -m src.config.verificar_variables
+```
+
 ## Instalación
 
 ```bash
