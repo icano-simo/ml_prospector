@@ -26,7 +26,52 @@ Zillow iba a cubrir esto y produjo **cero columnas**.
 
 ---
 
-## Prioridad 1 · Comentarios de Instagram · **hecha**
+## Prioridad 1 · Comentarios de Instagram · **hecha, y medida en cero**
+
+> **Lo primero, porque cambia la prioridad del bloque entero.** La
+> infraestructura funciona, el léxico funciona, y el resultado sobre datos
+> reales es **cero**. Medido en el piloto del Bloque 1-bis: **396 comentarios
+> de terceros en 16 perfiles, 0 preguntas de calificación.**
+>
+> No es un bug. Lo separé de un bug con la prueba barata: **cuántos comentarios
+> llevan un signo de pregunta.** Diez. El 3%. Nadie está preguntando nada.
+>
+> | | |
+> |---|---|
+> | comentarios de terceros | **396** |
+> | prácticamente solo emoji | 103 (26%) |
+> | con signo de pregunta | 10 (3%) |
+> | preguntas de calificación | **0** |
+>
+> Y el léxico está inocente: acierta 6 de 6 sobre controles
+> (*«Cuanto de enganche necesito para esa casa?»*, *«Se puede con ITIN?»*,
+> *«How much down payment do I need?»*, *«Que documentos piden?»*…).
+>
+> Las diez preguntas reales, todas: *«Is this still an active program ?»* —la
+> única que roza el tema, sobre un post de un programa de $15.000—, *«What
+> usually gets the most attention on listings like this»*, *«Precio?»*, *«What
+> area is that in?»*, y dos que son gente ofreciéndole algo al agente
+> (*«tengo una propuesta para ti»*).
+>
+> **Los comentarios públicos de un agente inmobiliario son felicitaciones, no
+> consultas.** «Congrats! 🔥🔥🔥» es el 26% literal del corpus. La consulta de
+> un comprador con dudas sobre su enganche ocurre por DM, y el DM no es
+> accesible ni debería serlo.
+>
+> **El canal del propio agente tampoco rinde:** 6 comentarios del agente en 16
+> perfiles, y 2 de esos 6 son el mismo bloque de firma repetido. Lo único
+> sustantivo fue `@claudiahernandezrealtormiami` contestando *«$740.000 cuando
+> la vemos?»* — en español, que es señal P-Q14 por otra vía, con n=1.
+>
+> **Consecuencia operativa: la prioridad 2 pasa a ser la prioridad 1.** Google
+> Places —reviews de clientes, que sí son relatos de experiencia— queda como la
+> fuente real de S8. Ya está escrita, con 10 pruebas, y espera una clave de
+> API.
+>
+> Lo que **sí** rinde de los comentarios es otra cosa: `comentarios_es_ratio`
+> tiene señal (0,027 a 0,10 en los perfiles del piloto) y `engagement_rate`
+> sale de ahí. O sea que capturar comentarios no fue en vano — simplemente no
+> sirve para lo que este bloque necesitaba.
 
 Está en el [Bloque 1](bloque-1-instagram.md), en
 [`instagram/comentarios.py`](../realtor_scraper/instagram/comentarios.py).
