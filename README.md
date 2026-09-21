@@ -261,7 +261,7 @@ real —(likes + comentarios) ÷ seguidores— se calcula en
 python tests/correr_todo.py
 ```
 
-**200 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
+**220 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
 propósito: son lo único verificable en cualquier máquina, y cuando algo falle en
 una corrida real, que pasen dice que el problema está en el selector o en el
 entorno y no en la lógica.
@@ -269,8 +269,8 @@ entorno y no en la lógica.
 | Suite | Pruebas | Qué cubre |
 |---|---|---|
 | `guardas` | 27 | las reglas de guardia de PACS-H |
-| `instagram` | 51 | estado del perfil, verificación de handle, idioma, posts, comentarios |
-| `instagram_profundo` | 54 | captura cruda, muestra truncada, parser y contrato de `ig_signals.csv` |
+| `instagram` | 60 | estado del perfil, verificación de handle, idioma, posts, comentarios |
+| `instagram_profundo` | 65 | captura cruda, sesión, muestra truncada, redacción, parser y contrato de `ig_signals.csv` |
 | `modelmatch` | 15 | las cuatro trampas verificadas del perfil de prueba |
 | `identidad` | 35 | normalización, cascada de cruce, registro versionado |
 | `hmda` | 8 | fallout y mix, con el denominador correcto |

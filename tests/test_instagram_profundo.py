@@ -439,6 +439,104 @@ def test_la_respuesta_del_agente_se_separa_porque_dice_tanto_como_el_post():
     assert fila["comentarios_n"] == 1
 
 
+# ══ REDACCION EN LA COLUMNA DE TEXTO ══════════════════════════════════════════
+#
+# El hueco que estas pruebas cierran: redactar() existia en comentarios.py y
+# corria en Comentario.desde_crudo, pero parsear_crudo armaba
+# comentarios_texto leyendo el crudo directo, sin pasar por ahi. La guarda
+# estaba escrita y no enchufada, y en el piloto real aparecio un comentario con
+# telefono y email dentro.
+
+def test_el_telefono_de_un_tercero_no_llega_al_csv():
+    posts = [_post("Nueva casa en Austin con texto suficiente aca", dias_atras=0)]
+    comentarios = {"SC0": [
+        {"texto": "Me interesa, llamame al (773) 362-5798 cuando puedas",
+         "autor_handle": "cliente_interesado"},
+    ]}
+    fila = parsear_crudo(_crudo(posts=posts, comentarios=comentarios))
+
+    assert "773" not in fila["comentarios_texto"]
+    assert "362-5798" not in fila["comentarios_texto"]
+    assert "[telefono]" in fila["comentarios_texto"]
+    assert "Me interesa" in fila["comentarios_texto"], (
+        "se redacta el dato personal, no el comentario: el texto es la senal S8"
+    )
+    assert "telefono (1)" in fila["comentarios_redactados"]
+
+
+def test_el_email_y_la_mencion_de_un_tercero_tampoco():
+    posts = [_post("Nueva casa en Austin con texto suficiente aca", dias_atras=0)]
+    comentarios = {"SC0": [
+        {"texto": "Escribeme a jose.perez@gmail.com o hablale a @otro_agente",
+         "autor_handle": "cliente"},
+    ]}
+    fila = parsear_crudo(_crudo(posts=posts, comentarios=comentarios))
+
+    assert "gmail.com" not in fila["comentarios_texto"]
+    assert "@otro_agente" not in fila["comentarios_texto"]
+    assert "[email]" in fila["comentarios_texto"]
+    assert "[cuenta]" in fila["comentarios_texto"]
+    assert "email" in fila["comentarios_redactados"]
+    assert "mencion" in fila["comentarios_redactados"]
+
+
+def test_el_comentario_del_agente_conserva_su_contacto():
+    """El agente es nuestro prospecto: su telefono ya lo tenemos de MMI.
+
+    Que lo publique en sus propios comentarios es informacion de negocio, no
+    un dato de tercero. La asimetria es deliberada.
+    """
+    posts = [_post("Nueva casa en Austin con texto suficiente aca", dias_atras=0)]
+    comentarios = {"SC0": [
+        {"texto": "Llamame al (773) 362-5798 y lo vemos",
+         "autor_handle": "anatapia_realtor"},
+    ]}
+    fila = parsear_crudo(_crudo(posts=posts, comentarios=comentarios))
+
+    assert "(773) 362-5798" in fila["comentarios_del_agente"]
+    assert fila["comentarios_texto"] is None
+    assert fila["comentarios_redactados"] is None
+
+
+def test_sin_datos_personales_no_hay_nada_que_declarar():
+    posts = [_post("Nueva casa en Austin con texto suficiente aca", dias_atras=0)]
+    comentarios = {"SC0": [
+        {"texto": "Cuanto de enganche necesito para esa?", "autor_handle": "x"},
+    ]}
+    fila = parsear_crudo(_crudo(posts=posts, comentarios=comentarios))
+    assert fila["comentarios_redactados"] is None
+    assert "Cuanto de enganche" in fila["comentarios_texto"]
+
+
+def test_la_guarda_redundante_falla_ruidosamente():
+    """La guarda es redundante a proposito: si otra via arma la columna sin
+    redactar, tiene que reventar y no publicar el telefono."""
+    from instagram.finder import _verificar_sin_pii_de_terceros
+
+    _verificar_sin_pii_de_terceros(None)
+    _verificar_sin_pii_de_terceros("Cuanto de enganche necesito?")
+
+    for crudo in ("llamame al (773) 362-5798", "escribe a a@b.com", "id 12345678"):
+        try:
+            _verificar_sin_pii_de_terceros(crudo)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("no fallo con %r" % crudo)
+
+
+def test_la_pregunta_de_calificacion_sobrevive_a_la_redaccion():
+    """La redaccion no puede comerse la senal S8."""
+    posts = [_post("Nueva casa en Austin con texto suficiente aca", dias_atras=0)]
+    comentarios = {"SC0": [
+        {"texto": "Se puede con ITIN? mi numero es 773-362-5798",
+         "autor_handle": "cliente"},
+    ]}
+    fila = parsear_crudo(_crudo(posts=posts, comentarios=comentarios))
+    assert fila["comentarios_pregunta_calificacion"] == 1
+    assert "[telefono]" in fila["comentarios_texto"]
+
+
 def test_truncado_a_30000_y_declarado():
     largo = "Felicidades a la familia por su casa nueva. " * 900  # ~38.700
     posts = [_post(largo, dias_atras=0)]
@@ -467,7 +565,7 @@ def test_el_csv_tiene_las_columnas_exactas_del_brief():
         "engagement_rate", "designaciones", "destacadas_titulos", "geotags_top",
     ]
     agregadas = ["captions_texto", "comentarios_texto", "comentarios_del_agente",
-                 "texto_truncado", "paginacion_truncada"]
+                 "texto_truncado", "comentarios_redactados", "paginacion_truncada"]
     assert COLUMNAS_CSV == del_brief + agregadas, (
         "el orden y los nombres son contrato con la app que consume el archivo"
     )

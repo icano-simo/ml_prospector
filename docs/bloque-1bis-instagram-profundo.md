@@ -66,17 +66,80 @@ Tres decisiones que lo hacen cumplirse:
   interrupcion no deja un JSON truncado que el parser lea como válido;
 - **un crudo roto no tumba la pasada**: se registra en `ilegibles` y se sigue.
 
-### JSON primero, DOM de respaldo
+### JSON primero, DOM después · y en la corrida real manda el DOM
 
 `capturar_crudo()` pide el endpoint interno de Instagram
-(`/api/v1/users/web_profile_info/`) usando las cookies del contexto, y solo cae
-al DOM si no responde. El JSON es mucho más estable que el DOM y trae en una
-sola petición el caption real, el timestamp exacto en epoch, las cuentas
-etiquetadas y la ubicación.
+(`/api/v1/users/web_profile_info/`) usando las cookies del contexto, y cae al
+DOM si no responde. El JSON es mucho más estable que el DOM y trae en una sola
+petición el caption real, el timestamp exacto en epoch, las cuentas etiquetadas
+y la ubicación.
 
-Cuando se usa el DOM, el crudo lo declara en `errores`: *«el endpoint JSON no
-respondió; se usó el DOM, que trae menos campos»*. Un dato de peor calidad
-queda marcado como tal.
+**Medido con la sesión funcionando: el endpoint devuelve HTTP 429 sostenido.**
+Con la cuenta dedicada recién creada, esperando 4 minutos y calentando la sesión
+con navegación normal antes de tocarlo, sigue en 429. El cuerpo del 429 es la
+página HTML con `class="logged-in"`, así que la sesión está bien: lo limitado es
+el endpoint. Parte del 429 lo causé yo sondeándolo 4 veces por script en dos
+corridas, pero la espera no lo levantó.
+
+Así que la vía que corre de verdad es la otra, y **no es un respaldo pobre.**
+`capturar_por_dom_con_sesion()`, medido sobre perfiles reales:
+
+| De dónde sale | Qué da |
+|---|---|
+| `meta[name=description]` | seguidores, seguidos, n\_posts, nombre visible y bio |
+| `og:description` del post | caption completo, likes, n\_comentarios y el **autor** |
+| `time[datetime]` | fecha exacta, `2023-05-20T14:55:22.000Z` |
+| el propio caption | las @menciones |
+| la página del post | geotag, «Humboldt Park, Chicago» |
+| ancla en «Reply» | los comentarios con su autor |
+
+Los comentarios se anclan en el botón *Reply* / *Responder*, que es texto
+visible y no una clase CSS: las clases de Instagram son ofuscadas y cambian en
+cada deploy. Desde ahí se sube hasta el bloque que tiene el handle y el texto.
+En el post de prueba dio 15 comentarios con autor donde todos los selectores por
+clase daban cero.
+
+Lo único que no se alcanza son las **cuentas etiquetadas en la foto**, que
+necesitan un clic sobre la imagen. Las @menciones del caption sí, y son la vía
+principal de S6.
+
+`correr_lote()` ya **no se detiene** si el endpoint no responde: sigue por DOM,
+lo declara en el manifiesto y en cada crudo, y lo dice en el log. Detenerse
+tenía sentido cuando el DOM era pobre; con esta tabla, no.
+
+**El costo quedó medido: ~8,5 s por post**, porque es una navegación por post.
+Unas diez veces más lento que el JSON. Por eso `--posts` pasó a ser parámetro y
+el log estima el tiempo con ese número, no con la pausa entre perfiles — que no
+es lo que domina.
+
+### El bug que habría envenenado el lote en silencio
+
+El selector de la grilla del perfil agarraba **cualquier** enlace a post de la
+página, y en `@javierhernandezrealtor` 2 de 23 eran de otras cuentas
+(`/yourgirltheadvisor/reel/...`). Sin filtro, esos captions habrían entrado como
+si fueran del realtor. Es la misma familia que el bug del alt-text y el de
+DuckDuckGo: **un selector amplio leído como si fuera el sujeto.**
+
+Ahora hay dos filtros y son independientes:
+
+1. se descartan los enlaces cuya ruta no empieza con `/p/`, `/reel/` o
+   `/{handle}/`;
+2. al abrir cada post se compara el **autor** que declara `og:description`
+   contra el handle esperado. Si no coincide, el post se descarta.
+
+Lo descartado se cuenta en `posts_ajenos_descartados`, dentro del crudo. En la
+corrida real: 4 descartados en ese perfil, 0 en los demás.
+
+Dos más, encontrados en la prueba de punta a punta:
+
+- **`nombre_visible` salía `None` en todos los perfiles**, porque lo sacaba del
+  `<title>` y en `domcontentloaded` el título todavía dice solo «Instagram».
+  Ahora sale del meta description. Importa porque sin él la verificación de
+  handle compara solo contra el handle y queda más débil: con el arreglo, el
+  perfil de prueba pasa de *sin nombre* a `handle_confianza = alta`.
+- **`categoria_declarada` traía el bloque entero del header**, doscientos
+  caracteres pegados. Ahora se busca la línea exacta contra una lista de
+  categorías conocidas y da `Real Estate Agent`.
 
 ---
 
@@ -454,9 +517,9 @@ la bio, y el bloque `objetivo` con lo que decía el libro.
 
 ### `ig_signals.csv`
 
-Las **27 columnas del brief en su orden exacto**, más las 4 de texto. Hay una
-prueba que falla si el orden o los nombres cambian, porque es contrato con la
-app que lo consume.
+Las **27 columnas del brief en su orden exacto**, más 5 agregadas al final. Hay
+una prueba que falla si el orden o los nombres cambian, porque es contrato con
+la app que lo consume.
 
 | Columna | Qué trae |
 |---|---|
@@ -464,6 +527,7 @@ app que lo consume.
 | `comentarios_pregunta_calificacion` | **cuántos** comentarios de terceros preguntan por enganche, crédito, calificación, ITIN o documentos |
 | `menciona_itin/dpa/credito/va/fha/primera_casa` | **conteo de posts** que lo mencionan (0 si ninguno, vacío si no se leyó) |
 | `cuentas_hipotecarias_etiquetadas` | todas, con su frecuencia: `@maria.loanofficer (5)` |
+| `comentarios_redactados` | qué se le sacó al texto de terceros y cuántas veces: `telefono (1), mencion (4)`. Vacío si no hubo nada |
 | `paginacion_truncada` | `true` si la muestra quedó incompleta. Va **al final** para no mover el orden que ya consume la app |
 
 > **Una ambigüedad que resolví y conviene que revises.** El brief define
@@ -542,7 +606,8 @@ forma de distinguir «el detector anda» de «el detector devuelve algo».
 
 ## Pruebas
 
-**54 nuevas, 200 en total, 0 fallas.** Sin navegador, sin red, sin `pandas`.
+**65 en esta suite, 220 en total, 0 fallas.** Sin navegador, sin red, sin
+`pandas`.
 
 ```bash
 python tests/test_instagram_profundo.py
@@ -576,6 +641,16 @@ Y las del truncamiento y el Top 300:
 - `test_el_cruce_con_top300_es_uno_a_uno` — el que caza las 301 sobre 300
 - `test_top300_conserva_el_orden_de_la_hoja`
 
+Y las de la sesión y la redacción, que son las últimas:
+
+- `test_sin_cookies_de_sesion_no_hay_sesion_aunque_el_dom_diga_que_si` — el falso positivo
+- `test_el_dom_solo_sirve_como_evidencia_secundaria`
+- `test_el_telefono_de_un_tercero_no_llega_al_csv`
+- `test_el_email_y_la_mencion_de_un_tercero_tampoco`
+- `test_el_comentario_del_agente_conserva_su_contacto` — la asimetría, a propósito
+- `test_la_guarda_redundante_falla_ruidosamente`
+- `test_la_pregunta_de_calificacion_sobrevive_a_la_redaccion` — S8 no se come la redacción
+
 ---
 
 ## Privacidad de terceros
@@ -592,20 +667,59 @@ Ambos están en `.gitignore`, junto con el directorio de sesión de la cuenta
 dedicada — que son cookies, o sea una credencial. Y la guarda pre-commit ya
 rechazaba `ig_signals.csv` por sus columnas `email` y `nombre`.
 
+### El hueco: la guarda estaba escrita y no enchufada
+
+`redactar()` existía en `comentarios.py` desde el Bloque 1 y corría dentro de
+`Comentario.desde_crudo`. Pero `parsear_crudo()` arma las columnas de texto
+leyendo el crudo **directo**, sin construir `Comentario`, así que la redacción
+**no corría en la ruta que produce el CSV**. Lo vi auditando el idioma sobre la
+captura real, en un comentario con teléfono y email dentro.
+
+Dos cosas que vale separar, porque la conclusión primera era la equivocada:
+
+- **El hueco era real.** Ninguna llamada a `redactar()` en `finder.py`.
+- **Ese dato concreto no era de un tercero.** Las cuatro apariciones en el
+  crudo de ANA OSORIO son de `@anakaren_properties`, o sea ella misma, y van a
+  `comentarios_del_agente`. Donde la guarda sí actúa sobre terceros es en
+  JAVIER HERNANDEZ: cuatro @cuentas ajenas, ahora `[cuenta]`.
+
+Ahora el texto de terceros pasa por `redactar()` antes de entrar al CSV, y qué
+se redactó queda declarado en la columna `comentarios_redactados` —
+`telefono (1), mencion (4)` — porque una redacción silenciosa no le avisa a
+nadie de que la gente está dejando su teléfono en los comentarios.
+
+**La asimetría con el agente es deliberada.** Sus propios comentarios **no** se
+redactan: es nuestro prospecto, su teléfono y su email ya los tenemos de Model
+Match, y que los publique en su propio perfil es información de negocio. Un
+tercero que comenta en un post no eligió aparecer en nuestro CRM.
+
+Y como el bug fue justamente una guarda escrita sin enchufar,
+`_verificar_sin_pii_de_terceros()` revienta al final de `parsear_crudo()` si
+queda un email, un teléfono o un número largo en `comentarios_texto`. Es
+redundante a propósito: usa los mismos patrones que `redactar()`, así que no
+puede desincronizarse, y si alguien vuelve a armar esa columna por otra vía
+falla en vez de publicar un teléfono.
+
+> La regla que sale de acá, y sirve más allá de este archivo: **una guarda que
+> no está en el camino que produce el archivo que circula, no es una guarda.**
+> Que exista la función y que tenga pruebas no dice nada sobre si corre.
+
 ---
 
 ## Qué quedó sin resolver
 
-1. **No corrió contra Instagram.** No hay `playwright` ni `patchright` en esta
-   máquina y no tengo la cuenta dedicada. Lo que corrió de verdad: el detector
-   de idioma (medido), el parser completo (sobre 6 crudos sintéticos que
-   producen un CSV real), la carga de la lista de objetivo (1.203 desde el
-   libro) y las 182 pruebas.
+1. ~~**No corrió contra Instagram.**~~ **Ya corrió.** Con la cuenta dedicada y
+   `patchright` instalados, el piloto de 20 del Top 300 está capturando de
+   verdad. Lo medido en esa corrida está arriba: el 429 del endpoint, la vía
+   DOM con sesión, los 8,5 s por post, la contaminación de la grilla,
+   `nombre_visible`, `categoria_declarada` y el hueco de redacción. Ninguno de
+   esos seis se ve sin correrlo.
 
-2. **Los endpoints internos de Instagram son la pieza frágil y no verificada.**
-   `/api/v1/users/web_profile_info/` es estable en la práctica, pero los dos
-   `query_hash` de GraphQL —paginación del timeline y comentarios— **caducan sin
-   aviso**.
+2. **Los endpoints internos de Instagram son la pieza frágil, y uno ya falló.**
+   `/api/v1/users/web_profile_info/` **devuelve 429** para la cuenta nueva (ver
+   arriba), y los dos `query_hash` de GraphQL —paginación del timeline y
+   comentarios— **caducan sin aviso**. La vía que sostiene la captura hoy es el
+   DOM con sesión, que es más lento pero no depende de ningún hash.
 
    Esto ya **no** se corta en silencio: la paginación devuelve
    `fin_de_paginacion = False` con el motivo en `errores`, el perfil queda con
@@ -625,11 +739,24 @@ rechazaba `ig_signals.csv` por sus columnas `email` y `nombre`.
    en el CSV como su propia columna, así que la cifra es auditable, pero si
    querés el ratio sobre los *clasificables* hay que agregar una columna.
 
-5. **1.203 perfiles son 10 horas, no 8.** Y con comentarios el costo real puede
-   ser mayor: los comentarios se piden por GraphQL (una petición por post, ~1,2-2,8 s
-   de pausa), así que un perfil de 30 posts son ~30 peticiones extra. **El piloto
-   es lo que mide el tiempo real por perfil.** Si sale muy arriba, las palancas
-   son `--sin-comentarios` en el barrido amplio, o bajar `N_POSTS_CRUDO`.
+5. **El tiempo real es otro, y hay que decidirlo.** La estimación de 10 horas
+   para 1.203 perfiles asumía el JSON. Con el endpoint en 429 y la captura por
+   DOM, lo medido es **~8,5 s por post**, así que:
+
+   | Alcance | Posts/perfil | Tiempo medido |
+   |---|---|---|
+   | piloto de 20 | 20 | ~1,1 h |
+   | Top 300 | 20 | **~14 h**, no las 2,5 h estimadas con JSON |
+   | Top 300 | 10 | ~7 h |
+   | 1.203 (MQL + A/B) | 20 | ~56 h |
+
+   Un perfil privado cuesta ~30 s —no se abre ningún post—, así que la cifra
+   real del Top 300 depende de cuántos privados haya; en los primeros 7 del
+   piloto son 3 de 7. **Las palancas son `--posts N` y `--sin-comentarios`**, y
+   cuál tirar es decisión tuya, no mía: bajar `--posts` recorta el tiempo lineal
+   pero empuja perfiles hacia `paginacion_truncada` y deja
+   `captions_es_ratio` en null, que es exactamente el trade que el Bloque 1
+   existe para no hacer a ciegas.
 
 6. **No hay reintento de los bloqueados.** Cuando el lote se detiene por 3
    bloqueos seguidos, los perfiles ya marcados en el checkpoint no se vuelven a

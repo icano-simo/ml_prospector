@@ -26,10 +26,12 @@ from dataclasses import asdict, dataclass, field
 
 from loguru import logger
 
+from instagram import comentarios as comentarios_mod
 from instagram import extraccion
 from instagram.comentarios import (
     PerfilDeAudiencia,
     perfilar_audiencia,
+    redactar,
     verificar_anonimato,
 )
 from instagram.estado import EstadoPerfil
@@ -1554,6 +1556,7 @@ def parsear_crudo(crudo: dict) -> dict:
     handle_agente = (handle or "").strip().lstrip("@").lower()
     terceros: list[str] = []
     del_agente: list[str] = []
+    redacciones: dict[str, int] = {}
     for comentarios in comentarios_por_post.values():
         for c in comentarios or []:
             texto = (c.get("texto") or "").strip()
@@ -1561,9 +1564,22 @@ def parsear_crudo(crudo: dict) -> dict:
                 continue
             autor = (c.get("autor_handle") or "").strip().lstrip("@").lower()
             if autor and autor == handle_agente:
+                # Del agente: NO se redacta. Es nuestro prospecto y su telefono
+                # y su email ya los tenemos de MMI; que los publique en sus
+                # propios comentarios es informacion de negocio.
                 del_agente.append(texto)
             else:
-                terceros.append(texto)
+                # De terceros: SI se redacta. Si alguien deja su telefono o su
+                # email en un comentario, no entra al CSV.
+                #
+                # Esta llamada faltaba: redactar() existia en comentarios.py y
+                # corria en Comentario.desde_crudo, pero la ruta del DOM arma
+                # las columnas de texto directamente desde el crudo y la
+                # saltaba. La guarda estaba escrita y sin enchufar.
+                limpio, que_se_redacto = redactar(texto)
+                terceros.append(limpio)
+                for r in que_se_redacto:
+                    redacciones[r] = redacciones.get(r, 0) + 1
 
     fila["comentarios_n"] = len(terceros)
     if terceros:
@@ -1684,8 +1700,40 @@ def parsear_crudo(crudo: dict) -> dict:
     fila["comentarios_texto"] = t_terceros or None
     fila["comentarios_del_agente"] = t_agente or None
     fila["texto_truncado"] = bool(trunc1 or trunc2 or trunc3)
+    fila["comentarios_redactados"] = ", ".join(
+        "%s (%d)" % (k, n) for k, n in sorted(redacciones.items())
+    ) or None
+
+    # Guarda redundante, a proposito. La redaccion de arriba ya corrio, pero
+    # esta funcion es la unica puerta por la que el texto de terceros entra al
+    # CSV, y el bug que motiva estas lineas fue justamente una guarda escrita
+    # y no enchufada. Si alguien vuelve a armar `comentarios_texto` por otra
+    # via, esto falla ruidosamente en vez de publicar un telefono.
+    _verificar_sin_pii_de_terceros(fila.get("comentarios_texto"))
 
     return fila
+
+
+def _verificar_sin_pii_de_terceros(texto: str | None) -> None:
+    """Falla si queda un email o un telefono en el texto de terceros.
+
+    Se apoya en los mismos patrones que `redactar`, asi que no puede quedar
+    desincronizada con ella.
+    """
+    if not texto:
+        return
+    for nombre, patron in (
+        ("email", comentarios_mod._RE_EMAIL),
+        ("telefono", comentarios_mod._RE_TELEFONO),
+        ("numero largo", comentarios_mod._RE_NUMERO_LARGO),
+    ):
+        m = patron.search(texto)
+        if m:
+            raise AssertionError(
+                "comentarios_texto lleva un %s de un tercero sin redactar (%r). "
+                "El texto de terceros tiene que pasar por redactar() antes de "
+                "entrar al CSV." % (nombre, m.group(0))
+            )
 
 
 #: Las columnas del CSV, en orden. **Contrato con la app que lo consume.**
@@ -1702,6 +1750,10 @@ COLUMNAS_CSV = [
     # Texto crudo, agregado en el Bloque 1-bis.
     "captions_texto", "comentarios_texto", "comentarios_del_agente",
     "texto_truncado",
+    #: Que se le saco al texto de terceros y cuantas veces. Es el log de
+    #: auditoria de la redaccion: si un lote redacta mucho, alguien tiene que
+    #: enterarse de que la gente esta dejando su telefono en los comentarios.
+    "comentarios_redactados",
     #: Muestra truncada: se leyeron menos del 60% de los posts esperados sin
     #: llegar al fin de la paginacion. Cuando es true, `captions_es_ratio` esta
     #: vacio a proposito y `captions_n` dice cuantos si se leyeron.
