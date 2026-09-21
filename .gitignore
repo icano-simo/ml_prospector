@@ -1,3 +1,32 @@
+# ==========================================================================
+# DATOS CON PII · NUNCA SE VERSIONAN
+# --------------------------------------------------------------------------
+# Estos archivos traen nombre, email, telefono y disposiciones de CRM de
+# personas reales. Estuvieron versionados en un repo publico hasta el
+# 2026-09-21; se purgaron del historial ese dia. Viven fuera del repo, en
+# ../ml_prospector_datos_privados/.
+#
+# La guarda que hace fallar el commit esta en
+# scripts/verificacion/sin_pii_versionada.py, instalada como pre-commit.
+# Esta lista sola no alcanza: un `git add -f` la ignora.
+# ==========================================================================
+*.xlsx
+*.xls
+Calls.xlsx
+Historico Realtors.xlsx
+MMI Data.xlsx
+data/realtors.csv
+data/*_enriched*.csv
+data/*_scored*.csv
+realtor_scraper/output/model/
+realtor_scraper/output/*_enriched*.csv
+realtor_scraper/output/*_scored*.csv
+Data_inputIA/
+data_inputIA/
+
+# Cache crudo del API de Census (regenerable, 26 MB)
+latino_re_engine/data/raw/
+
 # Virtual environments
 .venv/
 venv/
