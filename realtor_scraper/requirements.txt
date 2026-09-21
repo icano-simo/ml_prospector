@@ -1,3 +1,12 @@
+# Capa de scraping y enriquecimiento.
+#
+# xgboost y scikit-learn se retiraron el 2026-09-21 junto con el modelo: el
+# label sobre el que se entreno no es valido. Ver la seccion "Que se intento y
+# no funciono" del README.
+#
+# Los modulos nuevos (geo/, hmda/, google_places/, identidad/, modelmatch/) y
+# las 146 pruebas usan solo la libreria estandar a proposito: son lo unico
+# verificable en cualquier maquina.
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 lxml>=4.9.0
@@ -9,5 +18,3 @@ tqdm>=4.66.0
 fake-useragent>=1.4.0
 patchright>=1.0.0
 playwright>=1.44.0
-scikit-learn>=1.4.0
-xgboost>=2.0.0

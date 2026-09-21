@@ -1,9 +1,12 @@
+# Dashboard y capa de consolidacion.
+#
+# xgboost, scikit-learn y joblib se retiraron el 2026-09-21 junto con el modelo.
+# Si vuelven, es porque existe un label valido -- resultados reales de la
+# prospeccion de 60 dias con una definicion escrita de que cuenta como
+# conversion -- y no porque alguien quiera un numero para ordenar la cola.
 streamlit==1.58.0
 pandas==3.0.3
 numpy==2.4.6
 plotly==6.8.0
-xgboost==3.2.0
-scikit-learn==1.9.0
-joblib==1.5.3
 openpyxl==3.1.5
 pgeocode==0.4.1
