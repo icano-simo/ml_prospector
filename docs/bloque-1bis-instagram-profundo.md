@@ -764,16 +764,24 @@ falla en vez de publicar un teléfono.
    para 1.203 perfiles asumía el JSON. Con el endpoint en 429 y la captura por
    DOM, lo medido es **~8,5 s por post**, así que:
 
-   | Alcance | Posts/perfil | Tiempo medido |
-   |---|---|---|
-   | piloto de 20 | 20 | ~1,1 h |
-   | Top 300 | 20 | **~14 h**, no las 2,5 h estimadas con JSON |
-   | Top 300 | 10 | ~7 h |
-   | 1.203 (MQL + A/B) | 20 | ~56 h |
+   Medido sobre los timestamps del log del piloto, no estimado:
 
-   Un perfil privado cuesta ~30 s —no se abre ningún post—, así que la cifra
-   real del Top 300 depende de cuántos privados haya; en los primeros 7 del
-   piloto son 3 de 7. **Las palancas son `--posts N` y `--sin-comentarios`**, y
+   | | Cuántos | Media |
+   |---|---|---|
+   | perfil **público**, 20 posts | 8 | **177 s** |
+   | perfil **privado** | 5 | **31 s** |
+   | mezcla de la muestra | 13 | 62% públicos → **121 s por perfil** |
+
+   Un privado es barato porque no se abre ningún post. Con esa mezcla:
+
+   | Alcance | Posts/perfil | Horas |
+   |---|---|---|
+   | piloto de 20 | 20 | 0,7 h |
+   | **Top 300** | **20** | **10,1 h** — no las 2,5 h estimadas con JSON |
+   | Top 300 | 10 | 6,0 h |
+   | 1.203 (MQL + A/B) | 20 | 40,4 h |
+
+   **Las palancas son `--posts N` y `--sin-comentarios`**, y
    cuál tirar es decisión tuya, no mía: bajar `--posts` recorta el tiempo lineal
    pero empuja perfiles hacia `paginacion_truncada` y deja
    `captions_es_ratio` en null, que es exactamente el trade que el Bloque 1

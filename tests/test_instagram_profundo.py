@@ -984,6 +984,108 @@ def _cookie(nombre, valor="x" * 20):
     return {"name": nombre, "value": valor}
 
 
+# ══ ENLACE DE BIO · el badge de Threads y el destino envuelto ════════════════
+#
+# Tres defectos medidos en la captura real del piloto:
+#
+#   el selector devolvia `https://www.threads.com/@gussellz?xmt=...` en 3 de 9
+#   perfiles -- el badge de Threads del header, no un enlace del agente;
+#
+#   `destino_enlace_bio` era null en los 14, aunque el envoltorio traia el
+#   destino a la vista en el parametro `u=`. El paso que lo resolvia vive en
+#   `capturar_crudo` DESPUES del `return` de la ruta DOM, o sea que nunca corria
+#   en el camino que se ejecuta;
+#
+#   y al arreglarlo puse `instagram.com` en la lista de exclusion, que mata el
+#   caso bueno: `l.instagram.com` ES el envoltorio legitimo. Los 13 destinos se
+#   fueron a None de golpe. Esa es la ultima prueba de este bloque.
+
+class _PaginaConEnlaces:
+    """Devuelve varios <a> por selector, en orden de DOM."""
+
+    def __init__(self, por_selector):
+        self._por_selector = por_selector
+
+    def query_selector_all(self, selector):
+        hrefs = self._por_selector.get(selector, [])
+        return [_Elemento(h) for h in hrefs]
+
+
+class _Elemento:
+    def __init__(self, href):
+        self._href = href
+
+    def get_attribute(self, nombre):
+        return self._href if nombre == "href" else None
+
+
+def test_el_badge_de_threads_no_es_el_enlace_de_la_bio():
+    from instagram.extraccion import _link_de_bio
+
+    pagina = _PaginaConEnlaces({
+        "header a[href^='http']:not([href*='instagram.com'])":
+            ["https://www.threads.com/@gussellz?xmt=AQG0LuZ"],
+    })
+    assert _link_de_bio(pagina) is None
+
+
+def test_si_el_badge_viene_primero_el_enlace_real_no_se_pierde():
+    """`query_selector` devuelve la PRIMERA coincidencia, asi que filtrar
+    despues no alcanzaba: ya habia elegido."""
+    from instagram.extraccion import _link_de_bio
+
+    pagina = _PaginaConEnlaces({
+        "header a[href^='http']:not([href*='instagram.com'])": [
+            "https://www.threads.com/@gussellz?xmt=AQG0LuZ",
+            "https://compratucasanc.com/",
+        ],
+    })
+    assert _link_de_bio(pagina) == "https://compratucasanc.com/"
+
+
+def test_el_envoltorio_de_instagram_si_es_el_enlace_de_la_bio():
+    """El error que cometi arreglando lo de arriba: `instagram.com` en la lista
+    de exclusion se lleva puesto `l.instagram.com`, que es el caso bueno."""
+    from instagram.extraccion import _link_de_bio
+
+    envuelto = ("https://l.instagram.com/?u=https%3A%2F%2Fbit.ly%2Fx&e=AUBt")
+    pagina = _PaginaConEnlaces({
+        "header a[href^='https://l.instagram.com']": [envuelto],
+    })
+    assert _link_de_bio(pagina) == envuelto
+
+
+def test_el_destino_sale_del_envoltorio_sin_navegar():
+    from instagram.extraccion import destino_envuelto
+
+    assert destino_envuelto(
+        "https://l.instagram.com/?u=https%3A%2F%2Fzenlist.com%2Fa%2Fjavier"
+        ".hernandez%3Futm_source%3Dig&e=AUBxcCVL"
+    ) == "https://zenlist.com/a/javier.hernandez?utm_source=ig"
+
+    assert destino_envuelto("https://compratucasanc.com/") is None, (
+        "si no es envoltorio devuelve None, para que quien llame sepa que "
+        "tiene que navegar"
+    )
+    assert destino_envuelto(None) is None
+    assert destino_envuelto("https://l.instagram.com/?e=AUBt") is None
+
+
+def test_el_destino_se_limpia_de_los_parametros_de_rastreo():
+    from instagram.extraccion import destino_limpio
+
+    assert destino_limpio(
+        "http://compratucasanc.com/?utm_source=ig&utm_medium=social"
+        "&fbclid=PAcGRvZgJleHRu"
+    ) == "http://compratucasanc.com/"
+    assert destino_limpio(
+        "https://zenlist.com/a/javier?utm_source=ig&ref=tarjeta"
+    ) == "https://zenlist.com/a/javier?ref=tarjeta", (
+        "se saca el rastreo de Instagram, no los parametros del agente"
+    )
+    assert destino_limpio(None) is None
+
+
 def test_sin_cookies_de_sesion_no_hay_sesion_aunque_el_dom_diga_que_si():
     """El falso positivo real: explore existe sin sesion."""
     from navegador import sesion_de_instagram_iniciada

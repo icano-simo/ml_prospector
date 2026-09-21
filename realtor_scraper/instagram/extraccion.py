@@ -354,17 +354,105 @@ def _categoria(page, ld: dict) -> str | None:
     return _texto(page, "header div:has-text('Real Estate')")
 
 
+#: Dominios del header que NO son el enlace de la bio.
+#:
+#: Medido: el selector `header a[href^='http']:not([href*='instagram.com'])`
+#: devolvia `https://www.threads.com/@gussellz?xmt=...` en 3 de 9 perfiles. Eso
+#: es el badge de Threads que Instagram pone en la cabecera, no un enlace que
+#: el agente puso: threads.com no contiene "instagram.com", asi que pasaba el
+#: filtro. Y peor que un valor falso: @gussellz dice "DM or visit link" en su
+#: bio, o sea que probablemente TIENE enlace y nos quedamos con el badge.
+#: OJO: `instagram.com` NO va en esta lista. `l.instagram.com` es el
+#: envoltorio legitimo del enlace de bio, y excluirlo mata el caso bueno --
+#: lo comprobe poniendolo y viendo los 13 destinos irse a None de golpe.
+_DOMINIOS_QUE_NO_SON_BIO = ("threads.com", "threads.net",
+                            "facebook.com/help", "about.meta.com")
+
+
 def _link_de_bio(page) -> str | None:
-    """El link de la bio. Su destino alimenta S4 (madurez tecnologica)."""
+    """El link de la bio. Su destino alimenta S4 (madurez tecnologica).
+
+    Recorre TODAS las coincidencias de cada selector, no la primera: si el
+    badge de Threads viene antes que el enlace de verdad en el orden del DOM,
+    quedarse con la primera lo pierde. Filtrar despues de `query_selector` no
+    alcanzaba, porque `query_selector` ya habia elegido.
+    """
     for selector in (
         "header a[href^='https://l.instagram.com']",
         "header a[href^='http']:not([href*='instagram.com'])",
         "a[href*='linktr.ee']", "a[href*='calendly']",
     ):
-        href = _atributo(page, selector, "href")
-        if href:
-            return href
+        try:
+            elementos = page.query_selector_all(selector)
+        except Exception:  # noqa: BLE001 - un selector roto no aborta el perfil
+            continue
+        for el in elementos:
+            try:
+                href = el.get_attribute("href")
+            except Exception:  # noqa: BLE001
+                continue
+            if href and not any(
+                d in href.lower() for d in _DOMINIOS_QUE_NO_SON_BIO
+            ):
+                return href
     return None
+
+
+def destino_envuelto(url: str | None) -> str | None:
+    """El destino que Instagram lleva dentro de su propio envoltorio.
+
+    Instagram envuelve los links de bio en
+    `https://l.instagram.com/?u=<destino url-encoded>&e=...`, asi que el
+    destino **ya viene en la URL**: se decodifica, no se navega. Gratis,
+    determinista y sin gastar una carga de pagina ni sacar el navegador de
+    Instagram.
+
+    Medido: en los 14 perfiles del piloto, `destino_enlace_bio` era null en
+    todos aunque el envoltorio traia `bit.ly/InstantHomeValueCheck`,
+    `zenlist.com/a/javier.hernandez` y `compratucasanc.com` a la vista. Ese
+    ultimo es un dominio en español, o sea señal S4 que estabamos tirando.
+
+    Devuelve None si la URL no es un envoltorio, para que quien llame sepa que
+    tiene que navegar si quiere el destino.
+    """
+    if not url or "l.instagram.com" not in url:
+        return None
+    try:
+        partes = urllib.parse.urlparse(url)
+        u = urllib.parse.parse_qs(partes.query).get("u")
+    except Exception:  # noqa: BLE001
+        return None
+    if not u or not u[0]:
+        return None
+    destino = urllib.parse.unquote(u[0])
+    return destino or None
+
+
+#: Parametros de rastreo que Instagram agrega al destino. No son del agente.
+_PARAMS_DE_RASTREO = ("utm_source", "utm_medium", "utm_content", "utm_campaign",
+                      "fbclid", "_aem", "igshid")
+
+
+def destino_limpio(url: str | None) -> str | None:
+    """El destino sin los parametros que Instagram le pega.
+
+    `compratucasanc.com/?utm_source=ig&utm_medium=social&fbclid=PAcGRvZ...`
+    es el mismo destino que `compratucasanc.com/`, y el segundo es el que se
+    puede comparar entre perfiles.
+    """
+    if not url:
+        return None
+    try:
+        partes = urllib.parse.urlparse(url)
+        quedan = [
+            (k, v) for k, v in urllib.parse.parse_qsl(partes.query)
+            if k.lower() not in _PARAMS_DE_RASTREO
+        ]
+        return urllib.parse.urlunparse(
+            partes._replace(query=urllib.parse.urlencode(quedan))
+        )
+    except Exception:  # noqa: BLE001
+        return url
 
 
 def _titulos_de_destacadas(page) -> list[str]:
@@ -1047,6 +1135,18 @@ def capturar_por_dom_con_sesion(
                                                  or _texto(page, "header")),
         "titulos_destacadas": _titulos_de_destacadas(page),
     }
+
+    # El destino del enlace de bio, decodificado del propio envoltorio.
+    #
+    # `capturar_crudo` tiene un paso 5 que lo resuelve navegando, y esta
+    # funcion RETORNA ANTES de llegar a el -- asi que en la ruta que de verdad
+    # corre nunca se ejecutaba. Es la tercera vez hoy que aparece la misma
+    # forma: un paso que existe y no esta en el camino que se ejecuta.
+    #
+    # Se resuelve aca y sin navegar, porque el destino viene en la URL.
+    envuelto = destino_envuelto(crudo["perfil"]["enlace_bio"])
+    crudo["destino_enlace_bio"] = destino_limpio(envuelto)
+    crudo["destino_enlace_bio_como_vino"] = envuelto
 
     if diag.estado is not EstadoPerfil.PUBLICO_LEIDO:
         _evaluar_truncamiento(crudo, n_posts)
