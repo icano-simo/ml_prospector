@@ -2,10 +2,18 @@
 MMI Data Enricher
 =================
 Reads MMI Data.xlsx (name, company, email, phone, state, units sold, loan volume),
-then enriches each realtor with:
-  - Zillow profile: rating, reviews, Spanish speaker, years exp, sales 12m, total sales,
-                    price range, profile URL, verified email/phone
-  - Instagram:      handle, followers, posts, bio, Spanish/Latino market signals
+then enriches each realtor with Instagram: handle, followers, posts, bio,
+captions with dates, comments aggregated as an audience profile, and the
+availability mask for every content signal.
+
+La capa de Zillow se retiro el 2026-09-21: produjo cero columnas en toda la
+salida y sus terminos de uso prohiben el scraping. Ver la seccion "Que se
+intento y no funciono" del README. No se reintenta.
+
+El archivo de entrada vive FUERA del repo, en
+../ml_prospector_datos_privados/insumos/, porque trae email y telefono de
+personas reales. Se puede apuntar a otro con --input o con la variable de
+entorno ML_PROSPECTOR_DATOS.
 
 Output: realtor_scraper/output/mmi_enriched_YYYYMMDD_HHMM.csv
         (saves checkpoint after every realtor)
@@ -36,13 +44,15 @@ except ImportError:
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 ROOT        = Path(__file__).parent
-MMI_FILE    = ROOT.parent / "latino_re_engine" / "MMI Data.xlsx"
 OUTPUT_DIR  = ROOT / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 sys.path.insert(0, str(ROOT))
-from zillow.profile_scraper import build_profile_url, scrape_profile, make_browser_context, warmup_session, reset_session
-from instagram.finder import find_instagram
+from datos_privados import ruta_insumo  # noqa: E402
+from instagram.finder import find_instagram  # noqa: E402
+from navegador import crear_contexto  # noqa: E402
+
+MMI_DEFECTO = "MMI Data.xlsx"
 
 logger.remove()
 logger.add(sys.stderr,
@@ -50,18 +60,16 @@ logger.add(sys.stderr,
            level="INFO")
 logger.add(OUTPUT_DIR / "mmi_enricher.log", rotation="10 MB", level="DEBUG")
 
-DELAY_ZILLOW    = (8.0, 15.0)
 DELAY_INSTAGRAM = (3.0, 7.0)
 DELAY_GOOGLE    = (4.0, 9.0)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Enrich MMI realtors with Zillow + Instagram")
+    parser = argparse.ArgumentParser(description="Enrich MMI realtors with Instagram")
     parser.add_argument("--limit",          type=int,   default=None)
     parser.add_argument("--state",          type=str,   default=None, help="Filter by state name")
     parser.add_argument("--skip-states",    nargs="+",  default=None, help="Skip these states, process the rest")
     parser.add_argument("--no-headless",    action="store_true")
-    parser.add_argument("--skip-zillow",    action="store_true")
     parser.add_argument("--skip-instagram", action="store_true")
     parser.add_argument("--resume",         type=str,   default=None,
                         help="Path to existing output CSV to resume from")
@@ -72,7 +80,7 @@ def main():
     args = parser.parse_args()
 
     # ── Load MMI data ─────────────────────────────────────────────────────────
-    input_path = Path(args.input) if args.input else MMI_FILE
+    input_path = Path(args.input) if args.input else ruta_insumo(MMI_DEFECTO)
     batch_name = args.batch_name or input_path.stem.replace(" ", "_")
     logger.info(f"Reading {input_path.name}  [batch: {batch_name}]...")
     df = pd.read_excel(input_path, dtype=str).fillna("")
@@ -129,16 +137,10 @@ def main():
 
     with sync_playwright() as p:
         # Persistent context + patchright patches Cloudflare fingerprinting
-        context = make_browser_context(p, headless=not args.no_headless)
-        page    = context.new_page()   # tab 1: Zillow profiles
-        ig_page = context.new_page()   # tab 2: DuckDuckGo + Instagram
-
-        # Warm up session on Zillow homepage before scraping profiles
-        if not args.skip_zillow:
-            warmup_session(page)
+        context = crear_contexto(p, headless=not args.no_headless)
+        ig_page = context.new_page()   # DuckDuckGo + Instagram
 
         bar = tqdm(records, desc="Enriching", unit="realtor")
-        zillow_count = 0  # tracks profile visits for reset/pause cadence
         for rec in bar:
             name = rec.get("full_name", "").strip()
             if not name:
@@ -149,38 +151,6 @@ def main():
 
             row = _base_record(rec)
             row["batch_name"] = batch_name
-
-            # ── Zillow enrichment ─────────────────────────────────────────────
-            if not args.skip_zillow:
-                # Every 2 profiles: visit a random Zillow page to break the
-                # consecutive /profile/ pattern that triggers bot detection.
-                if zillow_count > 0 and zillow_count % 2 == 0:
-                    reset_session(page)
-
-                # Every 8 profiles: longer pause so Zillow's session rate
-                # limiter resets — prevents bot wall from building up.
-                if zillow_count > 0 and zillow_count % 8 == 0:
-                    logger.info(f"Deep pause after {zillow_count} profiles...")
-                    time.sleep(random.uniform(75, 100))
-                    warmup_session(page)
-
-                zurl    = build_profile_url(name)
-                profile = scrape_profile(zurl, page)
-                zillow_count += 1
-                if profile:
-                    row.update({
-                        "zillow_url":           profile.get("profile_url"),
-                        "zillow_rating":        profile.get("rating"),
-                        "zillow_reviews":       profile.get("review_count"),
-                        "zillow_speaks_spanish": profile.get("speaks_spanish", False),
-                        "zillow_years_exp":     profile.get("years_experience"),
-                        "zillow_sales_12m":     profile.get("sales_last_12m"),
-                        "zillow_total_sales":   profile.get("total_sales"),
-                        "zillow_agency":        profile.get("agency"),
-                        "email_zillow":         profile.get("email"),
-                        "phone_zillow":         profile.get("phone"),
-                    })
-                time.sleep(random.uniform(*DELAY_ZILLOW))
 
             # ── Instagram lookup ──────────────────────────────────────────────
             if not args.skip_instagram:
@@ -215,11 +185,9 @@ def main():
             already_done.add(name)
             _save(enriched, output_path)
 
-            ig_found    = sum(1 for r in enriched if r.get("ig_handle"))
-            email_found = sum(1 for r in enriched if r.get("email_zillow"))
+            ig_found = sum(1 for r in enriched if r.get("ig_handle"))
             bar.set_postfix({
                 "ig": ig_found,
-                "emails": email_found,
                 "last": name[:18],
             })
 
@@ -254,10 +222,6 @@ def _save(records: list[dict], path: Path):
         # MMI original
         "full_name", "first_name", "last_name", "company", "state",
         "email_mmi", "phone_mmi", "units_sold", "loan_volume", "batch_name",
-        # Zillow enriched
-        "zillow_rating", "zillow_reviews", "zillow_speaks_spanish",
-        "zillow_years_exp", "zillow_sales_12m", "zillow_total_sales",
-        "zillow_agency", "email_zillow", "phone_zillow", "zillow_url",
         # Instagram
         "ig_handle", "ig_url", "ig_followers", "ig_posts",
         "ig_bio", "ig_is_private", "ig_spanish_signals", "ig_realtor_signals",
@@ -278,19 +242,13 @@ def _summary(records: list[dict], path: Path):
 
     def pct(n): return f"{n} ({n/total*100:.0f}%)"
 
-    zil_found   = int(df["zillow_url"].notna().sum())            if "zillow_url"    in df.columns else 0
-    spanish     = int(df["zillow_speaks_spanish"].eq(True).sum()) if "zillow_speaks_spanish" in df.columns else 0
-    ig_found    = int(df["ig_handle"].notna().sum())             if "ig_handle"     in df.columns else 0
-    email_zil   = int(df["email_zillow"].notna().sum())          if "email_zillow"  in df.columns else 0
-    email_mmi   = int(df["email_mmi"].notna().sum())             if "email_mmi"     in df.columns else 0
+    ig_found  = int(df["ig_handle"].notna().sum()) if "ig_handle" in df.columns else 0
+    email_mmi = int(df["email_mmi"].notna().sum()) if "email_mmi" in df.columns else 0
 
     logger.info("=" * 55)
     logger.info(f"Total realtors procesados : {total:,}")
-    logger.info(f"Perfil Zillow encontrado  : {pct(zil_found)}")
-    logger.info(f"Spanish speaker (Zillow)  : {pct(spanish)}")
     logger.info(f"Instagram encontrado      : {pct(ig_found)}")
     logger.info(f"Email MMI                 : {pct(email_mmi)}")
-    logger.info(f"Email Zillow (adicional)  : {pct(email_zil)}")
     logger.info(f"Guardado en: {path}")
     logger.info("=" * 55)
 

@@ -7,8 +7,16 @@ Flow:
        TX → data/tx_licenses.csv   (from TREC: trec.texas.gov)
        FL → data/fl_licenses.csv   (from DBPR: myfloridalicense.com)
   3. Filter agents to our target cities / counties
-  4. Enrich each agent via Zillow individual profile → phone, email, sales
-  5. Save to CSV (checkpoint after every agent)
+  4. Save to CSV
+
+El paso de enriquecimiento por Zillow se retiro el 2026-09-21: produjo cero
+columnas en toda la salida y sus terminos de uso prohiben el scraping. Ver la
+seccion "Que se intento y no funciono" del README. Lo que queda es la capa de
+licencias estatales, que es la llave de identidad del sistema: numero de
+licencia, no coincidencia por nombre.
+
+Los contactos (telefono, email) NO salen de aca. Salen del modulo de identidad
+(state_licenses + identidad/) y de los insumos privados.
 
 How to get the license files:
   TX: https://www.trec.texas.gov/agency-information/open-records
@@ -16,23 +24,18 @@ How to get the license files:
   FL: https://www.myfloridalicense.com  → "clicking here" (free download)
       Select Real Estate → save as data/fl_licenses.csv
 """
-import sys
-import time
-import random
 import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
+import sys
 from loguru import logger
-from tqdm import tqdm
-from playwright.sync_api import sync_playwright
 
 from config import OUTPUT_DIR
 from zip_loader import load_target_zips
 from state_licenses.zip_to_geo import zip_list_to_cities
 from state_licenses.file_processor import load_and_filter, build_target_geo
-from zillow.profile_scraper import build_profile_url, scrape_profile
 
 logger.remove()
 logger.add(sys.stderr, format="<green>{time:HH:mm:ss}</green> | <level>{level}</level> | {message}", level="INFO")
@@ -47,8 +50,6 @@ def main():
     parser = argparse.ArgumentParser(description="Realtor Scraper — Latino Markets")
     parser.add_argument("--states",      nargs="+", default=["TX", "FL"])
     parser.add_argument("--limit",       type=int,  default=None, help="Limit ZIPs (testing)")
-    parser.add_argument("--no-headless", action="store_true",     help="Show Zillow browser")
-    parser.add_argument("--skip-zillow", action="store_true",     help="Skip Zillow enrichment")
     args = parser.parse_args()
 
     # ── Load target ZIPs ──────────────────────────────────────────────────────
@@ -116,15 +117,6 @@ def main():
 
     logger.info(f"Total agents from license files: {len(all_agents)}")
     _save(all_agents, output_path)
-
-    # ── STEP 2: Zillow enrichment ─────────────────────────────────────────────
-    if not args.skip_zillow:
-        logger.info("=" * 55)
-        logger.info("STEP 2 — Zillow profiles: phone, email, sales")
-        logger.info("=" * 55)
-        _enrich_zillow(all_agents, output_path, headless=not args.no_headless)
-
-    _save(all_agents, output_path)
     _print_summary(all_agents, output_path)
 
 
@@ -173,55 +165,6 @@ def _df_to_agents(df: pd.DataFrame, zip_list: list, geo_map: dict,
     return agents
 
 
-def _enrich_zillow(agents: list[dict], output_path: Path, headless: bool = True):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=headless,
-            args=["--disable-blink-features=AutomationControlled", "--no-first-run"],
-        )
-        context = browser.new_context(
-            viewport={"width": 1366, "height": 768},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
-            locale="en-US",
-        )
-        context.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', { get: () => undefined });"
-        )
-        page = context.new_page()
-
-        bar = tqdm(agents, desc="Zillow profiles", unit="agent")
-        for agent in bar:
-            name = agent.get("name", "")
-            if not name:
-                continue
-
-            url     = build_profile_url(name)
-            profile = scrape_profile(url, page)
-
-            if profile:
-                agent["email"]            = profile.get("email")
-                agent["phone"]            = agent.get("phone") or profile.get("phone")
-                agent["zillow_profile_url"] = profile.get("profile_url")
-                agent["sales_last_12m"]   = profile.get("sales_last_12m")
-                agent["total_sales"]      = profile.get("total_sales")
-                agent["years_experience"] = profile.get("years_experience")
-                agent["speaks_spanish"]   = profile.get("speaks_spanish", False)
-                agent["rating"]           = profile.get("rating")
-                agent["review_count"]     = profile.get("review_count")
-                if not agent.get("agency") and profile.get("agency"):
-                    agent["agency"]       = profile.get("agency")
-
-            emails = sum(1 for a in agents if a.get("email"))
-            bar.set_postfix({"emails": emails})
-            _save(agents, output_path)
-            time.sleep(random.uniform(2.0, 4.5))
-
-        browser.close()
-
-
 def _save(agents: list[dict], path: Path):
     if not agents:
         return
@@ -230,12 +173,9 @@ def _save(agents: list[dict], path: Path):
     col_order = [
         "state", "zip_code", "city", "county", "market_score",
         "hispanic_pct", "spanish_home_pct",
-        "name", "agency", "phone", "email",
+        "name", "agency",
         "license_number", "license_type", "license_status", "license_expiration",
         "sponsoring_broker",
-        "rating", "review_count", "speaks_spanish",
-        "years_experience", "sales_last_12m", "total_sales",
-        "zillow_profile_url",
         "total_population", "median_income",
     ]
     existing = [c for c in col_order if c in df.columns]
@@ -248,16 +188,16 @@ def _print_summary(agents: list[dict], path: Path):
     if total == 0:
         logger.warning("No agents found.")
         return
-    with_email = int(df["email"].notna().sum()) if "email" in df.columns else 0
-    with_phone = int(df["phone"].notna().sum()) if "phone" in df.columns else 0
-    spanish    = int(df["speaks_spanish"].sum()) if "speaks_spanish" in df.columns else 0
+    con_licencia = (
+        int(df["license_number"].notna().sum()) if "license_number" in df.columns else 0
+    )
     logger.info("=" * 55)
-    logger.info(f"Total agents      : {total:,}")
-    logger.info(f"Con telefono      : {with_phone:,} ({with_phone/total*100:.0f}%)")
-    logger.info(f"Con email         : {with_email:,} ({with_email/total*100:.0f}%)")
-    logger.info(f"Spanish speakers  : {spanish:,} ({spanish/total*100:.0f}%)")
+    logger.info(f"Total agents        : {total:,}")
+    logger.info(f"Con nro de licencia : {con_licencia:,} ({con_licencia/total*100:.0f}%)")
     if "state" in df.columns:
         logger.info(f"Por estado:\n{df.groupby('state').size().to_string()}")
+    logger.info(f"Guardado en: {path}")
+    logger.info("=" * 55)
     logger.info(f"Guardado en: {path}")
 
 
