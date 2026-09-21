@@ -32,6 +32,9 @@ geo/cache/
 hmda/cache/
 hmda/salida/
 
+# Catalogo de variables del API de Census (8,8 MB, regenerable)
+latino_re_engine/data/cache_variables/
+
 # Capturas de Model Match (traen contactos de agentes)
 docs/capturas/
 modelmatch/capturas/
