@@ -564,12 +564,44 @@ def _engagement(page) -> tuple[int | None, int | None]:
     return likes, comentarios
 
 
+#: El enlace del PIE DE PAGINA de Instagram, que apunta a `/explore/locations/`
+#: pelado y dice "Locations". Esta en todas las paginas, tengan geotag o no.
+_RE_LOCATION_REAL = re.compile(r"/explore/locations/\d+")
+#: Y su texto, por si el href cambia. En los idiomas que sirve Instagram aca.
+_TEXTOS_DE_PIE = ("locations", "ubicaciones", "lugares")
+
+
 def _geotag(page) -> str | None:
-    """El lugar etiquetado. Alimenta S7 sub-estatal, que el lote nunca trae."""
+    """El lugar etiquetado. Alimenta S7 sub-estatal, que el lote nunca trae.
+
+    **El bug que estas lineas arreglan.** El selector
+    `a[href*='/explore/locations/']` tambien casa con el enlace del PIE DE
+    PAGINA de Instagram, que existe en todas las paginas y cuyo texto es
+    literalmente «Locations». Medido sobre el piloto: **«Locations» salio 106
+    veces de unos 180 geotags**, siete veces mas que el lugar real mas
+    frecuente, y se colo en `geotags_top` -- una columna que ya habia
+    entregado.
+
+    El geotag de verdad apunta a `/explore/locations/<id>/<slug>/`. El pie
+    apunta a `/explore/locations/` sin id. Eso los separa, y el texto lo
+    confirma por si el href cambia.
+    """
     for selector in ("a[href*='/explore/locations/']",
                      "div[role='button'] a[href*='locations']"):
-        t = _texto(page, selector)
-        if t:
+        try:
+            elementos = page.query_selector_all(selector)
+        except Exception:  # noqa: BLE001
+            continue
+        for el in elementos:
+            try:
+                href = el.get_attribute("href") or ""
+                t = (el.inner_text() or "").strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if not t or t.lower() in _TEXTOS_DE_PIE:
+                continue
+            if not _RE_LOCATION_REAL.search(href):
+                continue
             return t
     return None
 

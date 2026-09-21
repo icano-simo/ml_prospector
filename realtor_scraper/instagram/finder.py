@@ -28,6 +28,11 @@ from loguru import logger
 
 from instagram import comentarios as comentarios_mod
 from instagram import extraccion
+from instagram.audiencia import (
+    COLUMNAS_AUDIENCIA,
+    columnas_vacias,
+    perfilar_audiencia_1ter,
+)
 from instagram.comentarios import (
     PerfilDeAudiencia,
     perfilar_audiencia,
@@ -654,6 +659,11 @@ PISTAS_HIPOTECARIAS = (
 )
 
 #: Designaciones profesionales. Alimentan S10.
+#: Textos de la interfaz de Instagram que se colaron como geotag. Ver `_geotag`
+#: en extraccion.py: el enlace del pie de pagina apunta a `/explore/locations/`
+#: y dice «Locations». Salio 106 veces de unos 180 geotags en el piloto.
+_GEOTAGS_QUE_NO_SON_LUGARES = ("locations", "ubicaciones", "lugares")
+
 DESIGNACIONES = ("abr", "mrp", "gri", "sres", "crs", "e-pro", "epro", "cips",
                  "nahrep", "ahwd", "rene", "psa", "sfr", "c2ex", "gree",
                  "clhms", "crb")
@@ -1517,6 +1527,13 @@ def parsear_crudo(crudo: dict) -> dict:
     truncada = crudo.get("paginacion_truncada")
     fila["paginacion_truncada"] = truncada
 
+    # Las 17 del Bloque 1-ter arrancan vacias y se llenan abajo si el perfil se
+    # leyo. Se ponen ACA, antes del return de un perfil no usable, porque si se
+    # pusieran solo abajo la fila de un privado saldria sin esas claves y el
+    # CSV las escribiria vacias por accidente en vez de por decision.
+    fila.update(columnas_vacias())
+    fila["_audiencia"] = None
+
     if not senales_usables:
         return fila
 
@@ -1701,7 +1718,12 @@ def parsear_crudo(crudo: dict) -> dict:
     for p in posts:
         ubic = p.get("ubicacion") or {}
         nombre_geo = (ubic.get("nombre") or "").strip()
-        if nombre_geo:
+        # «Locations» es el enlace del pie de pagina de Instagram, no un lugar.
+        # El scraper ya no lo captura (ver `_geotag`), pero los crudos tomados
+        # antes del arreglo lo tienen adentro, y el crudo no se reescribe. Se
+        # filtra aca para que esos 20 perfiles salgan limpios sin volver a
+        # raspar, que es justamente para lo que se guarda el crudo.
+        if nombre_geo and nombre_geo.lower() not in _GEOTAGS_QUE_NO_SON_LUGARES:
             geos[nombre_geo] = geos.get(nombre_geo, 0) + 1
     fila["geotags_top"] = ", ".join(
         "%s (%d)" % (g, n)
@@ -1726,6 +1748,30 @@ def parsear_crudo(crudo: dict) -> dict:
     # y no enchufada. Si alguien vuelve a armar `comentarios_texto` por otra
     # via, esto falla ruidosamente en vez de publicar un telefono.
     _verificar_sin_pii_de_terceros(fila.get("comentarios_texto"))
+
+    # ── Bloque 1-ter · Perfil de audiencia ───────────────────────────────────
+    #
+    # `terceros` llega REDACTADO y sin autor, que es la condicion que
+    # `perfilar_audiencia_1ter` pide: los comentarios se agregan como perfil de
+    # audiencia, y la cita va sin autor porque la funcion nunca lo recibe.
+    #
+    # Si el perfil no se leyo, las 17 columnas van vacias y no en cero. Un
+    # privado no tiene «cero temas de credito»: no lo leimos.
+    if estado_csv == EstadoPerfil.PUBLICO_LEIDO.value:
+        aud = perfilar_audiencia_1ter(
+            captions=[c for _, c in con_fecha if (c or "").strip()],
+            comentarios_de_terceros=terceros,
+            geotags=[g for g, n in geos.items() for _ in range(n)],
+            bio=bio,
+            # Solo para EXCLUIR: sin esto el nombre del agente salia listado
+            # como un barrio de si mismo. No produce ninguna etiqueta.
+            nombres_a_vetar=tuple(
+                x for x in (objetivo.get("nombre"), handle,
+                            perfil.get("nombre_visible")) if x
+            ),
+        )
+        fila.update(aud.a_columnas())
+        fila["_audiencia"] = aud  # lo consume parsear_crudos, no va al CSV
 
     return fila
 
@@ -1774,7 +1820,9 @@ COLUMNAS_CSV = [
     #: llegar al fin de la paginacion. Cuando es true, `captions_es_ratio` esta
     #: vacio a proposito y `captions_n` dice cuantos si se leyeron.
     "paginacion_truncada",
-]
+] + COLUMNAS_AUDIENCIA
+#: ^ Las 17 del Bloque 1-ter van al final, despues de todo lo anterior, para
+#: no mover ni un indice de lo que la app ya consume.
 
 
 def parsear_crudos(
@@ -1825,6 +1873,59 @@ def parsear_crudos(
         escritor.writeheader()
         for f in filas:
             escritor.writerow({k: f.get(k) for k in COLUMNAS_CSV})
+
+    # ── Las citas completas, sin recortar ────────────────────────────────────
+    #
+    # El CSV lleva 3 citas por etiqueta recortadas a 200 caracteres, porque es
+    # una vista para leer. Las completas van aca.
+    #
+    # Y van en su PROPIO archivo, no dentro de `ig_raw/`: ese directorio es el
+    # crudo, y hay una prueba que falla si aparece algo derivado adentro. Un
+    # derivado mezclado con su fuente deja de ser re-derivable.
+    ruta_citas = ruta_csv.parent / "ig_audiencia.json"
+    derivado = {}
+    for f in filas:
+        aud = f.get("_audiencia")
+        clave = f.get("email") or f.get("handle") or f.get("nombre")
+        if aud is None or not clave:
+            continue
+        ratio, n_educa, n_anuncia = aud.ratio_educa_vs_anuncia()
+        derivado[clave] = {
+            "handle": f.get("handle"),
+            "denominadores": {
+                "captions": aud.n_captions,
+                "comentarios_de_terceros": aud.n_comentarios,
+            },
+            "conteos": {
+                "audiencia": aud.audiencia.conteos,
+                "temas": aud.temas.conteos,
+                "registro": aud.registro_.conteos,
+                "marcadores_culturales": aud.marcadores.conteos,
+                "precios": aud.precios.conteos,
+                "barrios": aud.lugares.conteos,
+                "programas": aud.programas.conteos,
+                "preguntas_recibidas": aud.preguntas.conteos,
+            },
+            "educa_vs_anuncia": {
+                "ratio": ratio, "n_educa": n_educa, "n_anuncia": n_anuncia,
+            },
+            "idioma": {
+                "publica_es": aud.idioma_publica.es,
+                "publica_en": aud.idioma_publica.en,
+                "publica_total": aud.idioma_publica.total,
+                "comentarios_es": aud.idioma_comentarios.es,
+                "comentarios_en": aud.idioma_comentarios.en,
+                "comentarios_total": aud.idioma_comentarios.total,
+            },
+            # Sin autor. Los comentarios de terceros llegan ya redactados.
+            "citas": aud.citas_completas(),
+        }
+    tmp = ruta_citas.with_suffix(".json.tmp")
+    tmp.write_text(
+        json.dumps(derivado, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    os.replace(tmp, ruta_citas)
 
     por_estado: dict[str, int] = {}
     por_confianza: dict[str, int] = {}

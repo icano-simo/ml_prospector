@@ -58,6 +58,8 @@ realtor_scraper/output/browser_profile_instagram/
 # handle: es contenido de personas reales y no va al repo.
 realtor_scraper/output/ig_raw/
 realtor_scraper/output/ig_signals.csv
+# Citas completas del Bloque 1-ter: texto de terceros, aunque redactado.
+realtor_scraper/output/ig_audiencia.json
 realtor_scraper/output/ig_checkpoint.json
 realtor_scraper/output/ig_manifiesto.json
 realtor_scraper/output/ig_objetivo_excluidos.csv

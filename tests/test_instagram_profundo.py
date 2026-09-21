@@ -607,7 +607,18 @@ def test_el_csv_tiene_las_columnas_exactas_del_brief():
     ]
     agregadas = ["captions_texto", "comentarios_texto", "comentarios_del_agente",
                  "texto_truncado", "comentarios_redactados", "paginacion_truncada"]
-    assert COLUMNAS_CSV == del_brief + agregadas, (
+    # Las 17 del Bloque 1-ter, en el orden exacto de ese brief.
+    del_brief_1ter = [
+        "audiencia_segmentos", "audiencia_dominante",
+        "temas", "tema_dominante", "ratio_educa_vs_anuncia",
+        "idioma_publica_es", "idioma_publica_en",
+        "idioma_comentarios_es", "idioma_comentarios_en", "desajuste_idioma",
+        "registro", "marcadores_culturales",
+        "precios_mencionados", "barrios_mencionados", "programas_mencionados",
+        "preguntas_recibidas",
+        "citas_por_etiqueta",
+    ]
+    assert COLUMNAS_CSV == del_brief + agregadas + del_brief_1ter, (
         "el orden y los nombres son contrato con la app que consume el archivo"
     )
 
@@ -836,9 +847,15 @@ def test_privado_no_tiene_truncamiento_sino_estado():
 
 
 def test_la_columna_de_truncamiento_esta_en_el_contrato():
+    from instagram.audiencia import COLUMNAS_AUDIENCIA
+
     assert "paginacion_truncada" in COLUMNAS_CSV
-    assert COLUMNAS_CSV[-1] == "paginacion_truncada", (
-        "va al final para no mover el orden que ya consume la app"
+    # Era la ultima hasta que el Bloque 1-ter agrego 17 columnas DESPUES. Lo
+    # que el contrato protege es que nada se inserte ANTES, o sea que ningun
+    # indice de lo que la app ya consume se mueva.
+    corte = len(COLUMNAS_CSV) - len(COLUMNAS_AUDIENCIA)
+    assert COLUMNAS_CSV[corte - 1] == "paginacion_truncada", (
+        "lo nuevo va al final para no mover el orden que ya consume la app"
     )
 
 
@@ -1051,6 +1068,28 @@ class _Elemento:
 
     def get_attribute(self, nombre):
         return self._href if nombre == "href" else None
+
+
+def test_el_geotag_del_pie_de_pagina_no_entra_al_csv():
+    """«Locations» salio 106 veces de unos 180 geotags del piloto.
+
+    Es el enlace del pie de pagina de Instagram, que apunta a
+    `/explore/locations/` y existe en todas las paginas. Se colo en
+    `geotags_top`, una columna ya entregada. El scraper ya no lo captura, pero
+    los crudos de antes lo tienen dentro y el crudo no se reescribe: el filtro
+    del parser es lo que los deja limpios sin volver a raspar.
+    """
+    posts = [
+        _post("Nueva casa en el sur de la ciudad, con texto suficiente",
+              dias_atras=0, geo="Locations"),
+        _post("Otra casa mas en la misma zona, con texto suficiente",
+              dias_atras=5, geo="Locations"),
+        _post("Y una tercera casa preciosa, con texto suficiente aca",
+              dias_atras=9, geo="Pilsen, Chicago"),
+    ]
+    fila = parsear_crudo(_crudo(posts=posts))
+    assert "Locations" not in (fila["geotags_top"] or ""), fila["geotags_top"]
+    assert "Pilsen, Chicago" in fila["geotags_top"]
 
 
 def test_el_badge_de_threads_no_es_el_enlace_de_la_bio():

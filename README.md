@@ -248,6 +248,7 @@ real —(likes + comentarios) ÷ seguidores— se calcula en
 | 0 · Limpieza | [docs/bloque-0-limpieza.md](docs/bloque-0-limpieza.md) |
 | 1 · Instagram real | [docs/bloque-1-instagram.md](docs/bloque-1-instagram.md) |
 | 1-bis · Instagram profundo | [docs/bloque-1bis-instagram-profundo.md](docs/bloque-1bis-instagram-profundo.md) |
+| 1-ter · Perfil de audiencia | [docs/bloque-1ter-audiencia.md](docs/bloque-1ter-audiencia.md) |
 | 2 · Reemplazo de S8 | [docs/bloque-2-s8.md](docs/bloque-2-s8.md) |
 | 3 · Identidad | [docs/bloque-3-identidad.md](docs/bloque-3-identidad.md) |
 | 4 · Census y features relativas | [docs/bloque-4-census.md](docs/bloque-4-census.md) |
@@ -261,7 +262,7 @@ real —(likes + comentarios) ÷ seguidores— se calcula en
 python tests/correr_todo.py
 ```
 
-**220 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
+**293 pruebas, 0 fallas.** Corren **sin `pandas`, sin `playwright` y sin red**, a
 propósito: son lo único verificable en cualquier máquina, y cuando algo falle en
 una corrida real, que pasen dice que el problema está en el selector o en el
 entorno y no en la lógica.
@@ -270,7 +271,8 @@ entorno y no en la lógica.
 |---|---|---|
 | `guardas` | 27 | las reglas de guardia de PACS-H |
 | `instagram` | 60 | estado del perfil, verificación de handle, idioma, posts, comentarios |
-| `instagram_profundo` | 65 | captura cruda, sesión, muestra truncada, redacción, parser y contrato de `ig_signals.csv` |
+| `instagram_profundo` | 75 | captura cruda, sesión, muestra truncada, redacción, parser y contrato de `ig_signals.csv` |
+| `audiencia` | 54 | léxicos bilingües, etiqueta con cita, desajuste de idioma |
 | `modelmatch` | 15 | las cuatro trampas verificadas del perfil de prueba |
 | `identidad` | 35 | normalización, cascada de cruce, registro versionado |
 | `hmda` | 8 | fallout y mix, con el denominador correcto |

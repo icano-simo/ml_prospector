@@ -24,6 +24,8 @@ SUITES = [
     ("instagram", "tests.test_instagram", "estado, verificacion, idioma, posts, comentarios"),
     ("instagram_profundo", "tests.test_instagram_profundo",
      "captura cruda, parser y contrato de ig_signals.csv"),
+    ("audiencia", "tests.test_audiencia",
+     "lexicos bilingues, etiqueta con cita, desajuste de idioma"),
     ("modelmatch", "tests.test_modelmatch", "las cuatro trampas verificadas"),
     ("identidad", "tests.test_identidad", "normalizacion, cascada, registro"),
     ("hmda", "tests.test_hmda", "fallout y mix, con el denominador correcto"),
