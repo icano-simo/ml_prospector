@@ -138,12 +138,38 @@ def guardar(d: dict) -> tuple[int, dict]:
     avisos: list[str] = []
     filas: list[dict] = []
 
+    def _parsear(funcion, texto, etiqueta_error):
+        """Derivar NUNCA puede impedir guardar.
+
+        Si el parser revienta con un texto que no vio antes, el crudo se guarda
+        igual y el error queda en `parseado`. Es lo contrario de lo que hacia
+        antes: `parsear_perfil` corria fuera de cualquier try, asi que una
+        excepcion tiraba la peticion entera y se perdia el volcado.
+
+        Y ese volcado no se puede volver a pedir: la prueba de Model Match vence
+        el 1 de octubre. Un parser que falla se arregla y se re-parsea gratis;
+        un perfil que no se capturo no vuelve.
+        """
+        try:
+            return funcion(texto), None
+        except Exception as exc:  # noqa: BLE001
+            aviso = ("el parser fallo en %s (%s: %s). El TEXTO SE GUARDO igual "
+                     "y se puede re-parsear sin volver a capturar."
+                     % (etiqueta_error, type(exc).__name__, str(exc)[:160]))
+            avisos.append(aviso)
+            return {"estado_del_parser": "fallo", "error": str(exc)[:400]}, exc
+
     def agregar(seccion, texto, *, alcance, nivel=None, etiqueta=None,
                 orden=0, extra=None):
         filas.append({
             "upload_batch_id": lote, "uploaded_at": ahora, "alcance": alcance,
             "estado": estado,
             "condado_fips": None,   # el crosswalk nombre->FIPS todavia no
+            # La etiqueta va en COLUMNA, no solo dentro del jsonb: si dos
+            # bloques de mercado se ven identicos en la base, la biblioteca no
+            # puede saber cual es cual y el error no da ningun aviso.
+            "geografia_etiqueta": etiqueta,
+            "geografia_nivel": nivel,
             "sf_lead_id": sf_lead_id, "mmi_agent_id": mmi_agent_id,
             "texto_crudo": texto,
             "parseado": {"seccion": seccion, "orden": orden, "nivel": nivel,
@@ -153,17 +179,27 @@ def guardar(d: dict) -> tuple[int, dict]:
             "version_parser": "parser_mm 2026-09-22", "capturado_en": ahora,
         })
 
-    agregar("overview", overview, alcance="perfil",
-            extra={"perfil": parsear_perfil(overview)})
+    perfil, _ = _parsear(parsear_perfil, overview, "el Overview")
+    agregar("overview", overview, alcance="perfil", extra={"perfil": perfil})
+
     for b in bloques:
+        # El bloque del estado no tiene nombre de condado, asi que lleva el
+        # codigo del estado como etiqueta. Sin esto quedaba NULL, y una fila de
+        # mercado sin etiqueta es justo la que no se puede distinguir de otra
+        # al mirar la tabla.
+        etiqueta = b.etiqueta or (estado if b.nivel == "estado" else None)
+        metricas, _ = _parsear(
+            parsear_mercado, b.texto,
+            "Market Signals de %s" % (etiqueta or "el estado"))
         agregar("market_signals", b.texto, alcance="mercado", nivel=b.nivel,
-                etiqueta=b.etiqueta, orden=b.orden,
-                extra={"metricas": parsear_mercado(b.texto)})
+                etiqueta=etiqueta, orden=b.orden,
+                extra={"metricas": metricas})
 
     originators = d.get("originators") or None
     if originators:
-        p = parsear_perfil(originators)
-        avisos.extend(detectar_inversion(p.get("tab_orig") or []))
+        p, fallo = _parsear(parsear_perfil, originators, "Originators")
+        if not fallo:
+            avisos.extend(detectar_inversion(p.get("tab_orig") or []))
         agregar("originators", originators, alcance="perfil",
                 extra={"perfil": p})
     else:
@@ -173,8 +209,8 @@ def guardar(d: dict) -> tuple[int, dict]:
         agregar("lenders", d["lenders"], alcance="perfil")
 
     # TRAMPA 1 · las geografias tienen que dar volumenes distintos.
-    vols = [f["parseado"]["metricas"].get("total_volume") for f in filas
-            if f["parseado"]["seccion"] == "market_signals"]
+    vols = [(f["parseado"].get("metricas") or {}).get("total_volume")
+            for f in filas if f["parseado"]["seccion"] == "market_signals"]
     vols = [v for v in vols if v is not None]
     if len(vols) > 1 and len(set(vols)) == 1:
         avisos.append(
