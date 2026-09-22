@@ -120,12 +120,16 @@ code{background:var(--fondo);padding:1px 5px;border-radius:4px;font-size:12px}
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let FILAS = [], SEL = null, TAB = 'mercados', GEO = [];
+let FILAS = [], SEL = null, TAB = 'mercados', GEO = [], FORZAR = false;
 
 async function api(ruta, opciones){
   const r = await fetch(ruta, opciones);
   const j = await r.json().catch(() => ({error:'respuesta no-JSON'}));
-  if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  if(!r.ok){
+    const e = new Error(j.error || ('HTTP ' + r.status));
+    e.status = r.status; e.datos = j;
+    throw e;
+  }
   return j;
 }
 
@@ -262,7 +266,7 @@ async function guardar(){
       body: JSON.stringify({
         realtor_id: SEL.id, sf_lead_id: SEL.sf_lead_id, estado: SEL.estado,
         mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
-        volcado: volcado,
+        volcado: volcado, forzar: FORZAR,
       })
     });
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');
@@ -278,8 +282,15 @@ async function guardar(){
     $('#tam').textContent = '';
     cargarBiblio();
   }catch(e){
-    $('#msgs').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+    /* 409 = este volcado ya esta, identico. Se puede guardar igual, pero a
+       proposito: cada copia infla el conteo de capturas por mercado. */
+    const repetido = e.status === 409;
+    $('#msgs').innerHTML = `<div class="err">${esc(e.message)}</div>` +
+      (repetido ? `<div style="margin:8px 0">
+        <button class="btn sec" id="btnIgual">Guardarlo igual</button></div>` : '');
+    if(repetido) $('#btnIgual').onclick = () => { FORZAR = true; guardar() };
   }finally{
+    FORZAR = false;
     if($('#btnGuardar')){ $('#btnGuardar').disabled=false; $('#btnGuardar').textContent='Guardar' }
     window.scrollTo({top:0, behavior:'smooth'});
   }

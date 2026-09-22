@@ -135,14 +135,56 @@ SECCION_POR_BASE = {
 }
 
 
+#: Bases con las que la exclusion puede trabajar. `indistinguible` entra porque
+#: con una sola relacion las dos bases dan 100%: la eleccion no cambia nada.
+BASES_ACEPTADAS = (BASE_PARA_EXCLUSION, "indistinguible")
+
+
 def wallet_share_para_exclusion(perfil: dict) -> list[dict]:
     """El reparto que decide la exclusion: el de UNIDADES.
 
-    Lee `orig_buyer` y no `tab_orig`. Si falta, devuelve lista vacia y **no cae
-    al de volumen**: un reparto con la otra base da un numero plausible con la
-    definicion equivocada, que es exactamente el error que no se ve.
+    Lee `orig_buyer` y no `tab_orig`, y **no cae al de volumen** si falta: un
+    reparto con la otra base da un numero plausible con la definicion
+    equivocada, que es exactamente el error que no se ve.
+
+    Levanta `TrampaDetectada` en los dos casos en que devolver `[]` mentiria:
+
+    1 · el perfil declara un fallo sobre `orig_buyer` -- la seccion estaba en el
+        texto y no se parseo. Un `[]` ahi se lee como "no trabaja con nadie", y
+        la exclusion no dispararia sobre alguien que si trabaja con la casa.
+    2 · la base medida del reparto NO es unidades. Guardar las dos bases no
+        sirve de nada si despues se usa la que toco.
+
+    Y avisa cuando el perfil viene de UNA sola fila sin la seccion: `orig_buyer`
+    vive en la del Overview, asi que preguntarle a la de Originators da vacio
+    sin que nada falle. Para eso esta `parser_mm.unir_perfiles`.
     """
-    return list(perfil.get(SECCION_POR_BASE[BASE_PARA_EXCLUSION]) or [])
+    for f in perfil.get("fallos") or []:
+        if f.get("campo") == SECCION_POR_BASE[BASE_PARA_EXCLUSION]:
+            raise TrampaDetectada(
+                "el perfil declara que `%s` fallo: %s.\n"
+                "No se puede decidir la exclusion por no-canibalizacion con "
+                "esto. Un reparto vacio se lee como `no trabaja con la casa`, "
+                "que es la conclusion contraria a `no lo pudimos leer`."
+                % (f.get("campo"), f.get("detalle")))
+
+    reparto = list(perfil.get(SECCION_POR_BASE[BASE_PARA_EXCLUSION]) or [])
+    if not reparto:
+        return []
+
+    base = ((perfil.get("wallet_share_base") or {})
+            .get(SECCION_POR_BASE[BASE_PARA_EXCLUSION]) or {})
+    medida = base.get("medida")
+    if medida is not None and medida not in BASES_ACEPTADAS:
+        raise TrampaDetectada(
+            "el reparto de `%s` NO reparte por %s: medido contra sus propias "
+            "filas da %r.\n"
+            "La exclusion se decide por unidades y este reparto no lo es, asi "
+            "que usarlo daria un numero plausible con la definicion "
+            "equivocada."
+            % (SECCION_POR_BASE[BASE_PARA_EXCLUSION], BASE_PARA_EXCLUSION,
+               medida))
+    return reparto
 
 
 def share_de_la_casa(perfil: dict) -> dict:
@@ -160,8 +202,11 @@ def share_de_la_casa(perfil: dict) -> dict:
     if not reparto:
         return {"share": None, "unidades": None, "unidades_totales": None,
                 "base": BASE_PARA_EXCLUSION,
-                "razon": "el perfil no trajo Buyer Side Relationships, que es "
-                         "la seccion que reparte por unidades"}
+                "razon": "este perfil no trajo Buyer Side Relationships, que "
+                         "es la seccion que reparte por unidades. Si viene de "
+                         "una sola fila de la captura, unir antes con "
+                         "`parser_mm.unir_perfiles`: esa seccion vive en la "
+                         "fila del Overview y no en la de Originators"}
 
     de_la_casa = [o for o in reparto if es_de_la_casa(o)]
     total = sum(o.get("unidades") or 0 for o in reparto)

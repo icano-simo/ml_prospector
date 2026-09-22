@@ -338,6 +338,113 @@ def _relaciones(txt: str, cabecera: str, corte: str | None) -> list[dict]:
     return salida
 
 
+#: Tolerancia al comparar un share declarado contra el que sale de las filas.
+#: La fuente redondea a un decimal y a veces a entero ("50%").
+_HOLGURA_SHARE = 1.0
+
+
+def base_del_reparto(filas: list[dict]) -> str | None:
+    """Que base usa un reparto: MEDIDO contra sus propias filas.
+
+    `wallet_share_base` era un dict fijo que se copiaba en cada fila dijera lo
+    que dijera el dato -- una etiqueta que nunca se comprobaba, y por lo tanto
+    que podia mentir sin que nada fallara. Esto la reemplaza por una medicion:
+    se recalcula el share desde las unidades y desde el volumen, y gana el que
+    reproduce lo que declara la fuente.
+
+    Sobre la captura real de Armando:
+
+        orig_buyer  u=2,1,1 -> 50,0 / 25,0 / 25,0  = lo declarado  -> unidades
+        tab_orig    $540K,$520K,$470K -> 35,3 / 34,0 / 30,7        -> volumen
+
+    Devuelve:
+      'unidades' | 'volumen'  una de las dos reproduce y la otra no
+      'indistinguible'        menos de dos filas: las dos bases dan 100%
+      None                    ninguna reproduce, o faltan datos
+    """
+    filas = [f for f in (filas or []) if f.get("share") is not None]
+    if not filas:
+        return None
+    if len(filas) < 2:
+        return "indistinguible"
+
+    def reproduce(clave: str) -> bool:
+        total = sum(f.get(clave) or 0 for f in filas)
+        if not total:
+            return False
+        return all(
+            abs(100.0 * (f.get(clave) or 0) / total - f["share"]) <= _HOLGURA_SHARE
+            for f in filas)
+
+    por_unidades, por_volumen = reproduce("unidades"), reproduce("volumen")
+    if por_unidades and not por_volumen:
+        return "unidades"
+    if por_volumen and not por_unidades:
+        return "volumen"
+    return None
+
+
+def _etiqueta_de_base(filas: list[dict], esperada: str) -> dict:
+    medida = base_del_reparto(filas)
+    return {
+        "esperada": esperada,
+        "medida": medida,
+        "coincide": (None if medida in (None, "indistinguible")
+                     else medida == esperada),
+        "filas": len(filas or []),
+    }
+
+
+#: (marcador en el texto, campo que tiene que salir, para que sirve).
+#: Si el marcador esta y el campo sale vacio, es un FALLO DECLARADO, no un
+#: array vacio -- que es indistinguible de "este perfil no tiene eso".
+SECCIONES_ESPERADAS = (
+    (r"Buyer Side Relationships", "orig_buyer",
+     "el reparto por unidades, que es el que decide la exclusion por "
+     "no-canibalizacion"),
+    (r"Originators this agent has worked with", "tab_orig",
+     "la tabla de originadores con su NMLS"),
+    (r"Loan Type Breakdown \(Buyer\)", "loan_mix_buyer",
+     "la mitad de agente del contraste FHA"),
+    (r"Lenders this agent has worked with", "tabla_lenders",
+     "la tabla de lenders"),
+    (r"View Counties", "condados",
+     "los condados, que son lo que etiqueta cada bloque de mercado"),
+)
+
+#: Frases con las que Model Match dice que una seccion esta vacia de verdad.
+_VACIO_DECLARADO = re.compile(
+    r"No (?:originator relationships|builder data|active or pending listings|"
+    r"data|results?)[^\n]*(?:found|available)", re.IGNORECASE)
+
+
+def fallos_de_seccion(txt: str, salida: dict) -> list[dict]:
+    """Secciones que estan en el texto y no llegaron al dict.
+
+    La unica alternativa a esto es un `[]`, y un `[]` dice dos cosas a la vez:
+    "este agente no trabaja con nadie" y "el parser no supo leerlo". La primera
+    es un dato y la segunda es un error, y se guardan identicas.
+    """
+    fallos = []
+    for marcador, campo, para_que in SECCIONES_ESPERADAS:
+        if not re.search(marcador, txt, re.IGNORECASE):
+            continue
+        if salida.get(campo):
+            continue
+        # La fuente puede decir explicitamente que no hay nada. Eso es un dato.
+        zona = _zona(txt, marcador)
+        if zona and _VACIO_DECLARADO.search(zona[:400]):
+            continue
+        fallos.append({
+            "campo": campo,
+            "seccion": re.sub(r"\\", "", marcador),
+            "por_que_importa": para_que,
+            "detalle": ("la seccion esta en el texto y el campo salio vacio: "
+                        "es un fallo del parser, no un perfil sin datos"),
+        })
+    return fallos
+
+
 def detectar_inversion(originadores: list[dict]) -> list[str]:
     """Avisa si nombre y empresa parecen cambiados de lugar.
 
@@ -663,8 +770,63 @@ def parsear_perfil(crudo: str) -> dict:
         txt, r"Seller Side Relationships",
         r"Geography|Top Builders|Market Signals")
     o["tab_orig"] = _tabla_originadores(txt)
+    # MEDIDA, no declarada: el dict fijo de antes decia "volumen" sobre
+    # porcentajes de unidades y nada fallaba.
     o["wallet_share_base"] = {
-        "orig_buyer": "unidades",
-        "tab_orig": "volumen",
+        "orig_buyer": _etiqueta_de_base(o["orig_buyer"], "unidades"),
+        "tab_orig": _etiqueta_de_base(o["tab_orig"], "volumen"),
     }
+
+    # Lo que estaba en el texto y no llego al dict.
+    o["fallos"] = fallos_de_seccion(txt, o)
     return o
+
+
+#: Los campos que son listas y se completan desde la seccion que los trae.
+_CAMPOS_LISTA = ("orig_buyer", "orig_seller", "tab_orig", "tabla_lenders",
+                 "condados", "emails")
+
+
+def unir_perfiles(perfiles: list[dict]) -> dict:
+    """Las filas de perfil de UNA captura, en un solo dict.
+
+    **`orig_buyer` vive en la fila del Overview y `tab_orig` en la de
+    Originators.** Preguntarle a una sola fila devuelve la mitad del perfil sin
+    que nada avise: la fila de Originators -- que es justo la que parece traer
+    los originadores-- da `orig_buyer = []`, y con eso la exclusion por
+    no-canibalizacion no dispara sobre alguien que si trabaja con la casa.
+
+    Se une por seccion y no se promedia nada: cada campo se toma de la primera
+    fila que lo trae con dato.
+    """
+    unido: dict = {}
+    fallos: list[dict] = []
+    for p in perfiles or []:
+        if not isinstance(p, dict):
+            continue
+        fallos.extend(p.get("fallos") or [])
+        for clave, valor in p.items():
+            if clave == "fallos":
+                continue
+            if clave == "wallet_share_base":
+                base = unido.setdefault("wallet_share_base", {})
+                for k, v in (valor or {}).items():
+                    if (v or {}).get("filas"):
+                        base[k] = v
+                    else:
+                        base.setdefault(k, v)
+                continue
+            if clave in _CAMPOS_LISTA:
+                if valor and not unido.get(clave):
+                    unido[clave] = valor
+                else:
+                    unido.setdefault(clave, valor)
+                continue
+            if valor is not None and unido.get(clave) is None:
+                unido[clave] = valor
+            else:
+                unido.setdefault(clave, valor)
+    unido["fallos"] = fallos
+    unido["filas_unidas"] = len([p for p in (perfiles or [])
+                                 if isinstance(p, dict)])
+    return unido

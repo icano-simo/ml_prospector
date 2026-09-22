@@ -7,6 +7,7 @@ Vercel, que es donde se rompen.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import os
 import sys
 import urllib.parse
@@ -19,10 +20,12 @@ for ruta in (AQUI, os.path.dirname(AQUI)):
 
 from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
+from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
     detectar_inversion,
     parsear_mercado,
     parsear_perfil,
+    unir_perfiles,
 )
 from captura.protocolo import (  # noqa: E402
     ProtocoloInvalido,
@@ -145,7 +148,21 @@ def guardar(d: dict) -> tuple[int, dict]:
     realtor_id = (d.get("realtor_id") or "").strip()
     sf_lead_id = (d.get("sf_lead_id") or "").strip() or None
     mmi_agent_id = (d.get("mmi_agent_id") or "").strip() or None
-    estado = (d.get("estado") or "").strip().upper() or None
+
+    # `CA`, `California` y `CALIFORNIA` entraron como tres etiquetas distintas
+    # del mismo mercado. En la biblioteca eso son tres geografias.
+    estado_crudo = (d.get("estado") or "").strip()
+    estado = normalizar_estado(estado_crudo)
+    if estado_crudo and not estado:
+        return 400, {"error": (
+            "No reconozco %r como estado. Va el codigo de dos letras o el "
+            "nombre completo (CA o California).\n"
+            "\n"
+            "No lo guardo tal cual a proposito: `CA`, `California` y "
+            "`CALIFORNIA` ya entraron como tres mercados distintos en la "
+            "biblioteca, y la unica pista de que son el mismo es mirarlos uno "
+            "al lado del otro." % estado_crudo),
+            "conocidos": sorted(ESTADOS)}
 
     # UNA SOLA CAJA · el volcado trae sus propios cortes. Siete pegados por
     # realtor son siete oportunidades de poner algo en la caja equivocada, y
@@ -172,6 +189,34 @@ def guardar(d: dict) -> tuple[int, dict]:
             "Este realtor no tiene Lead ID de Salesforce, asi que hace falta "
             "el MMI Agent ID para poder pegarle la captura. Esta en el perfil "
             "de Model Match.")}
+
+    # ── el volcado repetido ──────────────────────────────────────────────────
+    # El mismo perfil entro dos veces con un minuto de diferencia. Cada copia
+    # cuenta como una captura mas en la biblioteca de geografias.
+    partes_huella = [overview] + list(ms) + [d.get("originators") or "",
+                                             d.get("lenders") or ""]
+    huella = hashlib.sha256(
+        "\n\u0000\n".join(partes_huella).encode("utf-8")).hexdigest()
+    if not d.get("forzar"):
+        cod_h, previas, _ = leer(
+            "capturas_modelmatch",
+            "?select=capturado_en&hash_volcado=eq.%s&realtor_id=eq.%s"
+            "&order=capturado_en.desc&limit=1"
+            % (huella, urllib.parse.quote(realtor_id)))
+        if cod_h < 400 and previas:
+            return 409, {
+                "error": (
+                    "Este volcado ya esta guardado, identico, desde %s.\n"
+                    "\n"
+                    "No lo duplico solo: cada copia cuenta como una captura "
+                    "mas en la biblioteca de geografias, y el conteo por "
+                    "mercado sale inflado sin que se note.\n"
+                    "\n"
+                    "Si de verdad querias volver a capturarlo -- porque paso "
+                    "tiempo y los numeros cambiaron-- mandalo otra vez con "
+                    "`forzar`." % previas[0].get("capturado_en")),
+                "duplicado_de": previas[0].get("capturado_en"),
+                "hash_volcado": huella}
 
     condados = [n for n, _ in condados_del_overview(overview)]
     try:
@@ -209,7 +254,7 @@ def guardar(d: dict) -> tuple[int, dict]:
                 orden=0, extra=None):
         filas.append({
             "upload_batch_id": lote, "uploaded_at": ahora, "alcance": alcance,
-            "estado": estado,
+            "estado": estado, "hash_volcado": huella,
             "condado_fips": None,   # el crosswalk nombre->FIPS todavia no
             # La etiqueta va en COLUMNA, no solo dentro del jsonb: si dos
             # bloques de mercado se ven identicos en la base, la biblioteca no
@@ -253,6 +298,30 @@ def guardar(d: dict) -> tuple[int, dict]:
                       "trabaja con Everett Financial, que es la exclusion dura")
     if d.get("lenders"):
         agregar("lenders", d["lenders"], alcance="perfil")
+
+    # ── lo que estaba en el texto y no llego al dict ─────────────────────────
+    # Un `[]` dice dos cosas a la vez: "este agente no trabaja con nadie" y "el
+    # parser no supo leerlo". La primera es un dato y la segunda es un error, y
+    # sin esto se guardan identicas.
+    perfiles = [f["parseado"].get("perfil") for f in filas
+                if f["parseado"]["seccion"] in ("overview", "originators",
+                                                "lenders")]
+    perfil_unido = unir_perfiles([p for p in perfiles if isinstance(p, dict)])
+    for f in perfil_unido.get("fallos") or []:
+        avisos.append(
+            "FALLO DE LECTURA · la seccion `%s` esta en el texto y `%s` salio "
+            "vacio. Es %s. El crudo esta guardado: se arregla el parser y se "
+            "re-deriva sin volver a capturar."
+            % (f.get("seccion"), f.get("campo"), f.get("por_que_importa")))
+
+    # Y la base del reparto, MEDIDA contra sus propias filas.
+    for campo, base in (perfil_unido.get("wallet_share_base") or {}).items():
+        if (base or {}).get("coincide") is False:
+            avisos.append(
+                "la base de `%s` no es la esperada: se esperaba %s y medida "
+                "contra sus propias filas da %s. La exclusion por "
+                "no-canibalizacion se decide por unidades, asi que esto la "
+                "bloquea." % (campo, base.get("esperada"), base.get("medida")))
 
     # TRAMPA 2 · conforming/jumbo con su denominador. Si el suyo es mayor que
     # las unidades del mercado, el bloque se leyo cruzado con otra geografia.
@@ -301,7 +370,7 @@ def guardar(d: dict) -> tuple[int, dict]:
     # Los contactos van DESPUES del crudo y no pueden tumbar la captura: si
     # fallan, el volcado ya esta guardado y se pueden re-derivar de el. Al
     # reves no: la prueba de Model Match vence el 1 de octubre.
-    contactos = _contactos_de(perfil, realtor_id, lote, ahora)
+    contactos = _contactos_de(perfil_unido, realtor_id, lote, ahora)
     if contactos:
         cod_c, det_c, _ = escribir("contactos", contactos, devolver=False,
                                    sin_duplicar=True)
@@ -315,6 +384,8 @@ def guardar(d: dict) -> tuple[int, dict]:
 
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
                  "condados": condados, "avisos": avisos, "volumenes": vols,
+                 "estado": estado, "hash_volcado": huella,
+                 "originadores": len(perfil_unido.get("orig_buyer") or []),
                  "contactos": [{"canal": c["canal"], "valor": c["valor"]}
                                for c in contactos]}
 

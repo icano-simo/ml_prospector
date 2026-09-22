@@ -1033,6 +1033,227 @@ def test_sin_cabecera_el_corte_sigue_siendo_la_frase():
     assert s["lenders"].startswith("Lenders this agent")
 
 
+# ══ LA BASE DEL REPARTO SE MIDE, NO SE DECLARA ══════════════════════════════
+#
+# `wallet_share_base` era un dict fijo copiado en cada fila. En el payload de
+# ensayo decia "volumen" sobre porcentajes de unidades y nada fallaba, porque
+# una etiqueta que nadie comprueba no puede fallar.
+
+#: Los tres del Overview real, con sus unidades y volumenes.
+REPARTO_POR_UNIDADES = [
+    {"nombre": "Chris Ruiz", "empresa": "Everett Financial, Inc.",
+     "volumen": 470000.0, "unidades": 2, "share": 50.0},
+    {"nombre": "Grace Davis", "empresa": "Everett Financial, Inc.",
+     "volumen": 540000.0, "unidades": 1, "share": 25.0},
+    {"nombre": "Mario Diaz Hernandez Jr", "empresa": "Andy's Home Loans",
+     "volumen": 520000.0, "unidades": 1, "share": 25.0},
+]
+
+#: Los mismos tres de la pestaña Originators: mismas unidades, otro share.
+REPARTO_POR_VOLUMEN = [
+    {"nombre": "Grace Davis", "empresa": "Everett Financial, Inc.",
+     "volumen": 540000.0, "unidades": 1, "share": 35.3},
+    {"nombre": "Mario Diaz Hernandez Jr", "empresa": "Andy's Home Loans",
+     "volumen": 520000.0, "unidades": 1, "share": 34.0},
+    {"nombre": "Chris Ruiz", "empresa": "Everett Financial, Inc.",
+     "volumen": 470000.0, "unidades": 2, "share": 30.7},
+]
+
+
+def test_la_base_se_mide_recalculando_el_share():
+    """Las mismas tres personas, los mismos volumenes, distinta base."""
+    from captura.parser_mm import base_del_reparto
+
+    assert base_del_reparto(REPARTO_POR_UNIDADES) == "unidades"
+    assert base_del_reparto(REPARTO_POR_VOLUMEN) == "volumen"
+
+
+def test_una_base_que_no_reproduce_ninguna_de_las_dos_es_None():
+    """Es lo que pasaba con el payload de ensayo: 50,0 y 25,0 sobre 2 y 1
+    unidades no salen ni por unidades (66,7/33,3) ni por volumen (66,1/33,9).
+
+    Antes eso se guardaba etiquetado 'volumen' y se creia.
+    """
+    from captura.parser_mm import base_del_reparto
+
+    inventado = [
+        {"nombre": "Chris Ruiz", "volumen": 4.1e6, "unidades": 2, "share": 50.0},
+        {"nombre": "Grace Davis", "volumen": 2.1e6, "unidades": 1, "share": 25.0},
+    ]
+    assert base_del_reparto(inventado) is None
+
+
+def test_con_una_sola_relacion_la_base_es_indistinguible():
+    """Al 100% las dos bases dan lo mismo: la eleccion no cambia nada."""
+    from captura.parser_mm import base_del_reparto
+
+    uno = [{"nombre": "X", "volumen": 500000.0, "unidades": 3, "share": 100.0}]
+    assert base_del_reparto(uno) == "indistinguible"
+
+
+def test_la_etiqueta_de_base_dice_si_coincide_con_lo_esperado():
+    from captura.parser_mm import parsear_perfil
+
+    base = parsear_perfil(RELACIONES_REAL)["wallet_share_base"]
+    assert base["orig_buyer"]["medida"] == "unidades"
+    assert base["orig_buyer"]["esperada"] == "unidades"
+    assert base["orig_buyer"]["coincide"] is True
+    assert base["orig_buyer"]["filas"] == 3
+    # `tab_orig` no esta en este texto: no se afirma nada sobre el.
+    assert base["tab_orig"]["medida"] is None
+    assert base["tab_orig"]["filas"] == 0
+
+
+def test_la_exclusion_se_bloquea_si_la_base_medida_no_es_unidades():
+    from captura.trampas import TrampaDetectada, wallet_share_para_exclusion
+
+    perfil = {
+        "orig_buyer": REPARTO_POR_VOLUMEN,
+        "wallet_share_base": {"orig_buyer": {"esperada": "unidades",
+                                             "medida": "volumen",
+                                             "coincide": False, "filas": 3}},
+    }
+    try:
+        wallet_share_para_exclusion(perfil)
+    except TrampaDetectada as exc:
+        assert "NO reparte por unidades" in str(exc)
+    else:
+        raise AssertionError("usar el de volumen da la definicion equivocada")
+
+
+# ══ UN ARRAY VACIO NO PUEDE SIGNIFICAR DOS COSAS ═════════════════════════════
+
+def test_si_la_seccion_esta_y_el_campo_sale_vacio_es_un_fallo_declarado():
+    """Sin esto, `[]` dice a la vez `no trabaja con nadie` y `no supe leerlo`.
+
+    La primera es un dato y la segunda es un error, y se guardaban identicas.
+    """
+    from captura.parser_mm import fallos_de_seccion
+
+    roto = ("Buyer Side Relationships\n"
+            "Originator\tTotal Volume\tTotal Units\tWallet Share\n"
+            "Chris Ruiz\nEverett Financial, Inc.\n"
+            "470K | 2 | 50\n"          # sin '$' ni '%': el patron no la ve
+            "Seller Side Relationships\n")
+    fallos = fallos_de_seccion(roto, {"orig_buyer": []})
+    assert [f["campo"] for f in fallos] == ["orig_buyer"]
+    assert "no-canibalizacion" in fallos[0]["por_que_importa"]
+
+
+def test_una_seccion_que_la_fuente_declara_vacia_NO_es_un_fallo():
+    """`No originator relationships found for this period.` es un dato."""
+    from captura.parser_mm import fallos_de_seccion
+
+    vacia = ("Seller Side Relationships\n"
+             "No originator relationships found for this period.\n")
+    assert fallos_de_seccion(vacia, {"orig_seller": []}) == []
+
+
+def test_una_seccion_ausente_tampoco_es_un_fallo():
+    """El payload de ensayo no traia Buyer Side Relationships: no hay nada
+    que leer mal, y decir que fallo seria inventar un error."""
+    from captura.parser_mm import fallos_de_seccion
+
+    assert fallos_de_seccion("Originators this agent has worked with\n"
+                             "Chris Ruiz\nNMLS: 2129\n"
+                             "Everett Financial Inc $4.1M 2 $2.05M 50.0%\n",
+                             {"tab_orig": [{"nombre": "Chris Ruiz"}]}) == []
+
+
+def test_la_exclusion_revienta_sobre_un_fallo_declarado():
+    """Un `[]` con fallo declarado NO puede leerse como `no trabaja con nadie`."""
+    from captura.trampas import TrampaDetectada, wallet_share_para_exclusion
+
+    perfil = {"orig_buyer": [],
+              "fallos": [{"campo": "orig_buyer", "seccion": "Buyer Side "
+                          "Relationships", "detalle": "la seccion esta en el "
+                          "texto y el campo salio vacio"}]}
+    try:
+        wallet_share_para_exclusion(perfil)
+    except TrampaDetectada as exc:
+        assert "conclusion contraria" in str(exc)
+    else:
+        raise AssertionError("Armando con 75% en Everett pasaria el filtro")
+
+
+# ══ EL PERFIL VIVE EN DOS FILAS ══════════════════════════════════════════════
+
+def test_orig_buyer_y_tab_orig_estan_en_FILAS_DISTINTAS():
+    """`orig_buyer` sale del Overview y `tab_orig` de Originators.
+
+    Preguntarle a una sola fila devuelve la mitad del perfil sin que nada
+    avise: la fila de Originators -- la que PARECE traer los originadores-- da
+    `orig_buyer = []`, y con eso la exclusion no dispara.
+    """
+    from captura.parser_mm import parsear_perfil
+
+    del_overview = parsear_perfil(RELACIONES_REAL)
+    de_originators = parsear_perfil(TAB_ORIGINADORES)
+
+    assert len(del_overview["orig_buyer"]) == 3
+    assert del_overview["tab_orig"] == []
+    assert de_originators["orig_buyer"] == []
+    assert len(de_originators["tab_orig"]) == 2
+
+
+def test_unir_perfiles_junta_las_dos_mitades():
+    from captura.parser_mm import parsear_perfil, unir_perfiles
+
+    unido = unir_perfiles([parsear_perfil(RELACIONES_REAL),
+                           parsear_perfil(TAB_ORIGINADORES)])
+    assert len(unido["orig_buyer"]) == 3
+    assert len(unido["tab_orig"]) == 2
+    assert unido["filas_unidas"] == 2
+    assert unido["wallet_share_base"]["orig_buyer"]["medida"] == "unidades"
+
+
+def test_sobre_el_perfil_unido_la_exclusion_si_dispara():
+    from captura.parser_mm import parsear_perfil, unir_perfiles
+    from captura.trampas import share_de_la_casa
+
+    unido = unir_perfiles([parsear_perfil(CABECERA_REAL),
+                           parsear_perfil(RELACIONES_REAL),
+                           parsear_perfil(TAB_ORIGINADORES)])
+    s = share_de_la_casa(unido)
+    assert s["originadores"] == ["Chris Ruiz", "Grace Davis"]
+    assert s["unidades_totales"] == 4
+    assert s["share"] == 75.0
+    # Y la cabecera no se perdio al unir.
+    assert unido["contacto"]["oficina"] == "Exp Realty Of California Inc."
+
+
+def test_preguntarle_solo_a_la_fila_de_originators_da_None_con_su_razon():
+    """No cero: cero diria `no trabaja con la casa`."""
+    from captura.parser_mm import parsear_perfil
+    from captura.trampas import share_de_la_casa
+
+    s = share_de_la_casa(parsear_perfil(TAB_ORIGINADORES))
+    assert s["share"] is None
+    assert "unir_perfiles" in s["razon"]
+
+
+# ══ EL ESTADO, NORMALIZADO ═══════════════════════════════════════════════════
+
+def test_las_tres_formas_del_estado_dan_el_mismo_codigo():
+    """`CA`, `California` y `CALIFORNIA` entraron como tres mercados."""
+    from captura.estados import normalizar_estado
+
+    assert normalizar_estado("CA") == "CA"
+    assert normalizar_estado("ca") == "CA"
+    assert normalizar_estado(" California ") == "CA"
+    assert normalizar_estado("CALIFORNIA") == "CA"
+    assert normalizar_estado("california") == "CA"
+
+
+def test_un_estado_desconocido_da_None_y_no_el_texto_original():
+    """Dejar pasar el valor libre es lo que produjo las tres variantes."""
+    from captura.estados import normalizar_estado
+
+    assert normalizar_estado("Californa") is None
+    assert normalizar_estado("") is None
+    assert normalizar_estado(None) is None
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
