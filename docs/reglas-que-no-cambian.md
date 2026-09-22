@@ -83,6 +83,8 @@ sistema reporta éxito y el error no deja rastro.
 | **`Email Owner`** | 100% de cobertura al cruzar | 14 valores únicos sobre 4.386 filas: todo el lote unido a catorce personas |
 | **`privado` por descarte** | 7 perfiles «privados», sin error | ninguno tenía evidencia de privacidad; el código lo admitía en su propia cadena |
 | **la tabla de condados** | validación de conteo «OK» | el regex devolvía **cero condados**, así que `1 + 0 = 1` y cualquier cantidad de bloques pasaba como «solo el estado» |
+| **`aplicar_migracion.py`** | imprimía el constraint de `contactos` y decía «aplicada» | lo imprimía **corriera la migración que corriera**: una salida que no depende de lo que pasó |
+| **la guarda de la migración 07** | «la columna `hash_volcado` existe» | la buscaba **en la tabla**, donde sí estaba, mientras la vista seguía sin ella |
 
 En los tres, **la guarda corría y no fallaba** — no porque el dato estuviera
 bien, sino porque el conjunto que examinaba estaba vacío o degenerado.
@@ -111,7 +113,38 @@ pasar.
 
 ---
 
-## 4 · Un rechazo puede venir con el código de éxito
+## 4 · Un paso aparte es un paso que no corre
+
+**El corolario operativo de la §3.** Si la promoción de un dato de una tabla a
+otra vive en un script que alguien tiene que acordarse de ejecutar, entonces
+mientras no se ejecuta **no falla nada**: la primera tabla se llena, todo
+parece bien, y la segunda sigue vacía.
+
+### El caso
+
+`pacs.mercados` estuvo en **cero filas** con cuatro bloques de Market Signals ya
+guardados y **45 métricas parseadas cada uno**. La captura funcionaba, el parser
+funcionaba, el crudo estaba entero. Ningún contraste de Model Match podía correr
+y nada lo decía — porque nada estaba roto: lo que faltaba era un paso que nunca
+se escribió.
+
+### Las dos mitades de la regla
+
+1. **La promoción ocurre en la misma operación que la escritura.**
+   `api.rutas.guardar` escribe la captura y promueve a la biblioteca en la misma
+   petición. `supabase/promover_mercados.py` existe solo para lo capturado
+   antes, y usa **la misma función** que el endpoint, para que la vía de
+   respaldo y la viva no puedan divergir.
+
+2. **Un dato listo que no llega a su destino es un fallo declarado.** Un bloque
+   con métricas parseadas que no produce fila en `pacs.mercados` sale como
+   `FALLO DE PROMOCIÓN` en los avisos del guardado, con cuántos eran y cuántos
+   entraron. El silencio no es una opción, porque el silencio es exactamente lo
+   que hubo durante cuatro bloques.
+
+---
+
+## 5 · Un rechazo puede venir con el código de éxito
 
 Pariente de la anterior: la comprobación corre, pero **mira la señal
 equivocada**.
@@ -152,7 +185,7 @@ nadie vuelva a intentar ese camino.
 
 ---
 
-## 5 · No supongas la forma del destino. Pregúntasela
+## 6 · No supongas la forma del destino. Pregúntasela
 
 **Tres veces en dos días, el mismo patrón.**
 
@@ -175,7 +208,7 @@ implícito se habría perdido en silencio.
 
 ---
 
-## 6 · Una guarda sobre el tráfico equivocado termina desactivada
+## 7 · Una guarda sobre el tráfico equivocado termina desactivada
 
 Nadie quita una guarda por maldad. La quitan porque estorba.
 
@@ -189,7 +222,7 @@ viva dentro de seis meses.
 
 ---
 
-## 7 · Las tres guardias de PACS-H
+## 8 · Las tres guardias de PACS-H
 
 Sin denominador no hay porcentaje. El mix de programa no activa ni desactiva
 nada con menos de 10 operaciones con tipo identificado o menos del 50% de

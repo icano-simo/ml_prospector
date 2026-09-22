@@ -35,6 +35,17 @@ geo/cache/
 hmda/cache/
 hmda/salida/
 
+# EXCEPCION · la tabla de FIPS SI se versiona.
+#
+# "Regenerable con --descargar" es cierto en una maquina y falso en una funcion
+# serverless: Vercel no puede bajarse 130 KB de census.gov en un arranque en
+# frio, y sin esta tabla `geo.fips.resolver` no puede resolver el condado de una
+# captura -- o sea que la promocion a `pacs.mercados` fallaria solo en
+# produccion, que es donde no se mira.
+#
+# Son 130 KB de referencia publica que cambia cada diez años.
+!geo/cache/national_county2020.txt
+
 # Catalogo de variables del API de Census (8,8 MB, regenerable)
 latino_re_engine/data/cache_variables/
 

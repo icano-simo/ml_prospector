@@ -42,6 +42,82 @@ TOPE = 300
 #: Con que etiqueta entra cada dato de contacto de Model Match.
 FUENTE_CONTACTOS = "Model Match"
 
+#: Por debajo de esto, el bloque no trajo metricas de verdad y no hay nada que
+#: promover. Un bloque real de Market Signals trae 38-45 campos.
+MINIMO_CAMPOS_PARA_PROMOVER = 5
+
+
+def promover_a_mercados(filas: list[dict], lote: str,
+                        ahora: str) -> tuple[list[dict], list[str]]:
+    """Los Market Signals de una captura -> la biblioteca de benchmarks.
+
+    Por que ocurre AL GUARDAR y no en un paso aparte
+    ------------------------------------------------
+    Un paso aparte es un paso que alguien tiene que acordarse de correr, y
+    mientras no corre **no falla nada**: `capturas_modelmatch` se llena, las
+    metricas quedan parseadas, y `pacs.mercados` sigue vacia. Eso es lo que
+    paso: cuatro bloques de Armando con sus 35 metricas cada uno, y cero filas
+    en la biblioteca. Ningun contraste de Model Match podia correr y nada lo
+    decia.
+
+    Un perfil individual expira; un benchmark de condado no. Por eso la
+    biblioteca vive aparte de cualquier realtor -- pero solo sirve si se llena.
+
+    Devuelve (filas_de_mercado, fallos). Un bloque con metricas parseadas que
+    no produce fila es un FALLO DECLARADO: la tabla exige `condado_fips` para
+    nivel condado, y `geo.fips` no adivina.
+    """
+    from geo.fips import FipsNoResuelto, cargar as cargar_fips, resolver
+
+    salida: list[dict] = []
+    fallos: list[str] = []
+    tabla = None
+
+    for f in filas:
+        p = f["parseado"]
+        if p.get("seccion") != "market_signals":
+            continue
+        metricas = p.get("metricas") or {}
+        campos = metricas.get("campos") or 0
+        etiqueta = p.get("etiqueta_geografica")
+        nivel = p.get("nivel")
+        donde = etiqueta or "(sin etiqueta)"
+
+        if campos < MINIMO_CAMPOS_PARA_PROMOVER:
+            # Sin metricas no hay benchmark, y eso NO es un fallo de promocion:
+            # es que el bloque no traia nada. El fallo del parser ya se reporta
+            # por su lado.
+            continue
+
+        estado = f.get("estado")
+        condado_fips = None
+        if nivel == "condado":
+            if not (estado and etiqueta):
+                fallos.append(
+                    "%s · bloque de condado sin estado o sin etiqueta, asi que "
+                    "no se puede resolver su FIPS. Tiene %d metricas parseadas "
+                    "y NO entra en la biblioteca." % (donde, campos))
+                continue
+            if tabla is None:
+                tabla = cargar_fips()
+            try:
+                condado_fips = resolver(estado, etiqueta, tabla)[0]
+            except FipsNoResuelto as exc:
+                fallos.append(
+                    "%s · no se pudo resolver el FIPS (%s). Tiene %d metricas "
+                    "parseadas y NO entra en la biblioteca: `pacs.mercados` "
+                    "exige FIPS para nivel condado, y no se adivina."
+                    % (donde, str(exc).split("\n")[0], campos))
+                continue
+
+        salida.append({
+            "upload_batch_id": lote, "uploaded_at": ahora,
+            "condado_fips": condado_fips, "estado": estado, "nivel": nivel,
+            "fuente": "modelmatch", "metricas": metricas,
+            "capturado_en": ahora,
+        })
+    return salida, fallos
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -482,6 +558,40 @@ def guardar(d: dict) -> tuple[int, dict]:
     if cod >= 400:
         return cod, {"error": "no se guardo", "detalle": datos}
 
+    # ── LA BIBLIOTECA DE MERCADOS ────────────────────────────────────────────
+    # Va DESPUES del crudo, por lo mismo que los contactos: si falla, el
+    # volcado ya esta y se re-deriva. Pero su fallo se declara, no se calla.
+    mercados, fallos_promocion = promover_a_mercados(filas, lote, ahora)
+    for f in fallos_promocion:
+        avisos.append("FALLO DE PROMOCION · " + f)
+
+    promovidos = 0
+    if mercados:
+        cod_m, det_m, _ = escribir("mercados", mercados, devolver=False)
+        if cod_m >= 400:
+            avisos.append(
+                "FALLO DE PROMOCION · el crudo se guardo, pero los %d bloques "
+                "de mercado no entraron en la biblioteca: %s. Ningun contraste "
+                "de Model Match puede correr sobre ellos hasta que entren."
+                % (len(mercados), str(det_m)[:200]))
+        else:
+            promovidos = len(mercados)
+
+    # La guarda que faltaba: metricas parseadas SIN fila en la biblioteca es un
+    # fallo declarado, no un silencio. Es lo que dejo `pacs.mercados` en cero
+    # con cuatro bloques ya parseados y nadie enterado.
+    con_metricas = sum(
+        1 for f in filas
+        if f["parseado"].get("seccion") == "market_signals"
+        and (f["parseado"].get("metricas") or {}).get("campos", 0)
+        >= MINIMO_CAMPOS_PARA_PROMOVER)
+    if con_metricas and promovidos < con_metricas:
+        avisos.append(
+            "FALLO DE PROMOCION · %d bloques traen metricas parseadas y solo "
+            "%d entraron en `pacs.mercados`. Los que faltan existen en la "
+            "captura y no en la biblioteca, asi que ningun contraste los ve."
+            % (con_metricas, promovidos))
+
     # Los contactos van DESPUES del crudo y no pueden tumbar la captura: si
     # fallan, el volcado ya esta guardado y se pueden re-derivar de el. Al
     # reves no: la prueba de Model Match vence el 1 de octubre.
@@ -500,6 +610,7 @@ def guardar(d: dict) -> tuple[int, dict]:
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
                  "condados": condados, "avisos": avisos, "volumenes": vols,
                  "estado": estado, "hash_volcado": huella,
+                 "mercados_promovidos": promovidos,
                  "resumen": resumen_de_captura(filas, perfil_unido),
                  "contactos": [{"canal": c["canal"], "valor": c["valor"]}
                                for c in contactos]}

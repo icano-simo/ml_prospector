@@ -5,7 +5,7 @@
 
   "functions": {
     "api/*.py": {
-      "includeFiles": "captura/**"
+      "includeFiles": "{captura,geo}/**"
     }
   }
 }
