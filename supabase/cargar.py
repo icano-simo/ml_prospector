@@ -125,6 +125,23 @@ def cargar(
 
     try:
         with conn.cursor() as cur:
+            # ¿La tabla lleva upload_batch_id? Las de CARGA si; los registros
+            # maestros como `realtors` no, porque no son append-only. Se
+            # pregunta en vez de suponer: suponer que si da un error de columna
+            # inexistente a mitad del primer lote, y suponer que no pierde la
+            # trazabilidad del lote sin avisar.
+            cur.execute(
+                "select 1 from information_schema.columns "
+                " where table_schema = 'pacs' and table_name = %s "
+                "   and column_name = 'upload_batch_id'",
+                (tabla,),
+            )
+            lleva_lote = cur.fetchone() is not None
+
+            antes_total = 0
+            if not lleva_lote:
+                cur.execute("select count(*) from pacs.%s" % tabla)
+                antes_total = cur.fetchone()[0]
             # 1 · el lote, apagado. Se enciende al final.
             cur.execute(
                 "insert into pacs.upload_batch "
@@ -136,31 +153,42 @@ def cargar(
             )
 
             # 2 · las filas, en lotes.
-            plantilla = "insert into pacs.%s (%s, upload_batch_id) values (%s)" % (
-                tabla,
-                ", ".join('"%s"' % c for c in cols),
-                ", ".join(["%s"] * (len(cols) + 1)),
+            cols_sql = ", ".join('"%s"' % c for c in cols)
+            n_valores = len(cols) + (1 if lleva_lote else 0)
+            plantilla = "insert into pacs.%s (%s%s) values (%s)" % (
+                tabla, cols_sql,
+                ", upload_batch_id" if lleva_lote else "",
+                ", ".join(["%s"] * n_valores),
             )
             for i in range(0, len(filas), tamano_lote):
                 trozo = filas[i:i + tamano_lote]
-                datos = [
-                    tuple(
+                datos = []
+                for f in trozo:
+                    valores = tuple(
                         json.dumps(f[c], ensure_ascii=False)
                         if isinstance(f[c], (dict, list)) else f[c]
                         for c in cols
-                    ) + (batch_id,)
-                    for f in trozo
-                ]
+                    )
+                    datos.append(valores + (batch_id,) if lleva_lote else valores)
                 cur.executemany(plantilla, datos)
                 cargadas += len(trozo)
                 n_lotes += 1
 
             # 3 · verificar contando en la BASE, no en Python.
-            cur.execute(
-                "select count(*) from pacs.%s where upload_batch_id = %%s" % tabla,
-                (batch_id,),
-            )
-            en_base = cur.fetchone()[0]
+            #
+            # En una tabla sin upload_batch_id no se puede contar por lote, asi
+            # que se compara el total antes y despues. Es mas debil -- una
+            # escritura concurrente lo ensuciaria-- y por eso se dice cual de
+            # las dos comprobaciones corrio.
+            if lleva_lote:
+                cur.execute(
+                    "select count(*) from pacs.%s where upload_batch_id = %%s"
+                    % tabla, (batch_id,),
+                )
+                en_base = cur.fetchone()[0]
+            else:
+                cur.execute("select count(*) from pacs.%s" % tabla)
+                en_base = cur.fetchone()[0] - antes_total
             if en_base != len(filas):
                 raise CargaFallida(
                     "se mandaron %d filas y la base tiene %d. No enciendo el "
