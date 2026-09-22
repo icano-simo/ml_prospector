@@ -28,11 +28,15 @@ from captura.protocolo import (  # noqa: E402
     ProtocoloInvalido,
     condados_del_overview,
     etiquetar_por_posicion,
+    separar_volcado,
 )
 
 CAMPOS_LISTA = ("id,nombre_completo,brokerage,estado,email_principal,"
                 "telefono_e164,unidades_ano,sf_lead_id,sin_llave_dura")
 TOPE = 300
+
+#: Con que etiqueta entra cada dato de contacto de Model Match.
+FUENTE_CONTACTOS = "Model Match"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -109,13 +113,55 @@ def geografias(_params: dict) -> tuple[int, dict]:
 
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _contactos_de(perfil: dict, realtor_id: str, lote: str,
+                  ahora: str) -> list[dict]:
+    """Oficina, telefono y direccion de la cabecera de Model Match.
+
+    **Se acumulan, no sobrescriben.** `unique (realtor_id, canal, valor,
+    fuente)` incluye la fuente, asi que el telefono de MM convive con el del
+    lote: son dos mediciones distintas del mismo campo y cual gana es una
+    decision de lectura, no de carga.
+    """
+    c = (perfil or {}).get("contacto") or {}
+    filas: list[dict] = []
+
+    def agregar(canal: str, valor) -> None:
+        if not valor or not str(valor).strip():
+            return
+        filas.append({
+            "realtor_id": realtor_id, "canal": canal,
+            "valor": str(valor).strip(), "fuente": FUENTE_CONTACTOS,
+            "upload_batch_id": lote, "uploaded_at": ahora, "vigente": True,
+        })
+
+    agregar("telefono", c.get("telefono_oficina_e164")
+            or c.get("telefono_oficina"))
+    agregar("oficina", c.get("oficina"))
+    agregar("direccion", c.get("direccion"))
+    return filas
+
+
 def guardar(d: dict) -> tuple[int, dict]:
     realtor_id = (d.get("realtor_id") or "").strip()
     sf_lead_id = (d.get("sf_lead_id") or "").strip() or None
     mmi_agent_id = (d.get("mmi_agent_id") or "").strip() or None
     estado = (d.get("estado") or "").strip().upper() or None
-    overview = d.get("overview") or ""
-    ms = [str(x) for x in (d.get("market_signals") or [])]
+
+    # UNA SOLA CAJA · el volcado trae sus propios cortes. Siete pegados por
+    # realtor son siete oportunidades de poner algo en la caja equivocada, y
+    # sobre 25 capturas son 175.
+    volcado = (d.get("volcado") or "").strip()
+    if volcado:
+        try:
+            s = separar_volcado(volcado)
+        except ProtocoloInvalido as exc:
+            return 400, {"error": str(exc)}
+        overview = s["overview"]
+        ms = s["market_signals"]
+        d = {**d, "originators": s["originators"], "lenders": s["lenders"]}
+    else:
+        overview = d.get("overview") or ""
+        ms = [str(x) for x in (d.get("market_signals") or [])]
 
     if not realtor_id:
         return 400, {"error": "falta realtor_id: se parte del realtor"}
@@ -208,6 +254,26 @@ def guardar(d: dict) -> tuple[int, dict]:
     if d.get("lenders"):
         agregar("lenders", d["lenders"], alcance="perfil")
 
+    # TRAMPA 2 · conforming/jumbo con su denominador. Si el suyo es mayor que
+    # las unidades del mercado, el bloque se leyo cruzado con otra geografia.
+    for f in filas:
+        if f["parseado"]["seccion"] != "market_signals":
+            continue
+        c = (f["parseado"].get("metricas") or {}).get("conforming") or {}
+        donde = f["parseado"].get("etiqueta_geografica") or "el estado"
+        if c.get("mayor_que_el_mercado"):
+            avisos.append(
+                "en %s, el denominador de conforming/jumbo (%s) es mayor que "
+                "las unidades del mercado (%s): el bloque parece leido cruzado "
+                "con otra geografia."
+                % (donde, c.get("denominador_propio"),
+                   c.get("unidades_del_mercado")))
+        if c.get("cuadra") is False:
+            avisos.append(
+                "en %s, conforming + jumbo (%s) no suman su propio denominador "
+                "(%s)." % (donde, c.get("suma_de_tramos"),
+                           c.get("denominador_propio")))
+
     # TRAMPA 1 · las geografias tienen que dar volumenes distintos.
     vols = [(f["parseado"].get("metricas") or {}).get("total_volume")
             for f in filas if f["parseado"]["seccion"] == "market_signals"]
@@ -232,8 +298,25 @@ def guardar(d: dict) -> tuple[int, dict]:
     if cod >= 400:
         return cod, {"error": "no se guardo", "detalle": datos}
 
+    # Los contactos van DESPUES del crudo y no pueden tumbar la captura: si
+    # fallan, el volcado ya esta guardado y se pueden re-derivar de el. Al
+    # reves no: la prueba de Model Match vence el 1 de octubre.
+    contactos = _contactos_de(perfil, realtor_id, lote, ahora)
+    if contactos:
+        cod_c, det_c, _ = escribir("contactos", contactos, devolver=False,
+                                   sin_duplicar=True)
+        if cod_c >= 400:
+            avisos.append(
+                "el crudo se guardo, pero los %d datos de contacto (%s) no "
+                "entraron en pacs.contactos: %s"
+                % (len(contactos), ", ".join(c["canal"] for c in contactos),
+                   str(det_c)[:200]))
+            contactos = []
+
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
-                 "condados": condados, "avisos": avisos, "volumenes": vols}
+                 "condados": condados, "avisos": avisos, "volumenes": vols,
+                 "contactos": [{"canal": c["canal"], "valor": c["valor"]}
+                               for c in contactos]}
 
 
 #: ruta -> (funcion, metodo)

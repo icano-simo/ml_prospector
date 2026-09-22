@@ -73,7 +73,45 @@ revienta, no avisa, y se cita en una reunión.
 
 ---
 
-## 3 · No supongas la forma del destino. Pregúntasela
+## 3 · Una verificación que pasa porque no tiene nada que verificar
+
+**Tres veces en este proyecto.** Es el patrón más peligroso de todos, porque el
+sistema reporta éxito y el error no deja rastro.
+
+| Caso | La verificación decía | Lo que pasaba |
+|---|---|---|
+| **`Email Owner`** | 100% de cobertura al cruzar | 14 valores únicos sobre 4.386 filas: todo el lote unido a catorce personas |
+| **`privado` por descarte** | 7 perfiles «privados», sin error | ninguno tenía evidencia de privacidad; el código lo admitía en su propia cadena |
+| **la tabla de condados** | validación de conteo «OK» | el regex devolvía **cero condados**, así que `1 + 0 = 1` y cualquier cantidad de bloques pasaba como «solo el estado» |
+
+En los tres, **la guarda corría y no fallaba** — no porque el dato estuviera
+bien, sino porque el conjunto que examinaba estaba vacío o degenerado.
+
+### Cómo se detecta
+
+No basta con que la validación no falle. Hay que preguntarle **sobre cuántos
+elementos corrió**:
+
+```
+cero condados leídos   ⇒  la validación de conteo no valida nada
+cero comentarios       ⇒  el ratio de idioma no mide nada
+un solo comentario     ⇒  el desajuste de 0,92 es ruido
+14 emails distintos    ⇒  el cruce del 100% no es cobertura
+```
+
+**Toda guarda que compare una cantidad contra otra tiene que declarar su
+denominador y desconfiar del cero.** Un conjunto vacío hace verdadera cualquier
+afirmación universal — y eso, en una verificación, se ve exactamente igual que
+pasar.
+
+### La forma corta
+
+> Cuando una comprobación pase, preguntá cuántas cosas revisó. Si la respuesta
+> es ninguna, no pasó: no corrió.
+
+---
+
+## 4 · No supongas la forma del destino. Pregúntasela
 
 **Tres veces en dos días, el mismo patrón.**
 
@@ -96,7 +134,7 @@ implícito se habría perdido en silencio.
 
 ---
 
-## 4 · Una guarda sobre el tráfico equivocado termina desactivada
+## 5 · Una guarda sobre el tráfico equivocado termina desactivada
 
 Nadie quita una guarda por maldad. La quitan porque estorba.
 
@@ -110,11 +148,26 @@ viva dentro de seis meses.
 
 ---
 
-## 5 · Las tres guardias de PACS-H
+## 6 · Las tres guardias de PACS-H
 
 Sin denominador no hay porcentaje. El mix de programa no activa ni desactiva
 nada con menos de 10 operaciones con tipo identificado o menos del 50% de
 cobertura del lado comprador. El wallet share solo sobre buyside.
+
+**Y el wallet share de la exclusión por no-canibalización se decide por
+unidades, no por volumen.** Lo que importa es cuántas operaciones pasan por un
+colega, no cuántos dólares: la relación con el realtor se construye por
+operación.
+
+Model Match reparte de las dos formas en el mismo perfil — el Overview por
+unidades, la pestaña Originators por volumen — y **Chris Ruiz da 50,0% por
+unidades y 30,7% por volumen**. Con un umbral en 40%, el mismo originador entra
+o no entra según cuál se lea, y las dos salen del mismo volcado sin que nada
+avise.
+
+`captura/trampas.py` lo fija: `wallet_share_para_exclusion()` lee `orig_buyer` y
+**no cae** a `tab_orig` si falta — un reparto con la otra base da un número
+plausible con la definición equivocada.
 
 Nada se llena por descarte: sin evidencia afirmativa, el valor es **desconocido
 con su razón**.

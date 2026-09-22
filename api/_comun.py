@@ -78,9 +78,18 @@ def leer(tabla: str, consulta: str = "", *, rango: str | None = None):
     return _pedir("GET", "/rest/v1/%s%s" % (tabla, consulta), cabeceras=cab)
 
 
-def escribir(tabla: str, filas: list[dict], *, devolver: bool = True):
-    cab = {"Content-Profile": ESQUEMA,
-           "Prefer": "return=representation" if devolver else "return=minimal"}
+def escribir(tabla: str, filas: list[dict], *, devolver: bool = True,
+             sin_duplicar: bool = False):
+    """POST a PostgREST.
+
+    `sin_duplicar` agrega `resolution=ignore-duplicates`, para las tablas que
+    acumulan con `unique`: capturar dos veces el mismo perfil es normal y no
+    deberia devolver un 409 que tire la peticion entera.
+    """
+    prefer = ["return=representation" if devolver else "return=minimal"]
+    if sin_duplicar:
+        prefer.append("resolution=ignore-duplicates")
+    cab = {"Content-Profile": ESQUEMA, "Prefer": ",".join(prefer)}
     return _pedir("POST", "/rest/v1/%s" % tabla, cuerpo=filas, cabeceras=cab)
 
 

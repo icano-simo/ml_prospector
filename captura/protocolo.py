@@ -152,6 +152,31 @@ _RE_ABRE_ORIGINADORES = re.compile(
 _RE_ABRE_LENDERS = re.compile(
     r"^[ \t]*Lenders this agent has worked with", re.MULTILINE | re.IGNORECASE)
 
+#: Cada pestaña abre con una cabecera de tarjetas ANTES de la frase que nombra
+#: la tabla. Cortar por la frase deja esa cabecera en la seccion anterior:
+#:
+#:   Total Originators / Top 3 Concentration / ...  caia en el ULTIMO mercado
+#:   Total Lenders / Top 5 Concentration / TPO %    caia en Originators
+#:
+#: El `TPO %` es la mitad de agente del contraste de canal, asi que quedaba
+#: guardado bajo la etiqueta equivocada -- y el texto se guardaba entero, o sea
+#: que nada avisaba.
+_RE_CABECERA_ORIGINADORES = re.compile(
+    r"^[ \t]*Total Originators[ \t]*$", re.MULTILINE | re.IGNORECASE)
+_RE_CABECERA_LENDERS = re.compile(
+    r"^[ \t]*Total Lenders[ \t]*$", re.MULTILINE | re.IGNORECASE)
+
+
+def _inicio(cabecera, tabla, minimo: int) -> int:
+    """Donde empieza de verdad la seccion: su cabecera, si esta donde debe.
+
+    La cabecera solo se acepta si cae ENTRE el limite anterior y la frase de la
+    tabla. Fuera de ahi se usa la frase, que es el marcador seguro.
+    """
+    if cabecera and minimo <= cabecera.start() < tabla.start():
+        return cabecera.start()
+    return tabla.start()
+
 
 def separar_volcado(texto: str) -> dict:
     """Un volcado completo -> sus secciones. Sin pegar nada a mano.
@@ -196,19 +221,26 @@ def separar_volcado(texto: str) -> dict:
             "Originators, Lenders."
         )
 
+    # El corte real es la cabecera de la pestaña, no la frase de la tabla.
+    inicio_orig = _inicio(_RE_CABECERA_ORIGINADORES.search(txt), cierre,
+                          aperturas[0])
+
     lenders = _RE_ABRE_LENDERS.search(txt, cierre.end())
+    fin_orig = len(txt)
+    if lenders:
+        fin_orig = _inicio(_RE_CABECERA_LENDERS.search(txt, cierre.end()),
+                           lenders, cierre.end())
 
     bloques: list[str] = []
     for i, inicio in enumerate(aperturas):
-        fin = aperturas[i + 1] if i + 1 < len(aperturas) else cierre.start()
+        fin = aperturas[i + 1] if i + 1 < len(aperturas) else inicio_orig
         bloques.append(txt[inicio:fin].strip())
 
-    fin_orig = lenders.start() if lenders else len(txt)
     return {
         "overview": txt[:aperturas[0]].strip(),
         "market_signals": bloques,
-        "originators": txt[cierre.start():fin_orig].strip(),
-        "lenders": txt[lenders.start():].strip() if lenders else "",
+        "originators": txt[inicio_orig:fin_orig].strip(),
+        "lenders": txt[fin_orig:].strip() if lenders else "",
     }
 
 
