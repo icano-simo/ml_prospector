@@ -43,6 +43,20 @@ select setconfig
 --   SET pgrst.db_schemas = '<PEGAR_AQUI_LO_QUE_DEVOLVIO_EL_PASO_1>,pacs';
 --
 -- NOTIFY pgrst, 'reload config';
+-- NOTIFY pgrst, 'reload schema';     <-- LAS DOS. No es redundante.
+--
+-- ⚠ SON DOS NOTIFICACIONES DISTINTAS, y con una sola no funciona.
+--
+-- `reload config` releé pgrst.db_schemas. `reload schema` reconstruye el CACHE
+-- de tablas. Con la primera sola, PostgREST ya sabe que `pacs` esta expuesto
+-- pero no tiene sus tablas en el cache, y responde:
+--
+--   HTTP 404
+--   "Could not find the table 'pacs.realtors' in the schema cache"
+--   hint: "Perhaps you meant the table 'pacs.realtors'"
+--
+-- Es el error mas confuso que da: dice que no existe y en el hint la nombra.
+-- Medido el 2026-09-22 aplicando esto.
 
 
 -- ── PASO 3 · VOLVER A LEER y confirmar que estan TODAS ─────────────────────
@@ -69,3 +83,26 @@ select setconfig
 --
 -- Tiene que dar el numero del paso 1 mas uno. Si da menos, se perdio alguno y
 -- hay que reponerlo AHORA, no cuando alguien reporte que su app dejo de andar.
+
+
+-- ── APLICADO el 2026-09-22 ─────────────────────────────────────────────────
+--
+-- La lista viva eran TRECE: public, b2b_metrics, activity_report,
+-- pipeline_forecast, finance_pl, hr_us_payroll, finance_division, org,
+-- business_plan, uploads, outlook, review, comp.
+--
+-- Quedaron CATORCE con `pacs`. Ninguno perdido, verificado contando.
+--
+-- Y los otros ajustes del rol siguen intactos, que era el otro riesgo:
+--   session_preload_libraries=safeupdate, statement_timeout=8s, lock_timeout=8s
+--
+-- El ALTER toca un solo setting y no pisa los demas, pero eso se verifico en
+-- vez de suponerse.
+--
+-- ── Y una cabecera que hay que mandar ──────────────────────────────────────
+--
+-- Un esquema que no es `public` se pide con cabecera, o PostgREST busca en
+-- public y devuelve 404 de tabla inexistente:
+--
+--   leer      Accept-Profile: pacs
+--   escribir  Content-Profile: pacs

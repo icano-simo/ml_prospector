@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mesa de trabajo · Homesí</title>
+<style>
+/* Tokens de la division, como las otras apps. No una paleta nueva. */
+:root{
+  --fondo:#0f1115; --papel:#171a21; --papel2:#1d212a; --borde:#262b36;
+  --texto:#e8eaed; --tenue:#9aa3b2; --acento:#c8102e; --ok:#2e7d32;
+  --alerta:#b26a00; --info:#1565c0;
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --fondo:#f6f7f9; --papel:#fff; --papel2:#f0f2f5; --borde:#dfe3ea;
+    --texto:#1b1f27; --tenue:#5b6472;
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--fondo);color:var(--texto);
+  font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+.top{display:flex;align-items:center;gap:12px;padding:12px 18px;
+  border-bottom:1px solid var(--borde);background:var(--papel)}
+.top b{font-size:15px}
+.top .sep{flex:1}
+.top .est{font-size:12px;color:var(--tenue)}
+.wrap{display:grid;grid-template-columns:340px 1fr;height:calc(100% - 49px)}
+@media (max-width:860px){.wrap{grid-template-columns:1fr}
+  .side{display:none} .side.abierto{display:flex}}
+.side{border-right:1px solid var(--borde);display:flex;flex-direction:column;
+  min-height:0;background:var(--papel)}
+.filtros{padding:12px;border-bottom:1px solid var(--borde);display:grid;gap:8px}
+.frow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+input,select,textarea{background:var(--fondo);color:var(--texto);
+  border:1px solid var(--borde);border-radius:8px;padding:9px 10px;font:inherit;
+  width:100%}
+textarea{font:13px/1.45 ui-monospace,Consolas,monospace;min-height:130px;
+  resize:vertical}
+.cuenta{padding:8px 12px;font-size:12px;color:var(--tenue);
+  border-bottom:1px solid var(--borde)}
+.lista{overflow:auto;flex:1;min-height:0}
+.fila{padding:10px 12px;border-bottom:1px solid var(--borde);cursor:pointer;
+  display:flex;gap:10px;align-items:flex-start}
+.fila:hover{background:var(--papel2)}
+.fila.sel{background:var(--papel2);box-shadow:inset 3px 0 0 var(--acento)}
+.punto{width:8px;height:8px;border-radius:99px;margin-top:6px;flex:none;
+  background:var(--tenue)}
+.punto.si{background:var(--ok)}
+.fila .n{font-weight:600;font-size:14px}
+.fila .m{color:var(--tenue);font-size:12px}
+.main{overflow:auto;min-height:0;padding:20px 22px 60px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--borde);
+  margin:14px 0 18px}
+.tab{padding:9px 13px;border:0;background:transparent;color:var(--tenue);
+  font:inherit;font-weight:600;cursor:pointer;border-bottom:2px solid transparent}
+.tab.act{color:var(--texto);border-bottom-color:var(--acento)}
+.tab:disabled{opacity:.4;cursor:default}
+.tarjeta{background:var(--papel);border:1px solid var(--borde);
+  border-radius:10px;padding:16px;margin-bottom:14px}
+h1{font-size:19px;margin:0 0 3px}
+h2{font-size:12px;margin:0 0 10px;color:var(--tenue);text-transform:uppercase;
+  letter-spacing:.06em}
+.sub{color:var(--tenue);margin:0 0 14px;font-size:14px}
+label{display:block;font-weight:600;margin-bottom:6px;font-size:14px}
+.pista{color:var(--tenue);font-weight:400;font-size:13px}
+button.btn{background:var(--acento);color:#fff;border:0;border-radius:8px;
+  padding:11px 18px;font:inherit;font-weight:600;cursor:pointer}
+button.btn.sec{background:transparent;color:var(--texto);
+  border:1px solid var(--borde)}
+button.btn:disabled{opacity:.5;cursor:default}
+.err{border-left:4px solid var(--acento);background:rgba(200,16,46,.09);
+  padding:12px 14px;border-radius:8px;white-space:pre-wrap;margin-bottom:12px;
+  font-size:14px}
+.ok{border-left:4px solid var(--ok);background:rgba(46,125,50,.1);
+  padding:12px 14px;border-radius:8px;margin-bottom:12px}
+.avi{border-left:4px solid var(--alerta);background:rgba(178,106,0,.1);
+  padding:10px 12px;border-radius:8px;margin:8px 0;font-size:14px}
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--borde)}
+th{color:var(--tenue);font-weight:600;font-size:11px;text-transform:uppercase}
+.chip{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;
+  background:var(--borde);margin:2px 4px 2px 0}
+.chip.est{background:rgba(200,16,46,.2)}
+code{background:var(--fondo);padding:1px 5px;border-radius:4px;font-size:12px}
+.vacio{color:var(--tenue);padding:40px 10px;text-align:center}
+</style>
+</head>
+<body>
+<div class="top">
+  <b>Mesa de trabajo</b>
+  <span class="est" id="estadoGlobal">cargando…</span>
+  <span class="sep"></span>
+  <span class="est">Homesí · PACS-H</span>
+</div>
+
+<div class="wrap">
+  <aside class="side">
+    <div class="filtros">
+      <input type="search" id="q" placeholder="Buscar por nombre, brokerage o email">
+      <div class="frow">
+        <select id="fEstado"><option value="">Todos los estados</option></select>
+        <select id="fMM">
+          <option value="">Con y sin Model Match</option>
+          <option value="si">Solo con Model Match</option>
+          <option value="no">Solo sin Model Match</option>
+        </select>
+      </div>
+    </div>
+    <div class="cuenta" id="cuenta"></div>
+    <div class="lista" id="lista"></div>
+  </aside>
+  <main class="main" id="detalle">
+    <div class="vacio">Elegí un realtor de la lista para abrir su ficha.</div>
+  </main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let FILAS = [], SEL = null, TAB = 'mercados', GEO = [];
+
+async function api(ruta, opciones){
+  const r = await fetch(ruta, opciones);
+  const j = await r.json().catch(() => ({error:'respuesta no-JSON'}));
+  if(!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+
+/* ── lista lateral ────────────────────────────────────────────────────── */
+async function cargarLista(){
+  const p = new URLSearchParams();
+  if($('#q').value.trim()) p.set('q', $('#q').value.trim());
+  if($('#fEstado').value) p.set('estado', $('#fEstado').value);
+  if($('#fMM').value) p.set('mm', $('#fMM').value);
+  $('#cuenta').textContent = 'buscando…';
+  try{
+    const d = await api('/api/realtors?' + p.toString());
+    FILAS = d.filas;
+    $('#cuenta').textContent = d.truncado
+      ? `${d.mostradas} de ${d.total} · afiná la búsqueda para ver el resto`
+      : `${d.mostradas} de ${d.total}`;
+    pintarLista();
+    llenarEstados();
+  }catch(e){
+    $('#cuenta').textContent = '';
+    $('#lista').innerHTML = `<div class="err" style="margin:12px">${esc(e.message)}</div>`;
+  }
+}
+
+function llenarEstados(){
+  const sel = $('#fEstado');
+  if(sel.options.length > 1) return;
+  const vistos = [...new Set(FILAS.map(f => f.estado).filter(Boolean))].sort();
+  vistos.forEach(e => sel.insertAdjacentHTML('beforeend',
+    `<option value="${esc(e)}">${esc(e)}</option>`));
+}
+
+function pintarLista(){
+  $('#lista').innerHTML = FILAS.map(f => `
+    <div class="fila ${SEL && SEL.id===f.id ? 'sel' : ''}" data-id="${f.id}">
+      <span class="punto ${f.sf_lead_id ? 'si' : ''}"
+            title="${f.sf_lead_id ? 'con Lead ID' : 'sin llave dura'}"></span>
+      <span>
+        <div class="n">${esc(f.nombre_completo)}</div>
+        <div class="m">${esc(f.brokerage || '—')} · ${esc(f.estado || '—')}
+          ${f.unidades_ano != null ? ' · ' + f.unidades_ano + ' u/año' : ''}</div>
+      </span>
+    </div>`).join('') || '<div class="vacio">Nada con esos filtros.</div>';
+  document.querySelectorAll('.fila').forEach(el =>
+    el.onclick = () => abrir(el.dataset.id));
+}
+
+function abrir(id){
+  SEL = FILAS.find(f => f.id === id);
+  TAB = 'mercados';
+  pintarLista();
+  pintarFicha();
+}
+
+/* ── ficha ────────────────────────────────────────────────────────────── */
+const PESTANAS = [
+  ['lectura','Lectura del perfil',false],
+  ['calculo','Cómo se calculó',false],
+  ['mm','Model Match',false],
+  ['mercados','Mercados',true],
+  ['ig','Instagram',false],
+  ['dossier','Dossier A–G',false],
+  ['seq','Secuencia 60 días',false],
+];
+
+function pintarFicha(){
+  if(!SEL){ $('#detalle').innerHTML = '<div class="vacio">Elegí un realtor.</div>'; return }
+  const tabs = PESTANAS.map(([k,t,activa]) =>
+    `<button class="tab ${TAB===k?'act':''}" data-tab="${k}" ${activa?'':'disabled'}
+      title="${activa?'':'todavía no: la lógica se consume del motor de Python'}">${t}</button>`
+  ).join('');
+  $('#detalle').innerHTML = `
+    <h1>${esc(SEL.nombre_completo)}</h1>
+    <p class="sub">${esc(SEL.brokerage || '—')} · ${esc(SEL.estado || '—')}
+      ${SEL.sf_lead_id ? ' · Lead ' + esc(SEL.sf_lead_id) : ' · <b>sin llave dura</b>'}</p>
+    <div class="tabs">${tabs}</div>
+    <div id="cuerpo"></div>`;
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+    TAB = b.dataset.tab; pintarFicha();
+  });
+  if(TAB === 'mercados') vMercados();
+}
+
+/* ── pestaña Mercados · el pegado va acá, dentro de la ficha ──────────── */
+function vMercados(){
+  $('#cuerpo').innerHTML = `
+    <div class="tarjeta">
+      <h2>Pegar Model Match</h2>
+      <p class="sub" style="margin:0 0 12px">El orden de captura:
+        <b>1</b> Overview con <i>View Counties</i> ·
+        <b>2</b> Market Signals del estado ·
+        <b>3</b> Market Signals de cada condado, en el orden del Overview ·
+        <b>4</b> Originators con filtro Buyer · <b>5</b> Lenders</p>
+      <div id="msgs"></div>
+      <label>Overview <span class="pista">con View Counties activado</span></label>
+      <textarea id="ov" placeholder="Ctrl+A, Ctrl+C en la pestaña Overview"></textarea>
+      <div style="margin:10px 0">
+        <button class="btn sec" id="btnLeer">Leer los condados</button>
+      </div>
+      <div id="cajas"></div>
+    </div>
+    <div class="tarjeta">
+      <h2>Biblioteca de geografías</h2>
+      <div id="biblio" class="pista">cargando…</div>
+    </div>`;
+  $('#btnLeer').onclick = leerCondados;
+  cargarBiblio();
+}
+
+let CONDADOS = [];
+function leerCondados(){
+  const ov = $('#ov').value;
+  const filas = [...ov.matchAll(
+    /^[ \t]*([A-Z][A-Za-z.\-' ]{2,40}?)[ \t]*(?:County)?[ \t]*[\t|][ \t]*(\d+)[ \t]*$/gm)]
+    .map(m => [m[1].trim(), +m[2]])
+    .filter(([n]) => !['total','county','counties','units'].includes(n.toLowerCase()));
+  CONDADOS = filas.map(f => f[0]);
+  if(!CONDADOS.length){
+    $('#msgs').innerHTML = `<div class="avi">El Overview no trajo tabla de
+      condados. Revisá que <b>View Counties</b> estuviera activado antes de
+      copiar. Podés guardar igual: se capturará solo el estado.</div>`;
+  } else {
+    $('#msgs').innerHTML = '';
+  }
+  const cajas = [`<label>Market Signals · <b>${esc(SEL.estado || 'el estado')}</b>
+    <span class="pista">Set Location en el estado</span></label>
+    <textarea id="ms0"></textarea>`];
+  filas.forEach(([n,u], i) => cajas.push(
+    `<label>Market Signals · <b>${esc(n)}</b>
+      <span class="pista">${u} unidades · bloque ${i+2}</span></label>
+     <textarea id="ms${i+1}"></textarea>`));
+  cajas.push(`<label>Originators <span class="pista">con filtro Buyer</span></label>
+    <textarea id="orig"></textarea>
+    <label>Lenders</label><textarea id="lend"></textarea>`);
+  if(!SEL.sf_lead_id) cajas.push(
+    `<label>MMI Agent ID <span class="pista">este realtor no tiene Lead ID,
+      así que hace falta</span></label><input type="text" id="agent">`);
+  cajas.push(`<div style="margin-top:12px">
+    <button class="btn" id="btnGuardar">Guardar</button></div>`);
+  $('#cajas').innerHTML = cajas.join('');
+  $('#btnGuardar').onclick = guardar;
+}
+
+async function guardar(){
+  const ms = [];
+  for(let i=0; document.getElementById('ms'+i); i++)
+    ms.push(document.getElementById('ms'+i).value);
+  const vacios = ms.map((t,i) => t.trim() ? null : i+1).filter(Boolean);
+  if(vacios.length){
+    $('#msgs').innerHTML = `<div class="err">Faltan ${vacios.length} bloques de
+      Market Signals (posiciones ${vacios.join(', ')}). No se guarda nada: un
+      bloque vacío desalinea las etiquetas de todos los que vienen después.</div>`;
+    window.scrollTo({top:0, behavior:'smooth'});
+    return;
+  }
+  $('#btnGuardar').disabled = true;
+  $('#btnGuardar').textContent = 'guardando…';
+  try{
+    const d = await api('/api/guardar', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        realtor_id: SEL.id, sf_lead_id: SEL.sf_lead_id, estado: SEL.estado,
+        mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
+        overview: $('#ov').value,
+        market_signals: ms,
+        originators: $('#orig').value, lenders: $('#lend').value,
+      })
+    });
+    const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');
+    const vols = (d.volumenes||[]).map(v => '$' + (v/1e9).toFixed(1) + 'B').join(' · ');
+    $('#msgs').innerHTML = `<div class="ok"><b>${d.bloques} bloques</b> ·
+      lote <code>${esc(d.upload_batch_id)}</code>${vols ? '<br>volúmenes leídos: ' + esc(vols) : ''}</div>${avisos}`;
+    $('#cajas').innerHTML = '';
+    $('#ov').value = '';
+    cargarBiblio();
+  }catch(e){
+    $('#msgs').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }finally{
+    if($('#btnGuardar')){ $('#btnGuardar').disabled=false; $('#btnGuardar').textContent='Guardar' }
+    window.scrollTo({top:0, behavior:'smooth'});
+  }
+}
+
+async function cargarBiblio(){
+  try{
+    const d = await api('/api/geografias');
+    GEO = d.geografias;
+    $('#biblio').innerHTML = GEO.length
+      ? `<table><tr><th>Geografía</th><th>Nivel</th><th>Realtors</th><th>Capturas</th></tr>` +
+        GEO.map(g => `<tr><td>${esc(g.clave)}</td><td>${esc(g.nivel)}</td>
+          <td>${g.realtors}</td><td>${g.capturas}</td></tr>`).join('') + '</table>'
+      : 'Todavía no hay ninguna geografía capturada.';
+  }catch(e){ $('#biblio').innerHTML = `<div class="avi">${esc(e.message)}</div>` }
+}
+
+/* ── arranque ─────────────────────────────────────────────────────────── */
+let t = null;
+$('#q').oninput = () => { clearTimeout(t); t = setTimeout(cargarLista, 280) };
+$('#fEstado').onchange = cargarLista;
+$('#fMM').onchange = cargarLista;
+cargarLista().then(() => $('#estadoGlobal').textContent = '');
+</script>
+</body>
+</html>
