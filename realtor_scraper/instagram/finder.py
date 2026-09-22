@@ -1174,10 +1174,40 @@ VENTANA_DEGRADACION = 10
 MAX_SIN_CONTENIDO_EN_VENTANA = 7
 
 
+def _claves_reintentables(hechos: set[str], *, dir_crudo: Path) -> set[str]:
+    """Las claves ya hechas cuyo crudo NO trajo contenido y conviene repetir.
+
+    Se apoya en `EstadoPerfil.conviene_reintentar`, que es justo para lo que se
+    separaron los cuatro estados nuevos: `sin_grid`, `muro_de_sesion` y
+    `degradado` son fallos de lectura y vuelven al monton; `privado`, `vacio` y
+    `no_encontrado` son hechos sobre la cuenta y no mejoran repitiendo.
+
+    Pasa por `reclasificar_estado_heredado`, asi que un crudo viejo marcado
+    `privado` por ausencia de posts vuelve a intentarse -- que es exactamente
+    el caso de los siete del piloto.
+    """
+    vuelven: set[str] = set()
+    for clave in hechos:
+        ruta = dir_crudo / ("%s.json" % clave)
+        crudo = leer_crudo(ruta) if ruta.exists() else None
+        if crudo is None:
+            # Sin crudo en disco no se sabe que paso: se vuelve a pedir.
+            vuelven.add(clave)
+            continue
+        estado = reclasificar_estado_heredado(crudo)
+        try:
+            if EstadoPerfil(estado).conviene_reintentar:
+                vuelven.add(clave)
+        except ValueError:
+            vuelven.add(clave)
+    return vuelven
+
+
 def correr_lote(
     *,
     limite: int | None = None,
     reanudar: bool = True,
+    reintentar_ilegibles: bool = False,
     excluir_descartados: bool = False,
     solo_top300: bool = False,
     headless: bool = True,
@@ -1223,6 +1253,20 @@ def correr_lote(
         "hechos": [], "detenido_por": None, "iniciado_en": None
     }
     hechos = set(checkpoint.get("hechos") or [])
+
+    if reintentar_ilegibles and hechos:
+        vuelven = _claves_reintentables(hechos, dir_crudo=dir_crudo)
+        if vuelven:
+            hechos -= vuelven
+            checkpoint["hechos"] = sorted(hechos)
+            _guardar_checkpoint(checkpoint)
+            logger.info(
+                "Vuelven al monton {} perfiles cuyo crudo quedo sin contenido "
+                "legible: {}",
+                len(vuelven), ", ".join(sorted(vuelven)[:8])
+                + (" ..." if len(vuelven) > 8 else ""),
+            )
+
     if not checkpoint.get("iniciado_en"):
         checkpoint["iniciado_en"] = dt.datetime.now().isoformat(timespec="seconds")
 
@@ -2448,6 +2492,13 @@ def _main(argv: list[str] | None = None) -> int:
     ap.add_argument("--revisar-piloto", action="store_true",
                     help="imprime la revision a mano del piloto")
     ap.add_argument("--limite", type=int, default=None)
+    ap.add_argument(
+        "--reintentar-ilegibles", action="store_true",
+        help=("vuelve a pedir los perfiles ya hechos cuyo crudo no trajo "
+              "contenido legible (sin_grid, muro_de_sesion, degradado, y los "
+              "`privado` viejos inferidos por ausencia de posts). Los privados "
+              "de verdad y los vacios NO se repiten: no mejoran repitiendo."),
+    )
     ap.add_argument("--desde-cero", action="store_true",
                     help="ignora el checkpoint")
     ap.add_argument("--excluir-descartados", action="store_true",
@@ -2498,6 +2549,7 @@ def _main(argv: list[str] | None = None) -> int:
         resumen = correr_lote(
             limite=n,
             reanudar=not args.desde_cero,
+            reintentar_ilegibles=args.reintentar_ilegibles,
             excluir_descartados=args.excluir_descartados,
             solo_top300=args.solo_top300 or args.piloto is not None,
             headless=not args.con_ventana,

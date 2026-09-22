@@ -1186,6 +1186,51 @@ def test_el_freno_si_salta_con_una_sesion_que_se_cae():
     )
 
 
+def test_solo_vuelven_al_monton_los_que_no_se_leyeron():
+    """`--reintentar-ilegibles` sobre un checkpoint con los cuatro casos."""
+    from instagram.finder import _claves_reintentables, guardar_crudo
+    from instagram.finder import Objetivo
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        dir_crudo.mkdir()
+
+        casos = {
+            # el caso de los siete del piloto: `privado` heredado por ausencia
+            "viejo@x.com": ("privado", "cero posts y sin aviso de cuenta privada"),
+            # un privado de verdad
+            "priv@x.com": ("privado", "texto de cuenta privada: 'this account is private'"),
+            "singrid@x.com": ("sin_grid", "la cuadricula no rindio"),
+            "vacio@x.com": ("vacio", "declara 0 publicaciones"),
+            "ok@x.com": ("publico_leido", "20 contenedores de post leidos"),
+        }
+        for clave, (estado, evidencia) in casos.items():
+            c = _crudo(posts=[], estado=estado)
+            c["estado_evidencia"] = evidencia
+            c["perfil"]["n_publicaciones"] = 0 if estado == "vacio" else 300
+            (dir_crudo / ("%s.json" % clave)).write_text(
+                json.dumps(c), encoding="utf-8")
+
+        vuelven = _claves_reintentables(set(casos), dir_crudo=dir_crudo)
+        assert vuelven == {"viejo@x.com", "singrid@x.com"}, vuelven
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_un_crudo_que_falta_en_disco_vuelve_al_monton():
+    from instagram.finder import _claves_reintentables
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        dir_crudo = tmp / "ig_raw"
+        dir_crudo.mkdir()
+        assert _claves_reintentables({"fantasma@x.com"},
+                                     dir_crudo=dir_crudo) == {"fantasma@x.com"}
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_sin_grid_es_reintentable_y_privado_no():
     """La mitad del punto de separarlos: el reintento alcanza a uno y al otro no."""
     from instagram.estado import EstadoPerfil
