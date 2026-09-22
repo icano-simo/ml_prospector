@@ -2,7 +2,7 @@
 -- Esquema PACS-H · para simoOS-prod, esquema `pacs`
 -- ════════════════════════════════════════════════════════════════════════════
 --
--- Proyecto COMPARTIDO (`simoOS-prod`, ref eykplgdwlqpybzkzbpmu). Lo respaldan
+-- Proyecto COMPARTIDO (`simoOS-prod`; la ref esta en .env, no aca). Lo respaldan
 -- varias apps independientes y en `public` viven 67 tablas de RRHH y nomina.
 -- Nada de esto va en `public`.
 --
