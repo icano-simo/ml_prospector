@@ -454,7 +454,21 @@ create table if not exists pacs.lo_licencias (
     -- LA LLAVE hacia org.v_loan_officers. No hay FK porque el destino es una
     -- vista; la integridad la da `v_cobertura_lo`, que hace INNER JOIN: un
     -- employee_key que no exista alli simplemente no produce cobertura.
-    employee_key    text not null,
+    --
+    -- **bigint, verificado contra org el 2026-09-22.** Estaba declarado `text`
+    -- por suposicion y el INNER JOIN no compilaba:
+    --
+    --   ERROR 42883: operator does not exist: bigint = text
+    --
+    -- Que fallara al aplicar fue suerte. El JOIN es el mecanismo de integridad
+    -- de esta tabla -- lo que hace que una licencia huerfana deje de contar
+    -- sola-- asi que un tipo mal supuesto no rompia una consulta: **borraba la
+    -- garantia entera**, y en silencio si Postgres hubiera aceptado el cast.
+    --
+    -- La regla que sale de aca: una llave hacia otro esquema se lee tipada del
+    -- origen, nunca se asume. `information_schema.columns` lo dice en una
+    -- consulta.
+    employee_key    bigint not null,
 
     estado          text not null,
     licencia_numero text,
@@ -475,7 +489,9 @@ tiene. Nombre, email, tier, branch y actividad NO se copian: se leen de org por
 employee_key. Una copia de la identidad se desactualiza en silencio.';
 
 comment on column pacs.lo_licencias.employee_key is
-'La llave hacia org.v_loan_officers. Los nombres no son llave.';
+'La llave hacia org.v_loan_officers, bigint verificado contra org el 2026-09-22.
+Estaba supuesto como text y el INNER JOIN no compilaba. Una llave hacia otro
+esquema se lee tipada del origen, nunca se asume. Los nombres no son llave.';
 
 
 -- La cobertura: en que estados podemos originar, hoy.
