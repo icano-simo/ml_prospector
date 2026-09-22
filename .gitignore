@@ -31,7 +31,13 @@ data_inputIA/
 latino_re_engine/data/raw/
 
 # Referencia de FIPS y crosswalks descargados (regenerables con --descargar)
-geo/cache/
+#
+# `geo/cache/*` y NO `geo/cache/`: git no puede re-incluir un archivo si su
+# DIRECTORIO padre esta excluido -- la negacion de mas abajo no se llega a
+# evaluar. Con el asterisco se excluyen los archivos uno por uno y la excepcion
+# si aplica. Lo cazo `git ls-files` despues del commit; `git add -A` no dice
+# nada de lo que no agrego.
+geo/cache/*
 hmda/cache/
 hmda/salida/
 
