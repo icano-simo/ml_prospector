@@ -29,22 +29,28 @@ def main(ruta: str) -> int:
     with open(ruta, encoding="utf-8") as fh:
         sql = fh.read()
 
+    avisos: list[str] = []
+
     with psycopg.connect(url, autocommit=False) as con:
+        # Los `raise notice` de la migracion son lo que ELLA dice de si misma.
+        # La version anterior imprimia siempre el constraint de `contactos`
+        # -- de la migracion 06-- corriera la que corriera: una salida que no
+        # depende de lo que paso no comprueba nada, solo tranquiliza.
+        con.add_notice_handler(lambda diag: avisos.append(
+            (diag.message_primary or "").strip()))
         with con.cursor() as cur:
             cur.execute(sql)
         con.commit()
         print("aplicada: %s" % os.path.basename(ruta))
 
-        # El estado DESPUES, leido de la base y no del archivo.
-        with con.cursor() as cur:
-            cur.execute("""
-                select pg_get_constraintdef(oid)
-                from pg_constraint
-                where conrelid = 'pacs.contactos'::regclass
-                  and conname = 'contactos_canal_check'
-            """)
-            fila = cur.fetchone()
-        print("check de canal ahora: %s" % (fila[0] if fila else "(no existe)"))
+    if avisos:
+        print("")
+        print("lo que dice la migracion de si misma:")
+        for a in avisos:
+            print("   %s" % a)
+    else:
+        print("   (la migracion no emitio ningun `raise notice`: no dice nada "
+              "de lo que dejo. Vale la pena que lo diga.)")
     return 0
 
 

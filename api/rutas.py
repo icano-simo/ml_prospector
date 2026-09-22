@@ -77,8 +77,14 @@ def realtors(params: dict) -> tuple[int, dict]:
 
     rango = cabeceras.get("Content-Range", "")
     total = rango.split("/")[-1] if "/" in rango else str(len(filas))
+    # El nombre completo del estado viaja como MAPA, no como columna. En las
+    # tablas del motor manda el codigo de dos letras; el nombre es para
+    # mostrar, y un solo sitio donde escribirlo es un solo sitio donde puede
+    # divergir. `California` en una tabla y `CA` en otra es lo que hizo que
+    # ninguna de las 4.249 filas cruzara con ninguno de los 2.261 condados.
     return 200, {"filas": filas, "mostradas": len(filas), "total": total,
-                 "tope": TOPE, "truncado": len(datos or []) >= TOPE}
+                 "tope": TOPE, "truncado": len(datos or []) >= TOPE,
+                 "estados": ESTADOS}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

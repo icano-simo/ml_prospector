@@ -104,14 +104,28 @@ def main(aplicar: bool) -> int:
 
         print("\ntotal: %d condados" % len(todos))
 
-        # Una guarda con denominador: si el ingreso medio vino nulo en todos,
-        # el centinela se comio la columna y es mejor no cargar nada.
-        con_ingreso = sum(1 for c in todos
-                          if c["variables"].get("ingreso_medio_hogar"))
-        print("con ingreso medio: %d de %d (%.0f%%)"
-              % (con_ingreso, len(todos), 100.0 * con_ingreso / len(todos)))
-        if con_ingreso < len(todos) * 0.9:
-            print("ABORTADO: menos del 90%% trae ingreso. Algo se leyo mal.")
+        # ── COBERTURA POR VARIABLE ──────────────────────────────────────────
+        # No basta con que la carga no falle: hay que preguntarle a cada
+        # variable sobre cuantas filas trajo dato. Una que venga nula en todas
+        # entra igual y deja una columna de nulos que nadie nota -- y el
+        # contraste que la use no dispara nunca, sin error.
+        cob = census.cobertura(todos)
+        total = cob.pop("_total")
+        print("\nCOBERTURA POR VARIABLE (sobre %d condados)" % total)
+        flojas = []
+        for nombre, n in sorted(cob.items(), key=lambda kv: kv[1]):
+            pct = 100.0 * n / total
+            marca = ""
+            if pct < 90:
+                marca = "   <-- FLOJA"
+                flojas.append((nombre, n, pct))
+            print("   %-26s %5d de %5d  %5.1f%%%s" % (nombre, n, total, pct,
+                                                      marca))
+        if flojas:
+            print("\nABORTADO: %d variables por debajo del 90%% de cobertura: "
+                  "%s.\nNo se carga: una columna de nulos no se distingue de "
+                  "un mercado sin ese rasgo."
+                  % (len(flojas), ", ".join(n for n, _c, _p in flojas)))
             return 1
 
         lote = str(uuid.uuid4())

@@ -33,6 +33,8 @@ import sys
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
+from captura.estados import normalizar_estado  # noqa: E402
+from geo.fips import FipsNoResuelto, cargar as cargar_fips, resolver  # noqa: E402
 from motor.entrada import verificar_dataset  # noqa: E402
 from supabase.cargar import cargar, conectar  # noqa: E402
 
@@ -44,6 +46,33 @@ FUENTE = "libro_v3"
 #: Las unicas columnas del libro que entran. El resto son derivadas.
 COLUMNAS = ("Nombre", "Brokerage", "Estado", "Email", "Telefono",
             "Unidades/ano")
+
+#: La columna de condado, y lo que dice cuando no hay dato.
+COL_CONDADO = "mmi: condado_dominante"
+SIN_DATO_MMI = ("[sin dato mmi]", "[sin dato]", "", "nan", "none")
+
+_TABLA_FIPS = None
+
+
+def _fips_del_libro(r) -> str | None:
+    """El FIPS del condado dominante, o NULL. Nunca un nombre, nunca aproximado."""
+    global _TABLA_FIPS
+    texto = str(r.get(COL_CONDADO) or "").strip()
+    if not texto or texto.lower() in SIN_DATO_MMI:
+        return None
+    estado = normalizar_estado(r.get("Estado"))
+    if not estado:
+        return None
+    # `Travis 103 · Williamson 14 · Hays 7` -- el primero es el dominante.
+    primero = re.split(r"[·|;]", texto)[0].strip()
+    m = re.match(r"^(.+?)\s+\d+$", primero)
+    nombre = (m.group(1) if m else primero).strip()
+    if _TABLA_FIPS is None:
+        _TABLA_FIPS = cargar_fips()
+    try:
+        return resolver(estado, nombre, _TABLA_FIPS)[0]
+    except FipsNoResuelto:
+        return None
 
 
 def _texto(v) -> str | None:
@@ -140,14 +169,27 @@ def construir_filas() -> tuple[list[dict], dict]:
             "telefono_e164": tel,
             "email_principal": email,
             "nombre_completo": nombre,
-            # NULL a proposito: el libro trae nombre de condado, no FIPS.
-            "condado_fips": None,
+            # El libro trae NOMBRE de condado, no FIPS. Se resuelve por
+            # `geo.fips`, que no hace fuzzy matching: si no resuelve queda NULL
+            # y se reporta. Un nombre en la columna `condado_fips` entraria sin
+            # error y nadie lo notaria hasta cruzar con Census.
+            #
+            # Y da casi siempre NULL igual: la columna dice `[sin dato MMI]` en
+            # 4.248 de 4.249 filas. El crosswalk existe para cuando haya dato,
+            # no porque hoy lo haya.
+            "condado_fips": _fips_del_libro(r),
             "rango_volumen": None,
             "clave_resolucion": clave,
             # Carga semilla: no hubo cruce. Ver la nota del modulo.
             "match_confidence": 1.0,
             "brokerage": _texto(r["Brokerage"]),
-            "estado": _texto(r["Estado"]),
+            # CODIGO de dos letras, siempre. El libro trae `California` y
+            # census_condados guarda `CA`: con el nombre largo, ninguna de las
+            # 4.249 filas cruzaba con ninguno de los 2.261 condados, y el join
+            # devolvia cero -- que se lee igual que "no opera en ningun condado
+            # con datos". El check de la tabla lo impone; esto evita que la
+            # carga choque contra el check.
+            "estado": normalizar_estado(r["Estado"]),
             "unidades_ano": None if pd.isna(unidades) else float(unidades),
             # No se verifico contra originadores todavia. NULL, no false.
             "es_cliente_de_la_casa": None,

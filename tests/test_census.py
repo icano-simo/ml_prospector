@@ -185,12 +185,15 @@ def test_sin_denominador_la_razon_es_None_y_no_cero():
 
 # ══ LAS VARIABLES ════════════════════════════════════════════════════════════
 
-def test_las_doce_variables_estan_verificadas_contra_el_API():
-    """Las doce se probaron una por una contra Los Angeles County el
-    2026-09-22. Si se agrega una, se verifica igual antes."""
-    assert len(VARIABLES) == 12
+def test_las_variables_estan_verificadas_contra_el_API():
+    """Las 28 se probaron una por una contra Los Angeles County el 2026-09-22,
+    y su COBERTURA se midio sobre los 58 condados de California. Si se agrega
+    una, se verifica igual antes: existir y traer dato son dos cosas."""
+    assert len(VARIABLES) == 28
     assert all(c[0] in "BC" and c.endswith("E") for c in VARIABLES)
     assert "ingreso_medio_hogar" in VARIABLES.values()
+    assert "cuenta_propia_pct" not in VARIABLES.values(), (
+        "las derivadas no son variables del ACS: se calculan, con su base")
 
 
 def test_ninguna_variable_es_de_raza_ni_de_origen():
@@ -199,6 +202,144 @@ def test_ninguna_variable_es_de_raza_ni_de_origen():
     PROHIBIDAS = ("B02", "B03", "B04", "B05")   # raza, hispanidad, ancestria
     for codigo in VARIABLES:
         assert not codigo.startswith(PROHIBIDAS), codigo
+
+
+# ══ LOS TRES CONTRASTES NUEVOS ═══════════════════════════════════════════════
+#
+# Los numeros son los REALES de Los Angeles County, acs5 2022.
+
+LA = {
+    "ocupados_civiles": 4869620.0,
+    "cp_h_incorporado": 175547.0, "cp_h_no_incorporado": 218196.0,
+    "cp_m_incorporado": 100034.0, "cp_m_no_incorporado": 154546.0,
+    "con_hipoteca_base": 1073905.0,
+    "hipoteca_carga_30_35": 92726.0, "hipoteca_carga_35_40": 67494.0,
+    "hipoteca_carga_40_50": 87932.0, "hipoteca_carga_50mas": 210551.0,
+    "alquiler_base": 1810929.0, "alquiler_no_calculable": 88953.0,
+    "alquiler_carga_30_35": 161490.0, "alquiler_carga_35_40": 120923.0,
+    "alquiler_carga_40_50": 176809.0, "alquiler_carga_50mas": 526945.0,
+}
+
+
+def test_la_cuenta_propia_suma_las_CUATRO_lineas_correctas():
+    """B24080 es SEX BY CLASS OF WORKER y las de cuenta propia son la 005/010
+    y la 015/020. El primer intento tomo 004/005/014/015 y dio 71,2% de cuenta
+    propia en Los Angeles.
+
+    Lo que caza ese error no es que el numero parezca raro -- con los indices
+    corridos de a uno habria salido plausible-- sino comprobar la suma contra
+    su base.
+    """
+    d = derivadas(LA)
+    assert d["cuenta_propia_n"] == 648323.0
+    assert d["cuenta_propia_pct"] == 13.3
+    assert d["base_ocupados"] == 4869620.0
+    assert d["cuenta_propia_pct"] < 25, (
+        "mas de un cuarto de cuenta propia en un condado grande son indices "
+        "equivocados, no un mercado raro")
+
+
+def test_la_carga_de_alquiler_descuenta_los_no_calculables():
+    """Son hogares sin ingreso declarado: la carga no esta DEFINIDA para
+    ellos. Dejarlos en el denominador baja el porcentaje de todos los condados
+    por igual, y ese sesgo no se ve en ningun sitio."""
+    d = derivadas(LA)
+    assert d["base_alquiler_calculable"] == 1810929.0 - 88953.0
+    assert d["carga_alquiler_30mas_pct"] == 57.3
+    # Con la base sin descontar daria 54,5%: casi tres puntos de diferencia.
+    sin_descontar = round(100.0 * 986167.0 / 1810929.0, 1)
+    assert sin_descontar == 54.5
+    assert d["carga_alquiler_30mas_pct"] != sin_descontar
+
+
+def test_la_carga_de_hipoteca_va_sobre_los_que_TIENEN_hipoteca():
+    d = derivadas(LA)
+    assert d["carga_hipoteca_30mas_pct"] == 42.7
+    assert d["base_con_hipoteca"] == 1073905.0
+
+
+def test_si_falta_un_tramo_la_suma_es_None_y_no_un_total_mas_chico():
+    """Sumar tres de cuatro tramos da un numero con la misma pinta de total."""
+    parcial = dict(LA)
+    del parcial["hipoteca_carga_50mas"]
+    d = derivadas(parcial)
+    assert d["carga_hipoteca_30mas_pct"] is None
+
+
+# ══ LO QUE NO EXISTE A NIVEL CONDADO SE DICE ═════════════════════════════════
+
+def test_los_multigeneracionales_van_con_su_RESOLUCION_declarada():
+    """B11017 devuelve null en los 58 condados de California y valor en el
+    estado. No se rellena el condado con el del estado: se guarda el del
+    estado DICIENDO que es del estado.
+
+    Correr un contraste a otra escala es distinto de correrlo creyendo que es
+    de la escala que se pidio.
+    """
+    d = derivadas(LA, {"hogares_estado": 13315822.0,
+                       "multigeneracionales_estado": 802077.0})
+    assert d["multigeneracional_pct"] is None, "a nivel condado NO existe"
+    assert d["multigeneracional_pct_estado"] == 6.0
+    assert d["multigeneracional_resolucion"] == "estado"
+
+
+def test_sin_dato_de_estado_no_se_inventa_resolucion():
+    d = derivadas(LA)
+    assert d["multigeneracional_pct_estado"] is None
+    assert d["multigeneracional_resolucion"] is None
+
+
+# ══ LA COBERTURA, QUE ES LO QUE ATRAPA UNA COLUMNA DE NULOS ══════════════════
+
+def test_la_cobertura_cuenta_sobre_cuantas_filas_hay_dato():
+    """Una variable puede existir (HTTP 200, JSON) y venir nula en todas las
+    filas. Sin medir cobertura, esa columna entra y el contraste que la use no
+    dispara nunca -- sin error."""
+    from geo.census import cobertura
+
+    condados = [
+        {"variables": {"ingreso_medio_hogar": 80000.0, "hogares": 100.0}},
+        {"variables": {"ingreso_medio_hogar": None, "hogares": 200.0}},
+        {"variables": {"ingreso_medio_hogar": 90000.0, "hogares": 300.0}},
+    ]
+    c = cobertura(condados)
+    assert c["_total"] == 3
+    assert c["ingreso_medio_hogar"] == 2
+    assert c["hogares"] == 3
+    assert c["poblacion_total"] == 0, "la que no vino en ninguna, en cero"
+
+
+def test_la_cobertura_sobre_una_lista_vacia_no_miente():
+    from geo.census import cobertura
+
+    assert cobertura([]) == {}, (
+        "con cero condados no hay cobertura que reportar; devolver 100%% "
+        "seria la guarda que pasa porque no tiene nada que verificar")
+
+
+# ══ EL CONDADO DEL LIBRO ═════════════════════════════════════════════════════
+
+def test_la_columna_del_libro_trae_MAS_que_el_dominante():
+    """`Travis 103 · Williamson 14 · Hays 7`. El nombre de la columna promete
+    uno y trae tres: tirar los otros dos es perder dato que ya esta."""
+    from supabase.poblar_condado_fips import condados_del_texto
+
+    assert condados_del_texto("Travis 103 · Williamson 14 · Hays 7") == [
+        ("Travis", 103), ("Williamson", 14), ("Hays", 7)]
+
+
+def test_el_sin_dato_del_libro_no_es_un_condado():
+    from supabase.poblar_condado_fips import condados_del_texto
+
+    assert condados_del_texto("[sin dato MMI]") == []
+    assert condados_del_texto(None) == []
+    assert condados_del_texto("") == []
+
+
+def test_un_condado_sin_unidades_igual_entra_con_cero_declarado():
+    from supabase.poblar_condado_fips import condados_del_texto
+
+    assert condados_del_texto("Travis") == [("Travis", 0)]
 
 
 def _correr():

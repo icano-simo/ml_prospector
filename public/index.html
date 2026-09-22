@@ -98,6 +98,7 @@ async function cargarLista(){
   try{
     const d = await api('/api/realtors?' + p.toString());
     FILAS = d.filas;
+    ESTADOS = d.estados || ESTADOS;
     $('#cuenta').textContent = d.truncado
       ? `${d.mostradas} de ${d.total} · afiná la búsqueda para ver el resto`
       : `${d.mostradas} de ${d.total}`;
@@ -109,12 +110,17 @@ async function cargarLista(){
   }
 }
 
+/* El código de dos letras es el valor; el nombre completo es lo que se ve.
+   El mapa viene del servidor: escribirlo también acá sería un segundo sitio
+   donde puede divergir, que es justo el bug que se acaba de arreglar. */
+let ESTADOS = {};
 function llenarEstados(){
   const sel = $('#fEstado');
   if(sel.options.length > 1) return;
-  const vistos = [...new Set(FILAS.map(f => f.estado).filter(Boolean))].sort();
+  const vistos = [...new Set(FILAS.map(f => f.estado).filter(Boolean))]
+    .sort((a,b) => (ESTADOS[a]||a).localeCompare(ESTADOS[b]||b));
   vistos.forEach(e => sel.insertAdjacentHTML('beforeend',
-    `<option value="${esc(e)}">${esc(e)}</option>`));
+    `<option value="${esc(e)}">${esc(ESTADOS[e] || e)}</option>`));
 }
 
 function pintarLista(){
@@ -162,7 +168,8 @@ function pintarFicha(){
   ).join('');
   $('#detalle').innerHTML = `
     <h1>${esc(SEL.nombre_completo)}</h1>
-    <p class="sub">${esc(SEL.brokerage || '—')} · ${esc(SEL.estado || '—')}
+    <p class="sub">${esc(SEL.brokerage || '—')} ·
+      ${esc(ESTADOS[SEL.estado] || SEL.estado || '—')}
       ${SEL.sf_lead_id ? ' · Lead ' + esc(SEL.sf_lead_id) : ' · <b>sin llave dura</b>'}</p>
     <div class="tabs" role="tablist">${tabs}</div>
     <div id="cuerpo"></div>`;
