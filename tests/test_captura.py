@@ -32,15 +32,32 @@ from captura.trampas import (  # noqa: E402
 #
 # Condados: Solano 5, Contra Costa 3, Alameda 1. Suman 9, igual a Buyer Units.
 
+# El formato REAL de la tabla de condados, del volcado de Armando del
+# 2026-09-22. Siete columnas separadas por tabulador:
+#
+#   nombre, volumen total, UNIDADES totales, vol comprador, unidades comprador,
+#   vol vendedor, unidades vendedor
+#
+# La version sintetica que use antes era `Solano County\t5`, y el patron escrito
+# contra ella devolvia CERO condados con el texto de verdad. Un parser que pasa
+# sus propias pruebas y falla con el dato real es peor que no tenerlo.
 OVERVIEW = """\
+Agents
 Armando Ochoa
-eXp Realty of California
-San Ramon, CA
+
+Exp Realty Of California Inc.
+Buyer Units
+
+9
 
 Counties
-Solano County\t5
-Contra Costa County\t3
-Alameda County\t1
+View States
+View Counties
+County\t
+Solano County, CA\t$2.3M\t5\t$2.3M\t5\t$0\t0
+Contra Costa County, CA\t$1.6M\t3\t$1.6M\t3\t$0\t0
+Alameda County, CA\t$570K\t1\t$570K\t1\t$0\t0
+Top Builders
 """
 
 VOLUMENES = {
@@ -131,6 +148,111 @@ def test_sin_tabla_de_condados_se_advierte_lo_de_View_Counties():
                         mmi_agent_id="MMI-9001")
     assert cap.condados == []
     assert any("View Counties" in a for a in cap.advertencias)
+
+
+# ══ UNA SOLA CAJA · el texto trae sus propios cortes ═════════════════════════
+#
+# Siete pegados por realtor son 175 sobre 25 capturas, y 175 oportunidades de
+# poner algo en la caja equivocada.
+
+def _mercado(nombre, volumen):
+    """Un bloque de Market Signals con la forma real: el par de lineas
+    `Market Signals` + `Set Location` es lo que lo abre."""
+    return ("Market Signals\nSet Location\n\n"
+            "Mortgage activity across this agent's active markets\n\n"
+            "Market Overview\n\nTotal Loan Volume\n\n%s\n\nTotal Units\n\n"
+            "1,096,337\n\nRolling Monthly Performance\n\nVolume\n\n$578.70B\n"
+            % volumen)
+
+
+VOLCADO = (
+    OVERVIEW
+    + _mercado("California", "$578.7B")
+    + _mercado("Solano", "$6.0B")
+    + _mercado("Contra Costa", "$17.2B")
+    + _mercado("Alameda", "$20.2B")
+    + "Originators this agent has worked with and their transaction history\n"
+    + "Grace Davis\nNMLS: 862403\nEverett Financial, Inc.\t$540K\t1\t$540K\t35.3%\n"
+    + "Lenders this agent has worked with and their transaction history\n"
+    + "United Wholesale Mortgage\t$540K\t1\t$540K\t49.9%\n"
+)
+
+
+def test_el_separador_encuentra_las_cuatro_secciones():
+    from captura.protocolo import separar_volcado
+
+    s = separar_volcado(VOLCADO)
+    assert len(s["market_signals"]) == 4
+    assert "Counties" in s["overview"]
+    assert "Market Signals" not in s["overview"], (
+        "el Overview termina donde empieza el primer bloque de mercado"
+    )
+    assert s["originators"].startswith("Originators this agent")
+    assert s["lenders"].startswith("Lenders this agent")
+
+
+def test_Market_Signals_solo_NO_abre_un_bloque():
+    """Aparece en la barra de pestañas de todas las secciones.
+
+    Lo que abre un bloque de verdad es la pareja con `Set Location`, que solo
+    esta en la pestaña de mercado. Sin esa condicion, el separador cortaria una
+    vez por pestaña y daria seis bloques donde hay cuatro.
+    """
+    from captura.protocolo import separar_volcado
+
+    con_barra = ("Agents\nArmando Ochoa\nOverview\nMarket Signals\n"
+                 "Transactions\nOriginators\nLenders\nTitle Companies\n"
+                 + VOLCADO)
+    s = separar_volcado(con_barra)
+    assert len(s["market_signals"]) == 4, len(s["market_signals"])
+
+
+def test_sin_la_seccion_de_Originators_se_rechaza():
+    """Sin cierre, el ultimo bloque se come todo el texto que viene despues.
+
+    Las metricas saldrian igual -- solo que del sitio equivocado, que es el
+    error que no se ve.
+    """
+    from captura.protocolo import separar_volcado
+
+    sin_cierre = VOLCADO.split("Originators this agent")[0]
+    try:
+        separar_volcado(sin_cierre)
+    except ProtocoloInvalido as exc:
+        assert "no tiene cierre" in str(exc)
+        assert "No se guarda nada" in str(exc)
+    else:
+        raise AssertionError("sin cierre no se puede saber donde termina")
+
+
+def test_sin_ningun_bloque_de_mercado_se_rechaza():
+    from captura.protocolo import separar_volcado
+
+    try:
+        separar_volcado(OVERVIEW + "Originators this agent has worked with\n")
+    except ProtocoloInvalido as exc:
+        assert "ningun bloque de Market Signals" in str(exc)
+    else:
+        raise AssertionError("hace falta al menos el bloque del estado")
+
+
+def test_el_separador_y_la_validacion_de_conteo_encajan():
+    """El camino entero: separar, leer condados, etiquetar por posicion."""
+    from captura.parser_mm import parsear_mercado
+    from captura.protocolo import separar_volcado
+
+    s = separar_volcado(VOLCADO)
+    condados = [n for n, _ in condados_del_overview(s["overview"])]
+    assert condados == ["Solano", "Contra Costa", "Alameda"]
+
+    bloques = etiquetar_por_posicion(s["market_signals"], condados)
+    assert [b.nivel for b in bloques] == ["estado", "condado", "condado",
+                                          "condado"]
+    assert [b.etiqueta for b in bloques[1:]] == condados
+
+    vols = [parsear_mercado(b.texto)["total_volume"] for b in bloques]
+    assert vols == [578.7e9, 6.0e9, 17.2e9, 20.2e9], vols
+    assert len(set(vols)) == 4, "el rodante dice $578.70B en los cuatro"
 
 
 # ══ LA LLAVE ═════════════════════════════════════════════════════════════════

@@ -289,6 +289,40 @@ def _tabla_originadores(txt: str) -> list[dict]:
     return salida
 
 
+#: Una fila de la tabla de condados, en el formato REAL de Model Match:
+#:
+#:   Solano County, CA\t$2.3M\t5\t$2.3M\t5\t$0\t0
+#:
+#: Siete columnas: nombre, volumen total, UNIDADES TOTALES, volumen comprador,
+#: unidades comprador, volumen vendedor, unidades vendedor.
+#:
+#: La version anterior esperaba `nombre \t numero` al final de la linea y
+#: devolvia CERO condados contra el volcado real. Sin condados no hay
+#: etiquetado por posicion, o sea que la validacion de conteo habria dejado
+#: pasar cualquier cantidad de bloques como si fuera solo el estado.
+_RE_FILA_CONDADO_REAL = re.compile(
+    r"^\s*([A-Z][A-Za-z.\-' ]{2,40}?)\s+County\s*,\s*([A-Z]{2})\s*\t"
+    r"\s*\$[\d.,]+\s*[MKB]?\s*\t\s*(\d+)\s*\t",
+    re.MULTILINE,
+)
+
+
+def _condados(txt: str) -> list[dict]:
+    """Los condados de View Counties, EN ORDEN y con sus unidades totales.
+
+    El orden es dato y no presentacion: es lo que etiqueta cada bloque de
+    Market Signals.
+    """
+    salida = []
+    for nombre, estado_fila, unidades in _RE_FILA_CONDADO_REAL.findall(txt or ""):
+        n = nombre.strip()
+        if n.lower() in ("total", "county", "counties", "units"):
+            continue
+        salida.append({"nombre": n, "estado": estado_fila,
+                       "unidades": int(unidades)})
+    return salida
+
+
 def parsear_perfil(crudo: str) -> dict:
     """El Overview + Originators + Lenders de un perfil."""
     txt = (crudo or "").replace("\r", "").replace(" ", " ")
@@ -302,7 +336,17 @@ def parsear_perfil(crudo: str) -> dict:
         return None
 
     o: dict = {"capturado_en": dt.datetime.now(dt.timezone.utc).isoformat()}
-    o["nombre"] = lineas[0] if lineas else None
+
+    # El nombre va DESPUES de `Agents`, que es el ultimo item del menu de
+    # navegacion. La primera linea del volcado es "Model Match" -- el nombre de
+    # la aplicacion-- porque Ctrl+A copia el cromo entero.
+    #
+    # Tomar lineas[0] daba "Model Match" como nombre del agente en TODOS los
+    # perfiles: un campo que se llena siempre, con el mismo valor, y que nadie
+    # mira porque el nombre ya viene de la fila del realtor.
+    o["nombre"] = despues("Agents") or (lineas[0] if lineas else None)
+    if o["nombre"] and o["nombre"].lower() in ("model match", "search"):
+        o["nombre"] = None
     o["licencia"] = _g(plano, r"(?:DRE|TREC|License)\s*#?\s*([A-Z0-9-]+)")
     o["emails"] = sorted(set(re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", txt)))
     o["rango_fechas"] = _g(plano, r"Last\s+(\d+)\s+Months")
@@ -320,14 +364,7 @@ def parsear_perfil(crudo: str) -> dict:
     o["buyer_volume"] = mval(
         _g(plano, r"Buyer Volume\s*(?:\(i\))?\s*(\$[\d.,]+\s*[MKB]?)"))
 
-    # TRAMPA 6 · los condados, del bloque View Counties, EN ORDEN.
-    o["condados"] = [
-        {"nombre": n.strip(), "unidades": int(u)}
-        for n, u in re.findall(
-            r"^\s*([A-Z][A-Za-z.\-' ]{2,40}?)\s*(?:County)?\s*[\t|]\s*(\d+)\s*$",
-            txt, re.MULTILINE)
-        if n.strip().lower() not in ("total", "county", "counties", "units")
-    ]
+    o["condados"] = _condados(txt)
 
     # TRAMPA 3 · los dos wallet shares, separados y etiquetados.
     o["orig_buyer"] = _relaciones(

@@ -78,25 +78,20 @@ class Captura:
 # La tabla de condados aparece con "View Counties" activado. Cada fila trae el
 # nombre y las unidades. El orden de esa tabla es el orden de captura.
 
-_RE_FILA_CONDADO = re.compile(
-    r"^\s*([A-Z][A-Za-z.\-' ]{2,40}?)\s*(?:County)?\s*[,\t|]?\s*([A-Z]{2})?\s*[\t|]\s*(\d+)\s*$",
-    re.MULTILINE,
-)
-
-
 def condados_del_overview(texto: str) -> list[tuple[str, int]]:
     """(nombre, unidades) en el ORDEN de la tabla. No se ordena ni se agrupa.
 
     El orden es dato, no presentacion: es lo que despues etiqueta cada bloque
     de Market Signals.
+
+    Delega en `parser_mm._condados`, que tiene el patron calibrado contra el
+    volcado real. Habia dos patrones -- uno aca y otro alla-- y el de aca
+    devolvia cero condados contra el texto de verdad. Dos copias del mismo
+    patron es como quedo el bug del alt-text.
     """
-    salida: list[tuple[str, int]] = []
-    for m in _RE_FILA_CONDADO.finditer(texto or ""):
-        nombre = m.group(1).strip()
-        if nombre.lower() in ("total", "county", "counties", "units"):
-            continue
-        salida.append((nombre, int(m.group(3))))
-    return salida
+    from captura.parser_mm import _condados
+
+    return [(c["nombre"], c["unidades"]) for c in _condados(texto or "")]
 
 
 def etiquetar_por_posicion(
@@ -127,6 +122,94 @@ def etiquetar_por_posicion(
         salida.append(Bloque("market_signals", i, texto,
                              nivel="condado", etiqueta=nombre))
     return salida
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# UNA SOLA CAJA · el texto ya trae los cortes
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Siete pegados por realtor son siete oportunidades de poner algo en la caja
+# equivocada, y sobre 25 capturas son 175. El volcado trae marcadores que
+# delimitan cada seccion, asi que los cortes los encuentra el parser.
+#
+# Los marcadores, verificados contra el volcado real de Armando Ochoa:
+#
+#   `Market Signals` seguido de `Set Location`   abre cada bloque de mercado
+#   `Originators this agent has worked with`     cierra la serie y abre orig.
+#   `Lenders this agent has worked with`         abre lenders
+#
+# Lo que va antes del primer `Market Signals` + `Set Location` es el Overview.
+
+#: `Market Signals` solo no sirve: aparece tambien en la barra de pestañas de
+#: TODAS las secciones. Lo que abre un bloque de verdad es la pareja con
+#: `Set Location`, que solo esta en la pestaña de mercado.
+_RE_ABRE_MERCADO = re.compile(
+    r"^[ \t]*Market Signals[ \t]*\r?\n[ \t]*Set Location[ \t]*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_RE_ABRE_ORIGINADORES = re.compile(
+    r"^[ \t]*Originators this agent has worked with", re.MULTILINE | re.IGNORECASE)
+_RE_ABRE_LENDERS = re.compile(
+    r"^[ \t]*Lenders this agent has worked with", re.MULTILINE | re.IGNORECASE)
+
+
+def separar_volcado(texto: str) -> dict:
+    """Un volcado completo -> sus secciones. Sin pegar nada a mano.
+
+    Devuelve {overview, market_signals: [...], originators, lenders}.
+
+    Levanta `ProtocoloInvalido` si falta el cierre de la serie de mercados: sin
+    `Originators this agent has worked with` no se sabe donde termina el ultimo
+    bloque, y un ultimo bloque que se come el resto del texto es un error que
+    nadie ve -- las metricas salen, solo que del sitio equivocado.
+    """
+    txt = (texto or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    aperturas = [m.start() for m in _RE_ABRE_MERCADO.finditer(txt)]
+    if not aperturas:
+        raise ProtocoloInvalido(
+            "No encontre ningun bloque de Market Signals.\n"
+            "\n"
+            "Cada uno empieza con la linea `Market Signals` seguida de "
+            "`Set Location`. Si copiaste solo el Overview, falta pegar los "
+            "mercados; si copiaste con otra herramienta, puede que se hayan "
+            "perdido los saltos de linea."
+        )
+
+    cierre = _RE_ABRE_ORIGINADORES.search(txt)
+    if not cierre:
+        raise ProtocoloInvalido(
+            "Falta la seccion `Originators this agent has worked with`.\n"
+            "\n"
+            "Sin ella la serie de mercados no tiene cierre y no se puede saber "
+            "donde termina el ultimo bloque: se comeria todo el texto que "
+            "viene despues, y las metricas saldrian igual pero del sitio "
+            "equivocado.\n"
+            "\n"
+            "No se guarda nada. Pega tambien la pestaña Originators, con el "
+            "filtro Buyer."
+        )
+    if cierre.start() < aperturas[0]:
+        raise ProtocoloInvalido(
+            "La seccion de Originators aparece ANTES del primer bloque de "
+            "Market Signals. El orden de captura es Overview, mercados, "
+            "Originators, Lenders."
+        )
+
+    lenders = _RE_ABRE_LENDERS.search(txt, cierre.end())
+
+    bloques: list[str] = []
+    for i, inicio in enumerate(aperturas):
+        fin = aperturas[i + 1] if i + 1 < len(aperturas) else cierre.start()
+        bloques.append(txt[inicio:fin].strip())
+
+    fin_orig = lenders.start() if lenders else len(txt)
+    return {
+        "overview": txt[:aperturas[0]].strip(),
+        "market_signals": bloques,
+        "originators": txt[cierre.start():fin_orig].strip(),
+        "lenders": txt[lenders.start():].strip() if lenders else "",
+    }
 
 
 def armar_captura(
