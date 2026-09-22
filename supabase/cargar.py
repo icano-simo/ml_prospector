@@ -28,6 +28,18 @@ import sys
 import uuid
 from dataclasses import dataclass
 
+#: Fuentes cuyos lotes ACUMULAN en vez de reemplazarse.
+#:
+#: El modelo de "un lote vivo por fuente" es correcto para el libro: llega una
+#: version nueva y la anterior se apaga entera. **No lo es para las capturas**,
+#: donde cada lote es un realtor distinto y apagar el anterior deja viva solo
+#: la ultima. Ahi la perdida es invisible: las filas siguen en la tabla, la
+#: vista devuelve menos, y nada falla.
+#:
+#: No paso -- se comprobo que no hay trigger ni nada automatico, y que un lote
+#: nuevo deja vivo al anterior-- pero el camino existe y es una linea de codigo.
+FUENTES_QUE_ACUMULAN = frozenset({"modelmatch"})
+
 from supabase.config import credenciales
 
 #: Filas por lote. Sin PostgREST no hay timeout de 8 s, pero un lote grande que
@@ -227,6 +239,22 @@ def cargar(
             previos = [str(r[0]) for r in cur.fetchall()]
             anterior = previos[0] if previos else None
 
+            if fuente in FUENTES_QUE_ACUMULAN and previos:
+                raise CargaFallida(
+                    "%r no es una fuente de reemplazo: sus lotes ACUMULAN.\n"
+                    "\n"
+                    "Cada lote de %r es la captura de UN realtor distinto, no "
+                    "una version nueva de lo mismo. Apagar los %d anteriores "
+                    "dejaria viva solo la ultima captura, y las %s filas de "
+                    "las otras desaparecerian de v_%s_current sin borrarse ni "
+                    "avisar.\n"
+                    "\n"
+                    "Si lo que hace falta es apagar un lote concreto -- un "
+                    "ensayo, por ejemplo-- se apaga ese y no los demas."
+                    % (fuente, fuente, len(previos), "sus",
+                       "capturas_modelmatch")
+                )
+
             cur.execute(
                 "update pacs.upload_batch set es_vigente = false "
                 "where fuente = %s and id <> %s",
@@ -254,6 +282,15 @@ def volver_al_anterior(fuente: str, *, conexion=None) -> str | None:
     Es lo que hace que una captura mala no cueste un backup: una fila cambia y
     las vistas `v_*_current` vuelven a la version buena.
     """
+    # ANTES de abrir la conexion: una guarda que necesita la base para decidir
+    # ya toco la base.
+    if fuente in FUENTES_QUE_ACUMULAN:
+        raise CargaFallida(
+            "no se puede `volver atras` en %r: sus lotes acumulan.\n"
+            "Volver atras aca encenderia la captura anterior y apagaria la "
+            "ultima, que son de dos realtors distintos. Para descartar una "
+            "captura concreta se apaga ese lote." % fuente
+        )
     propia = conexion is None
     conn = conexion or conectar()
     try:

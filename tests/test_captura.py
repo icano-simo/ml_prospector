@@ -1254,6 +1254,42 @@ def test_un_estado_desconocido_da_None_y_no_el_texto_original():
     assert normalizar_estado(None) is None
 
 
+# ══ LAS CAPTURAS ACUMULAN · un lote no reemplaza al anterior ════════════════
+#
+# `cargar.py` apaga el lote previo de la misma fuente al encender el nuevo. Es
+# correcto para el libro -- llega una version nueva y la vieja se apaga entera--
+# y es destructivo para las capturas, donde cada lote es UN realtor distinto.
+#
+# Se comprobo contra la base que no hay trigger ni nada automatico que lo haga.
+# Pero el camino existe y es una linea: correr el cargador con fuente
+# 'modelmatch' dejaria viva solo la ultima captura. Las filas seguirian en la
+# tabla, la vista devolveria menos, y nada fallaria.
+
+def test_modelmatch_esta_declarada_como_fuente_que_acumula():
+    from supabase.cargar import FUENTES_QUE_ACUMULAN
+
+    assert "modelmatch" in FUENTES_QUE_ACUMULAN
+    assert "libro_v3" not in FUENTES_QUE_ACUMULAN, (
+        "el libro SI se reemplaza entero: apagar el lote anterior es lo "
+        "correcto ahi"
+    )
+
+
+def test_volver_atras_en_capturas_falla_sin_tocar_la_base():
+    """Y falla ANTES de abrir la conexion: una guarda que necesita la base
+    para decidir ya toco la base."""
+    from supabase.cargar import CargaFallida, volver_al_anterior
+
+    try:
+        volver_al_anterior("modelmatch")
+    except CargaFallida as exc:
+        assert "acumulan" in str(exc)
+        assert "dos realtors distintos" in str(exc)
+    else:
+        raise AssertionError(
+            "volver atras encenderia la captura de otro realtor")
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
