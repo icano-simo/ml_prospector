@@ -160,6 +160,107 @@ def test_el_lead_id_de_salesforce_tambien_sirve_de_llave():
     assert cap.mmi_agent_id is None
 
 
+# ══ EL PARSER PORTADO · calibrado contra el dato real, no reescrito ══════════
+
+MERCADO_SOLANO = """Market Signals
+Set Location
+Solano County
+Market Overview
+Total Loan Volume (i) $6.0B
+Total Units (i) 18,442
+Avg Household Income $168K
+Fall Out (i) 35.6%
+First-Time Buyers 26.4%
+Fair (580-669) 13.9%
+Jumbo 4,120 loans 5.1%
+Loan Type Distribution
+Conventional 71.2%
+FHA 16.0%
+Transaction Type Distribution
+Purchase 74.0%
+Lender Type Distribution
+Brokered 18.2%
+Rolling Monthly Performance
+Total Loan Volume $578.70B
+"""
+
+
+def test_el_volumen_sale_de_Market_Overview_no_del_rodante():
+    """TRAMPA 1, sobre texto que trae LOS DOS numeros.
+
+    El rodante dice $578,70B para las cuatro geografias. El parser tiene que
+    quedarse con el $6,0B de Market Overview.
+    """
+    from captura.parser_mm import parsear_mercado
+
+    m = parsear_mercado(MERCADO_SOLANO)
+    assert m["total_volume"] == 6.0e9, m["total_volume"]
+    assert m["total_volume"] != 578.7e9
+
+
+def test_los_numeros_de_Solano_coinciden_con_el_caso_de_prueba():
+    from captura.parser_mm import parsear_mercado
+
+    m = parsear_mercado(MERCADO_SOLANO)
+    assert m["avg_income"] == 168000.0
+    assert m["mkt_fha"] == 16.0
+    assert m["fallout"] == 35.6
+    assert m["credit_fair"] == 13.9
+    assert m["ftb"] == 26.4
+    assert m["jumbo"] == 5.1, "el jumbo va con SU denominador, no el del mercado"
+
+
+def test_mval_entiende_las_tres_escalas_y_el_separador_de_millar():
+    from captura.parser_mm import mval
+
+    assert mval("$578.7B") == 578.7e9
+    assert mval("$613.2K") == 613200
+    assert mval("$229K") == 229000
+    assert mval("1,096,337") == 1096337
+    assert mval(None) is None
+    assert mval("sin numero") is None
+
+
+TAB_ORIGINADORES = """Originators this agent has worked with
+Chris Ruiz
+NMLS: 2129
+Everett Financial Inc $4.1M 2 $2.05M 50.0%
+Other Person
+NMLS: 3274
+Guild Mortgage $2.0M 1 $2.0M 25.0%
+Lenders this agent has worked with
+"""
+
+
+def test_la_pestana_originators_saca_nombre_empresa_y_nmls():
+    """TRAMPA 5. Sin la empresa no se detecta que Everett es la casa."""
+    from captura.parser_mm import _tabla_originadores
+
+    ors = _tabla_originadores(TAB_ORIGINADORES)
+    assert len(ors) == 2
+    assert ors[0]["nombre"] == "Chris Ruiz"
+    assert ors[0]["nmls"] == "2129"
+    assert ors[0]["empresa"] == "Everett Financial Inc"
+    assert es_de_la_casa(ors[0]) and not es_de_la_casa(ors[1])
+
+
+def test_una_inversion_de_nombre_y_empresa_se_detecta():
+    """El fallo mas peligroso del parser de originadores.
+
+    Los dos campos son texto y los dos se llenan, asi que una inversion no
+    rompe nada -- salvo la exclusion: `es_de_la_casa` mira la EMPRESA, y si
+    ahi quedo el nombre de la persona, un originador de Everett pasa el filtro.
+    """
+    from captura.parser_mm import detectar_inversion
+
+    bien = [{"nombre": "Chris Ruiz", "empresa": "Everett Financial Inc"}]
+    assert detectar_inversion(bien) == []
+
+    al_reves = [{"nombre": "Everett Financial Inc", "empresa": "Chris Ruiz"}]
+    avisos = detectar_inversion(al_reves)
+    assert avisos and "parece una empresa" in avisos[0]
+
+
 # ══ TRAMPA 1 · el grafico rodante ════════════════════════════════════════════
 
 def test_cuatro_geografias_tienen_que_dar_cuatro_volumenes():
