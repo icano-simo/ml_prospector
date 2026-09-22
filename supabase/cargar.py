@@ -142,6 +142,28 @@ def cargar(
             if not lleva_lote:
                 cur.execute("select count(*) from pacs.%s" % tabla)
                 antes_total = cur.fetchone()[0]
+
+            # Como se codifica cada columna. Se PREGUNTA al esquema en vez de
+            # decidirlo por el tipo de Python, que fue exactamente el bug:
+            # una lista se codificaba como JSON y `text[]` la rechazaba con
+            #
+            #   malformed array literal: "[\"P-Q01\", \"P-Q06\"]"
+            #
+            # jsonb y text[] se ven iguales desde Python -- los dos llegan como
+            # list-- y solo el esquema sabe cual es cual.
+            cur.execute(
+                "select column_name, data_type from information_schema.columns "
+                " where table_schema = 'pacs' and table_name = %s",
+                (tabla,),
+            )
+            tipos = {c: t for c, t in cur.fetchall()}
+            faltantes = [c for c in cols if c not in tipos]
+            if faltantes:
+                raise CargaFallida(
+                    "estas columnas no existen en pacs.%s: %s"
+                    % (tabla, faltantes)
+                )
+            como_json = {c for c in cols if tipos[c] in ("jsonb", "json")}
             # 1 · el lote, apagado. Se enciende al final.
             cur.execute(
                 "insert into pacs.upload_batch "
@@ -166,7 +188,8 @@ def cargar(
                 for f in trozo:
                     valores = tuple(
                         json.dumps(f[c], ensure_ascii=False)
-                        if isinstance(f[c], (dict, list)) else f[c]
+                        if c in como_json and f[c] is not None
+                        else f[c]
                         for c in cols
                     )
                     datos.append(valores + (batch_id,) if lleva_lote else valores)
