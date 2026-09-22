@@ -1,0 +1,18 @@
+[project]
+name = "ml-prospector"
+version = "0.1.0"
+description = "Motor PACS-H y mesa de trabajo"
+requires-python = ">=3.11"
+# Sin dependencias: las funciones usan solo la biblioteca estandar.
+dependencies = []
+
+[tool.vercel]
+# El entrypoint unico. Sin esto el builder escanea el repo entero, encuentra
+# `api/*.py` y hasta `captura/servidor.py`, y falla pidiendo que se elija:
+#
+#   Error: No python entrypoint found in default locations, but found
+#   potential entrypoints: ... captura/servidor.py (variable: Handler)
+#
+# `api/index.py` expone `app`, una aplicacion WSGI de la biblioteca estandar que
+# despacha /api/realtors, /api/geografias y /api/guardar.
+entrypoint = "api.index:app"

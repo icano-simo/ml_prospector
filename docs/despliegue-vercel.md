@@ -5,9 +5,34 @@
 | | |
 |---|---|
 | `public/index.html` | la mesa de trabajo. Estático, sin build |
-| `api/*.py` | funciones serverless en Python. Hablan con Supabase |
-| `api/_comun.py` | **empieza con `_`, así que no es una ruta**: es el helper |
+| `api/index.py` | **el entrypoint único**: una app WSGI que despacha las tres rutas |
+| `api/rutas.py` | la lógica de cada endpoint, como funciones puras |
+| `api/_comun.py` | Supabase por REST con la `service_role` |
 | `captura/` | el parser y el protocolo. Se importan desde `api/` |
+| `pyproject.toml` | declara el entrypoint. Sin esto el build falla |
+
+## Un entrypoint, no una función por archivo
+
+El runtime de Python pide un entrypoint cuando el proyecto tiene `.py` fuera de
+`api/` — y este repo tiene `captura/`, `motor/`, `pacs/`. Con una función por
+archivo el build falla así:
+
+```
+Error: No python entrypoint found in default locations, but found
+potential entrypoints:
+  api/geografias.py (variable: handler)
+  ...
+  captura/servidor.py (variable: Handler)
+```
+
+Escanea el repo entero y encuentra hasta el servidor local de captura. Con
+`[tool.vercel] entrypoint = "api.index:app"` la ambigüedad desaparece.
+
+Efecto lateral bueno: **una sola función en vez de tres** es un solo arranque en
+frío, y el parser se importa una vez.
+
+WSGI de la biblioteca estándar, sin framework: nada que instalar, y el build no
+depende de resolver dependencias.
 
 ## `vercel.json`, y por qué cada línea
 
