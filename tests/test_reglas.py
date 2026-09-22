@@ -85,8 +85,8 @@ DISPARA: dict[str, dict] = {
     "P-Q20-1": {"ev2_self_employed": True, "ev_hits_lujo_inversion": 1},
 
     "P-Q10-1": {"ev2_video_contenido": True},
-    "P-Q10-2": {"ig_seguidores": 1000, "ev2_video_contenido": False,
-                "ev2_educacion": False},
+    "P-Q10-2": {"estado_perfil": "publico_leido", "ig_seguidores": 1000,
+                "ev2_video_contenido": False, "ev2_educacion": False},
 
     "P-Q11-1": {"ev2_volumen_declarado_bio": 50},
     "P-Q11-2": {"unidades_ano": 20},
@@ -146,8 +146,8 @@ NO_DISPARA: dict[str, dict] = {
     "P-Q20-1": {"ev2_self_employed": True, "ev_hits_lujo_inversion": 0},
 
     "P-Q10-1": {"ev2_video_contenido": False},
-    "P-Q10-2": {"ig_seguidores": 999, "ev2_video_contenido": False,
-                "ev2_educacion": False},
+    "P-Q10-2": {"estado_perfil": "publico_leido", "ig_seguidores": 999,
+                "ev2_video_contenido": False, "ev2_educacion": False},
 
     "P-Q11-1": {"ev2_volumen_declarado_bio": 49},
     "P-Q11-2": {"unidades_ano": 19},
@@ -521,6 +521,111 @@ def test_un_false_explicito_no_es_lo_mismo_que_un_dato_ausente():
     assert not falso.no_evaluadas and not falso.activaciones, (
         "un False medido es una medicion; un campo ausente no lo es"
     )
+
+
+def test_P_Q10_2_no_dispara_sobre_un_perfil_que_no_leimos():
+    """La unica regla que concluye desde una AUSENCIA.
+
+    "No le vimos señal de produccion" solo significa algo si se miro. Sobre un
+    perfil privado, "no vimos" se convertia en diagnostico -- que es justo lo
+    que la guardia de nada-se-llena-por-descarte prohibe, y el mismo error que
+    costo siete perfiles marcados como privados.
+    """
+    base = {"ig_seguidores": 5000, "ev2_video_contenido": False,
+            "ev2_educacion": False}
+    regla = _regla("P-Q10-2")
+
+    for estado in ("privado", "sin_grid", "muro_de_sesion", "degradado",
+                   "bloqueado", "no_encontrado", "vacio"):
+        ev = _evaluar(dict(base, estado_perfil=estado), solo=regla)
+        assert not ev.activaciones, (
+            "P-Q10-2 disparo con estado_perfil=%r: eso es convertir 'no vimos' "
+            "en diagnostico" % estado
+        )
+
+    leido = _evaluar(dict(base, estado_perfil="publico_leido"), solo=regla)
+    assert leido.activaciones, "con el perfil leido si tiene que disparar"
+
+
+def test_P_Q10_2_sin_estado_de_perfil_queda_sin_evaluar():
+    """Ausente no es lo mismo que 'no publico_leido'.
+
+    Si no sabemos si leimos su Instagram, la regla no concluye NI descarta: se
+    declara no evaluada, con el campo que falto.
+    """
+    ev = _evaluar(
+        {"ig_seguidores": 5000, "ev2_video_contenido": False,
+         "ev2_educacion": False},
+        solo=_regla("P-Q10-2"),
+    )
+    assert not ev.activaciones
+    assert len(ev.no_evaluadas) == 1
+    assert "estado_perfil" in ev.no_evaluadas[0].campos_faltantes
+
+
+def test_P_Q10_1_si_dispara_sin_estado_porque_es_afirmativa():
+    """La otra regla de P-Q10 concluye desde una PRESENCIA: produce video.
+
+    Esa no necesita saber si leimos el perfil -- si hay señal de video, hay
+    señal de video. La asimetria es el punto.
+    """
+    ev = _evaluar({"ev2_video_contenido": True}, solo=_regla("P-Q10-1"))
+    assert ev.activaciones and ev.activaciones[0].regla_id == "P-Q10-1"
+
+
+#: Reglas que concluyen desde una AUSENCIA, cada una con por que es segura.
+#:
+#: La distincion que importa no es "usa un `_no(...)`" sino DE DONDE VIENE la
+#: ausencia:
+#:
+#:   segura    el campo ausente sale de la MISMA lectura que los presentes. Si
+#:             no se leyo, faltan los dos, la condicion da None y la regla no
+#:             se evalua. Se protege sola.
+#:
+#:   peligrosa el campo ausente sale de OTRA fuente que la que la habilita. Es
+#:             el caso de P-Q10-2: `ig_seguidores` puede venir de un raspado
+#:             viejo y sobrevivir a que el perfil hoy sea privado, asi que la
+#:             regla disparaba con la puerta abierta y la ventana cerrada.
+CONCLUYEN_DESDE_AUSENCIA = {
+    "P-Q09-2": ("`ev_hits_lujo_inversion` sale del mismo texto que "
+                "`ev2_inversion`: si no se leyo, faltan los dos"),
+    "J-Q01-1": ("`ev2_listing_side` y `ev2_buy_side` salen de la misma bio: "
+                "si no se leyo, faltan los dos"),
+    "J-Q01-3": ("simetrica de J-Q01-1, misma bio"),
+    "P-Q10-2": ("EXIGE estado_perfil = publico_leido. Es la unica cuya "
+                "ausencia viene de otra fuente que la que la habilita"),
+}
+
+
+def test_toda_regla_que_concluye_desde_una_ausencia_esta_justificada():
+    """Cuando aparezca la quinta, esta prueba obliga a decidir antes de dejarla.
+
+    No basta con que el catalogo la tenga: hay que escribir por que su ausencia
+    significa algo.
+    """
+    import inspect
+
+    con_ausencia = []
+    for r in REGLAS:
+        try:
+            fuente = inspect.getsource(r.condicion)
+        except (OSError, TypeError):
+            continue
+        if "_no(" in fuente:
+            con_ausencia.append(r.id)
+
+    sin_justificar = sorted(set(con_ausencia) - set(CONCLUYEN_DESDE_AUSENCIA))
+    assert not sin_justificar, (
+        "concluyen desde una ausencia y nadie escribio por que es segura: %s. "
+        "La pregunta es si el campo ausente sale de la misma lectura que los "
+        "presentes; si no, exige evidencia de haber mirado, como P-Q10-2."
+        % sin_justificar
+    )
+    sobran = sorted(set(CONCLUYEN_DESDE_AUSENCIA) - set(con_ausencia))
+    assert not sobran, "justificadas y ya no concluyen desde ausencia: %s" % sobran
+
+    # Y la unica peligrosa tiene que seguir exigiendo la evidencia.
+    assert "estado_perfil" in _regla("P-Q10-2").campos
 
 
 def test_un_nan_se_trata_como_ausente_no_como_cero():

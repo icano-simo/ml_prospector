@@ -158,6 +158,16 @@ def _no(v: bool | None) -> bool | None:
     return None if v is None else not v
 
 
+def _igual(r: dict, campo: str, valor: str) -> bool | None:
+    """Comparacion exacta contra un valor. None si el campo falta.
+
+    Existe para las reglas que necesitan EVIDENCIA AFIRMATIVA de un estado, no
+    la ausencia de su contrario. Ver P-Q10-2.
+    """
+    v = r.get(campo)
+    return None if v is None else str(v) == valor
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # LAS REGLAS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -361,8 +371,21 @@ REGLAS: tuple[Regla, ...] = (
         id="P-Q10-2", qualifier="P-Q10", familia="P", intensidad=2, grado="E2",
         texto=("audiencia construida sin señal de producción sostenida: "
                "la carga la lleva él o ella"),
-        campos=("ig_seguidores", "ev2_video_contenido", "ev2_educacion"),
+        campos=("estado_perfil", "ig_seguidores", "ev2_video_contenido",
+                "ev2_educacion"),
+        # **Exige haber LEIDO el perfil.** Es la unica regla del catalogo que
+        # concluye desde una AUSENCIA -- "no le vimos señal de produccion"-- y
+        # una ausencia solo significa algo si se miro.
+        #
+        # Sin esta condicion la regla disparaba sobre perfiles privados, donde
+        # "no vimos" se convertia en diagnostico. Es exactamente lo que la
+        # guardia de "nada se llena por descarte" prohibe, y es el mismo error
+        # que costo siete perfiles marcados como privados.
+        #
+        # Si `estado_perfil` falta, la condicion da None: no se evalua y queda
+        # declarada. No leimos su Instagram, asi que no sabemos.
         condicion=lambda r: _y(
+            _igual(r, "estado_perfil", "publico_leido"),
             _ge(r, "ig_seguidores", 1000),
             _no(_o(_b(r, "ev2_video_contenido"), _b(r, "ev2_educacion"))),
         ),

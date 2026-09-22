@@ -604,7 +604,24 @@ create index if not exists evaluaciones_primario
 
 comment on table pacs.evaluaciones is
 'APPEND-ONLY. No hay politica de UPDATE ni de DELETE, asi que nadie puede
-borrar el historico -- mismo patron que uploads.load_log.';
+borrar el historico -- mismo patron que uploads.load_log.
+
+Para saber el diagnostico de HOY se lee `pacs.v_evaluacion_actual`. Contar esta
+tabla cuenta CORRIDAS, no personas.';
+
+
+-- El diagnostico vigente. Agregada en la migracion 02 despues de que un reporte
+-- mezclara dos corridas y diera 34,8% donde el numero real era 40,4%.
+create or replace view pacs.v_evaluacion_actual as
+select distinct on (realtor_id) *
+  from pacs.evaluaciones
+ order by realtor_id, evaluado_en desc;
+
+alter view pacs.v_evaluacion_actual set (security_invoker = on);
+
+comment on view pacs.v_evaluacion_actual is
+'La ULTIMA evaluacion de cada realtor. Nadie deberia tener que acordarse de
+escribir el DISTINCT ON.';
 
 
 create table if not exists pacs.evaluacion_contrastes (
@@ -749,7 +766,9 @@ end $$;
 grant select on pacs.v_capturas_modelmatch_current,
                 pacs.v_ig_senales_current,
                 pacs.v_ig_crudo_current,
-                pacs.v_mercados_current
+                pacs.v_mercados_current,
+                pacs.v_cobertura_lo,
+                pacs.v_evaluacion_actual
       to authenticated, service_role;
 
 

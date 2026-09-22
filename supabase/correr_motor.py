@@ -131,22 +131,28 @@ def main() -> int:
                       "Model Match. Declarado en campos_ausentes de cada fila.")
     print(res)
 
+    # Se lee de la VISTA, no de la tabla. `evaluaciones` es append-only, asi que
+    # contarla cuenta CORRIDAS y no personas -- y eso ya produjo un reporte con
+    # 8.374 evaluaciones y un 34,8% que mezclaba dos pasadas. El numero real era
+    # 40,4%.
     with conectar() as conn:
         with conn.cursor() as cur:
-            cur.execute("select count(*) from pacs.evaluaciones")
+            cur.execute("select count(*) from pacs.v_evaluacion_actual")
             n = cur.fetchone()[0]
-            cur.execute("select count(*) from pacs.evaluaciones "
+            cur.execute("select count(*) from pacs.v_evaluacion_actual "
                         " where dolor_primario is null")
             sin_dolor = cur.fetchone()[0]
-            cur.execute("select dolor_primario, count(*) from pacs.evaluaciones "
-                        " group by 1 order by 2 desc limit 10")
+            cur.execute("select dolor_primario, count(*) "
+                        "  from pacs.v_evaluacion_actual "
+                        " group by 1 order by 2 desc limit 12")
             top = cur.fetchall()
             cur.execute("select confianza->>'nivel', count(*) "
-                        "  from pacs.evaluaciones group by 1 order by 2 desc")
+                        "  from pacs.v_evaluacion_actual "
+                        " group by 1 order by 2 desc")
             niveles = cur.fetchall()
             cur.execute("select count(distinct version_reglas), "
                         "       count(distinct huella_reglas) "
-                        "  from pacs.evaluaciones")
+                        "  from pacs.v_evaluacion_actual")
             n_ver, n_huella = cur.fetchone()
 
     print("")
