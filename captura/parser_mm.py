@@ -384,6 +384,27 @@ def base_del_reparto(filas: list[dict]) -> str | None:
     return None
 
 
+def base_normalizada(valor, esperada: str | None = None) -> dict:
+    """Acepta la forma VIEJA de `wallet_share_base` sin dejarla pasar por medida.
+
+    Hasta hoy el campo era un string plano -- `"unidades"`, `"volumen"`-- que
+    declaraba la base sin comprobarla. Las capturas ya guardadas lo tienen asi,
+    y quien las lea se encuentra las dos formas.
+
+    La vieja se convierte en `{"esperada": ..., "medida": None}` y NO en
+    `{"medida": "unidades"}`: era una etiqueta declarada, y convertirla en
+    medicion seria darle una autoridad que nunca tuvo. `heredada` lo dice para
+    que se vea en pantalla en vez de parecer una medicion que dio None.
+    """
+    if isinstance(valor, dict):
+        return valor
+    if isinstance(valor, str) and valor:
+        return {"esperada": esperada or valor, "medida": None,
+                "coincide": None, "filas": 0, "heredada": valor}
+    return {"esperada": esperada, "medida": None, "coincide": None,
+            "filas": 0}
+
+
 def _etiqueta_de_base(filas: list[dict], esperada: str) -> dict:
     medida = base_del_reparto(filas)
     return {
@@ -811,7 +832,9 @@ def unir_perfiles(perfiles: list[dict]) -> dict:
             if clave == "wallet_share_base":
                 base = unido.setdefault("wallet_share_base", {})
                 for k, v in (valor or {}).items():
-                    if (v or {}).get("filas"):
+                    # Las capturas guardadas antes traen un string aca.
+                    v = base_normalizada(v)
+                    if v.get("filas"):
                         base[k] = v
                     else:
                         base.setdefault(k, v)

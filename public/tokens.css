@@ -1,0 +1,199 @@
+/*
+ * PORTADO SIN CAMBIOS desde icano-simo/homesi-reporte-actividad,
+ * app/styles/tokens.css (blob 3b26fbfbf367), el 2026-09-22.
+ *
+ * Es la misma paleta que usan las otras apps de la division. No se re-tipeo ni
+ * se aproximo ningun valor: el archivo se bajo por la API de GitHub y se
+ * escribio tal cual. Los comentarios de abajo son los del original y cuentan su
+ * propia historia -- se conservan porque explican por que cada token vale lo
+ * que vale.
+ *
+ * Lo unico que NO aplica aca: --font-inter y --font-barlow los inyecta
+ * next/font en esa app. Esta no usa Next, asi que --font-body y --font-display
+ * caen a sus fallbacks, que es justo para lo que estan.
+ *
+ * Si hay que actualizar la paleta, se vuelve a bajar el archivo; no se edita
+ * este. Dos copias divergentes de una paleta es como se pierde una marca.
+ */
+
+/*
+ * ============================================================================
+ * TOKENS DE DISEÑO — HOMESÍ BRAND BOOK 2025
+ * ============================================================================
+ *
+ * Etapa UX1 (overhaul Service Hub) — REESCRITO. Antes este archivo tenía la
+ * paleta genérica azul/gris heredada del HTML legado (--accent:#2563eb,
+ * --navy:#1e3a5f, --bg:#f4f5f7, --sidebar:#0d1526...). Ahora la fuente de
+ * verdad es el Brand Book:
+ *
+ *   'Enriching Skies'  #001A40  -> texto primario, acentos navy, tabs activos
+ *   'Warm Embrace'     #FF4040  -> CTA principal, logo mark
+ *   'Light Sky'        #A6DEFF  -> highlight suave, hover de filas/celdas
+ *   'New Day'          #FCFCFA  -> fondo del canvas global
+ *
+ * QUÉ PASÓ CON LOS TOKENS VIEJOS (importante para quien revise el diff):
+ * se eliminaron todos los alias genéricos del legado — --bg, --card, --text,
+ * --muted, --muted-2, --border, --border-soft, --accent, --green, --green-tint,
+ * --red, --navy-row, --sidebar, --sidebar-icon, --shadow y los cinco --tag-*.
+ * Convivían con la escala nueva describiendo los mismos colores con dos
+ * nombres distintos, que es la receta para que la paleta se desincronice.
+ * Cada uso se migró al token concreto que corresponde (--navy, --slate-*,
+ * --emerald-*, --rose-*), verificado con grep archivo por archivo.
+ *
+ * Los tokens nuevos usan prefijos explícitos por familia:
+ *   --slate-*    escala neutra (equivalente a la de Tailwind, que es la que
+ *                referencia el spec: slate-100/200/300/400/500/800)
+ *   --emerald-*  verde suave para métricas positivas / Closed / Healthy
+ *   --rose-*     rosa suave para métricas negativas / montos de riesgo
+ *   --radius-*   radios de esquina (el spec pide rounded-2xl = 16px en
+ *                tarjetas y rounded-full = 9999px en pills)
+ *   --shadow-*   sombras (shadow-xs del spec)
+ */
+
+:root {
+  /* ---- Marca ------------------------------------------------------------ */
+  --navy: #001a40; /* 'Enriching Skies' */
+  --coral: #ff4040; /* 'Warm Embrace'   */
+  --sky: #a6deff; /* 'Light Sky'       */
+  --canvas: #fcfcfa; /* 'New Day'       */
+  /*
+   * ⚠ `--white` SE USABA SIN ESTAR DEFINIDO — arreglado en OL23.
+   *
+   * Había cuatro usos en el módulo Outlook y todos con fallback --`var(--white,
+   * #fff)`, `var(--white, transparent)`-- así que nunca rompió y nadie lo notó:
+   * el fallback tapaba que el token no existía. Se descubrió al escribir un uso
+   * SIN fallback, que es cuando la variable indefinida deja de ser inofensiva:
+   * `color: var(--white)` sobre `--navy` habría salido oscuro sobre oscuro.
+   *
+   * Es el mismo mecanismo que el `datalist` de OL21 --dos defectos tapándose
+   * entre sí-- y el mismo patrón que `AGENTS.md`: el bug no estaba en lo que se
+   * cambió, estaba esperando que algo lo alcanzara.
+   */
+  --white: #ffffff;
+
+  /* ---- Escala neutra (slate) -------------------------------------------- */
+  --slate-50: #f8fafc;
+  --slate-100: #f1f5f9;
+  --slate-200: #e2e8f0;
+  --slate-300: #cbd5e1;
+  --slate-400: #94a3b8;
+  --slate-500: #64748b;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1e293b;
+
+  /* ---- Semánticos de estado --------------------------------------------- */
+  --emerald-50: #ecfdf5;
+  --emerald-200: #a7f3d0;
+  --emerald-700: #047857;
+  --emerald-800: #065f46;
+  --rose-50: #fff1f2;
+  --rose-200: #fecdd3;
+  --rose-700: #be123c;
+  /*
+   * Etapa BP1: la escala ámbar existía a medias -- sólo 50 y 700, agregados en
+   * UX1 para el chip "Transferred" de Forecast. El módulo Business Plan
+   * necesita el estado INTERMEDIO de triage ("Need Attention"), que va entre el
+   * emerald de "bien" y el rose de "riesgo", y para eso hacen falta los pasos
+   * de borde y de texto fuerte que faltaban. Se completan siguiendo el mismo
+   * patrón de las otras escalas (mismos números, misma familia Tailwind), sin
+   * tocar los dos valores que ya estaban en uso.
+   */
+  --amber-50: #fffbeb;
+  --amber-100: #fef3c7;
+  --amber-200: #fde68a;
+  --amber-500: #f59e0b;
+  --amber-700: #b45309;
+  --amber-800: #92400e;
+
+  /* ---- Derivados de marca ------------------------------------------------ */
+  /* 'Light Sky' aclarado sobre blanco — fondo de pills, hover suave. */
+  --accent-soft: #eef6fd;
+  --accent-border: var(--sky);
+
+  /* Chip "Transferred" (Forecast) — alias legibles sobre la escala amber. */
+  --amber: var(--amber-50);
+  --amber-text: var(--amber-700);
+
+  /* ---- Forma y profundidad ---------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px; /* rounded-2xl del spec */
+  --radius-full: 9999px;
+  --shadow-xs: 0 1px 2px rgba(0, 26, 64, 0.05);
+  /*
+   * Etapa PULIDO-1 FIX -- escalón intermedio entre --shadow-xs y --shadow-lg,
+   * mismo formato/color (navy @ opacidad baja), sólo más blur/opacidad. No
+   * reemplaza a --shadow-xs (sigue siendo el default de .mcard/.tbl-card en
+   * toda la app) -- se usa donde la tarjeta convive con un `border` de 1px
+   * que la sombra de 2px/5% no alcanza a distinguirse a su lado (ej. el
+   * borde pasa a --sky en :hover y domina visualmente sobre la sombra
+   * apenas perceptible). Ver el uso acotado en forecast-visual.css.
+   */
+  --shadow-sm: 0 2px 6px rgba(0, 26, 64, 0.1);
+  /*
+   * FIX-HERO-HOVER: causa real confirmada -- `.mcard:hover` (components.css)
+   * SOLO cambia `border-color` a `--sky`, nunca toca `box-shadow`. En reposo,
+   * la tarjeta ya usa `--shadow-sm` (Etapa PULIDO-1, acotado a
+   * `.analytics-tab`), y al pasar el mouse ese mismo valor sigue igual --
+   * "hover más flotante" nunca podía notarse porque la sombra de reposo y la
+   * de hover eran, literalmente, el mismo número. `--shadow-lg` (pensado para
+   * `.modal-box`, 20px/45px/18%) es demasiado para una tarjeta chica -- se
+   * vería como si "saltara" de la página, no como una elevación sutil. Mismo
+   * formato/color que el resto de la familia, un escalón real entre
+   * `--shadow-sm` y `--shadow-lg`. Uso acotado en forecast-visual.css
+   * (`.analytics-tab .mcard:hover`), mismo criterio de alcance que
+   * `--shadow-sm`.
+   *
+   * FIX-HERO-HOVER-2: subido un escalón más (de 6px/14% a 8px/18% de blur/
+   * opacidad) -- confirmado en pantalla que el valor anterior seguía
+   * perdiendo contra el borde `--sky` sólido de `:hover` (alto contraste,
+   * domina la atención sobre cualquier sombra difusa). Ver el ajuste
+   * complementario del lado del borde en forecast-visual.css -- ninguno de
+   * los dos ajustes solo alcanzaba, hacía falta bajarle el volumen al borde
+   * Y subirle un poco a la sombra.
+   */
+  --shadow-md: 0 8px 20px rgba(0, 26, 64, 0.18);
+  --shadow-lg: 0 20px 45px rgba(0, 26, 64, 0.18);
+
+  /* ---- Tipografía --------------------------------------------------------- */
+  /*
+   * --font-inter / --font-barlow los inyecta next/font en <html> (ver
+   * app/layout.tsx). Acá se envuelven con su fallback para que ninguna hoja
+   * de estilo tenga que repetir la cascada completa.
+   *   --font-body     Inter    -> body + tablas de datos
+   *   --font-display  Barlow   -> section headers y títulos
+   */
+  --font-body: var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-display: var(--font-barlow), var(--font-inter), -apple-system, 'Segoe UI', sans-serif;
+
+  /* ---- Layout ------------------------------------------------------------ */
+  /*
+   * Etapa UX6: baja de 1440 a 1380 para que la app no toque los bordes de la
+   * pantalla. Lo consumen `.hub-container` y las 2 filas del header
+   * (`.hub-header__top`/`.hub-header__bar`, shell.css), así que el logo del
+   * header queda alineado con el contenido de la página.
+   */
+  --container-max: 1380px;
+  /*
+   * FIX-HEADER-H-STALE: el header pasó de 1 fila (~60px) a 2 filas -- Etapa
+   * OL6 (shell.css, `.hub-header__top` + `.hub-header__bar`), para que la
+   * marca/nav/usuario dejaran de competir por el mismo ancho con 6 pestañas.
+   * Ese cambio nunca actualizó este token -- quedó en 60px, la altura de
+   * ANTES de las 2 filas, mientras el header real ya mide más. Cualquier
+   * `position: sticky; top: var(--header-h)` que se agregue después (ej.
+   * `.analytics-section-nav`, forecast-visual.css) hereda ese desfase y
+   * queda tapado detrás del header real, que ahora es más alto de lo que
+   * este número dice.
+   *
+   * Valor MEDIDO, no calculado -- `document.querySelector('.hub-header')
+   * .getBoundingClientRect().height` en DevTools real: 103px. El primer
+   * intento (108px) salió de sumar padding/border/line-height a mano
+   * (fila 1 ≈ 54px + fila 2 ≈ 48px ≈ 102px, redondeado con margen a 108) --
+   * quedó 5px LARGO, suficiente para dejar un hueco visible entre el header
+   * y `.analytics-section-nav` (que hereda este valor para su propio
+   * `top`). Sin margen de seguridad esta vez: el valor es el medido, tal
+   * cual.
+   */
+  --header-h: 103px;
+}

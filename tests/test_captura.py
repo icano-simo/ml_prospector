@@ -1290,6 +1290,138 @@ def test_volver_atras_en_capturas_falla_sin_tocar_la_base():
             "volver atras encenderia la captura de otro realtor")
 
 
+# ══ LA CONFIRMACION EN PANTALLA ══════════════════════════════════════════════
+#
+# Capturar 25 condados a ciegas y descubrir el problema al final es la forma
+# cara de descubrirlo.
+
+def _fila_mercado(etiqueta, nivel, volumen, fha=12.0, fallout=31.1, orden=0):
+    return {"parseado": {"seccion": "market_signals", "nivel": nivel,
+                         "etiqueta_geografica": etiqueta, "orden": orden,
+                         "metricas": {"total_volume": volumen, "mkt_fha": fha,
+                                      "fallout": fallout, "campos": 44}},
+            "texto_crudo": "x" * 3000}
+
+
+def test_el_resumen_lista_los_bloques_con_su_geografia_en_orden():
+    """Y los ORDENA. PostgREST devuelve las filas de una captura en orden
+    arbitrario porque todas comparten `capturado_en` -- se escriben en la misma
+    peticion. El orden de los bloques de mercado no es presentacion: es lo que
+    los etiqueta.
+    """
+    from api.rutas import resumen_de_captura
+
+    # A proposito revueltas, como vuelven de la base.
+    filas = [
+        _fila_mercado("Alameda", "condado", 20.2e9, 3.2, 29.7, orden=2),
+        {"parseado": {"seccion": "originators", "orden": 0}, "texto_crudo": "r" * 1522},
+        _fila_mercado("Solano", "condado", 6.0e9, 16.0, 35.6, orden=1),
+        {"parseado": {"seccion": "overview", "orden": 0}, "texto_crudo": "o" * 2252},
+        _fila_mercado("CA", "estado", 578.7e9, orden=0),
+    ]
+    r = resumen_de_captura(filas, {})
+    assert [s["seccion"] for s in r["secciones"]] == [
+        "overview", "market_signals", "market_signals", "market_signals",
+        "originators"]
+    assert [g["etiqueta"] for g in r["geografias"]] == ["CA", "Solano",
+                                                        "Alameda"]
+    assert r["secciones"][0]["caracteres"] == 2252
+
+
+def test_dos_geografias_con_el_mismo_volumen_se_marcan_LAS_DOS():
+    """Es la firma del grafico rodante. Y se dice CUALES: con cuatro bloques
+    saber que pasa no alcanza, hay que saber donde mirar."""
+    from api.rutas import resumen_de_captura
+
+    filas = [_fila_mercado("CA", "estado", 578.7e9, orden=0),
+             _fila_mercado("Solano", "condado", 578.7e9, orden=1),
+             _fila_mercado("Alameda", "condado", 20.2e9, orden=2)]
+    r = resumen_de_captura(filas, {})
+    assert r["volumenes_repetidos"] == [["CA", "Solano"]]
+    marcadas = [g["etiqueta"] for g in r["geografias"] if g["volumen_repetido"]]
+    assert marcadas == ["CA", "Solano"]
+
+
+def test_volumenes_distintos_no_marcan_nada():
+    """La guarda tiene que poder NO disparar; si no, no distingue nada."""
+    from api.rutas import resumen_de_captura
+
+    r = resumen_de_captura(
+        [_fila_mercado("CA", "estado", 578.7e9, orden=0),
+         _fila_mercado("Solano", "condado", 6.0e9, orden=1)], {})
+    assert r["volumenes_repetidos"] == []
+    assert not any(g["volumen_repetido"] for g in r["geografias"])
+
+
+def test_el_resumen_marca_quien_es_de_la_casa():
+    from api.rutas import resumen_de_captura
+    from captura.parser_mm import parsear_perfil
+
+    r = resumen_de_captura([], parsear_perfil(RELACIONES_REAL))
+    de_la_casa = [o["nombre"] for o in r["originadores"] if o["de_la_casa"]]
+    assert de_la_casa == ["Chris Ruiz", "Grace Davis"]
+    assert r["share_de_la_casa"]["share"] == 75.0
+
+
+def test_un_fallo_declarado_no_tumba_el_resumen_pero_sale_en_el():
+    """`share_de_la_casa` revienta a proposito sobre un fallo declarado. En la
+    pantalla eso tiene que aparecer con su razon, no tirar el guardado: el
+    crudo ya esta guardado cuando se arma el resumen."""
+    from api.rutas import resumen_de_captura
+
+    perfil = {"orig_buyer": [],
+              "fallos": [{"campo": "orig_buyer",
+                          "seccion": "Buyer Side Relationships",
+                          "por_que_importa": "la exclusion",
+                          "detalle": "vacio"}]}
+    r = resumen_de_captura([], perfil)
+    assert r["share_de_la_casa"]["share"] is None
+    assert "no se pudo calcular" in r["share_de_la_casa"]["razon"]
+    assert [f["campo"] for f in r["fallos"]] == ["orig_buyer"]
+
+
+# ══ LA FORMA VIEJA DE wallet_share_base ══════════════════════════════════════
+#
+# Hasta hoy era un string plano. Las capturas ya guardadas lo tienen asi, y
+# quien las lea se encuentra las dos formas en la misma tabla.
+
+def test_la_forma_vieja_no_pasa_por_medicion():
+    """Era una etiqueta declarada. Convertirla en medida le daria una autoridad
+    que nunca tuvo."""
+    from captura.parser_mm import base_normalizada
+
+    v = base_normalizada("unidades")
+    assert v["medida"] is None, "declarada no es medida"
+    assert v["esperada"] == "unidades"
+    assert v["heredada"] == "unidades"
+    assert v["filas"] == 0
+
+
+def test_unir_perfiles_tolera_la_forma_vieja():
+    from captura.parser_mm import parsear_perfil, unir_perfiles
+
+    viejo = {"orig_buyer": [], "tab_orig": [],
+             "wallet_share_base": {"orig_buyer": "unidades",
+                                   "tab_orig": "volumen"}}
+    unido = unir_perfiles([viejo, parsear_perfil(RELACIONES_REAL)])
+    assert len(unido["orig_buyer"]) == 3
+    # Gana la MEDIDA sobre la heredada, porque tiene filas detras.
+    assert unido["wallet_share_base"]["orig_buyer"]["medida"] == "unidades"
+    assert unido["wallet_share_base"]["orig_buyer"]["filas"] == 3
+
+
+def test_la_exclusion_sobre_la_forma_vieja_no_se_bloquea_ni_se_cree_la_etiqueta():
+    """Sin medicion no hay con que bloquear, asi que se deja pasar -- pero la
+    etiqueta heredada no se convierte en un `medida` que nadie comprobo."""
+    from captura.parser_mm import base_normalizada
+    from captura.trampas import wallet_share_para_exclusion
+
+    perfil = {"orig_buyer": REPARTO_POR_UNIDADES,
+              "wallet_share_base": {"orig_buyer": "unidades"}}
+    assert len(wallet_share_para_exclusion(perfil)) == 3
+    assert base_normalizada("unidades")["medida"] is None
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

@@ -4,96 +4,51 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Mesa de trabajo · Homesí</title>
+<!--
+  La paleta viene PORTADA de commercial-activity, no escrita aca. Ver la
+  cabecera de tokens.css: si hay que actualizarla se vuelve a bajar el archivo.
+-->
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="homesi.css">
 <style>
-/* Tokens de la division, como las otras apps. No una paleta nueva. */
-:root{
-  --fondo:#0f1115; --papel:#171a21; --papel2:#1d212a; --borde:#262b36;
-  --texto:#e8eaed; --tenue:#9aa3b2; --acento:#c8102e; --ok:#2e7d32;
-  --alerta:#b26a00; --info:#1565c0;
-}
-@media (prefers-color-scheme: light){
-  :root:not([data-theme="dark"]){
-    --fondo:#f6f7f9; --papel:#fff; --papel2:#f0f2f5; --borde:#dfe3ea;
-    --texto:#1b1f27; --tenue:#5b6472;
-  }
-}
-*{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;background:var(--fondo);color:var(--texto);
-  font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
-.top{display:flex;align-items:center;gap:12px;padding:12px 18px;
-  border-bottom:1px solid var(--borde);background:var(--papel)}
-.top b{font-size:15px}
-.top .sep{flex:1}
-.top .est{font-size:12px;color:var(--tenue)}
-.wrap{display:grid;grid-template-columns:340px 1fr;height:calc(100% - 49px)}
-@media (max-width:860px){.wrap{grid-template-columns:1fr}
-  .side{display:none} .side.abierto{display:flex}}
-.side{border-right:1px solid var(--borde);display:flex;flex-direction:column;
-  min-height:0;background:var(--papel)}
-.filtros{padding:12px;border-bottom:1px solid var(--borde);display:grid;gap:8px}
-.frow{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-input,select,textarea{background:var(--fondo);color:var(--texto);
-  border:1px solid var(--borde);border-radius:8px;padding:9px 10px;font:inherit;
-  width:100%}
-textarea{font:13px/1.45 ui-monospace,Consolas,monospace;min-height:130px;
-  resize:vertical}
-.cuenta{padding:8px 12px;font-size:12px;color:var(--tenue);
-  border-bottom:1px solid var(--borde)}
-.lista{overflow:auto;flex:1;min-height:0}
-.fila{padding:10px 12px;border-bottom:1px solid var(--borde);cursor:pointer;
-  display:flex;gap:10px;align-items:flex-start}
-.fila:hover{background:var(--papel2)}
-.fila.sel{background:var(--papel2);box-shadow:inset 3px 0 0 var(--acento)}
-.punto{width:8px;height:8px;border-radius:99px;margin-top:6px;flex:none;
-  background:var(--tenue)}
-.punto.si{background:var(--ok)}
-.fila .n{font-weight:600;font-size:14px}
-.fila .m{color:var(--tenue);font-size:12px}
-.main{overflow:auto;min-height:0;padding:20px 22px 60px}
-.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--borde);
-  margin:14px 0 18px}
-.tab{padding:9px 13px;border:0;background:transparent;color:var(--tenue);
-  font:inherit;font-weight:600;cursor:pointer;border-bottom:2px solid transparent}
-.tab.act{color:var(--texto);border-bottom-color:var(--acento)}
-.tab:disabled{opacity:.4;cursor:default}
-.tarjeta{background:var(--papel);border:1px solid var(--borde);
-  border-radius:10px;padding:16px;margin-bottom:14px}
-h1{font-size:19px;margin:0 0 3px}
-h2{font-size:12px;margin:0 0 10px;color:var(--tenue);text-transform:uppercase;
-  letter-spacing:.06em}
-.sub{color:var(--tenue);margin:0 0 14px;font-size:14px}
-label{display:block;font-weight:600;margin-bottom:6px;font-size:14px}
-.pista{color:var(--tenue);font-weight:400;font-size:13px}
-button.btn{background:var(--acento);color:#fff;border:0;border-radius:8px;
-  padding:11px 18px;font:inherit;font-weight:600;cursor:pointer}
-button.btn.sec{background:transparent;color:var(--texto);
-  border:1px solid var(--borde)}
-button.btn:disabled{opacity:.5;cursor:default}
-.err{border-left:4px solid var(--acento);background:rgba(200,16,46,.09);
-  padding:12px 14px;border-radius:8px;white-space:pre-wrap;margin-bottom:12px;
-  font-size:14px}
-.ok{border-left:4px solid var(--ok);background:rgba(46,125,50,.1);
-  padding:12px 14px;border-radius:8px;margin-bottom:12px}
-.avi{border-left:4px solid var(--alerta);background:rgba(178,106,0,.1);
-  padding:10px 12px;border-radius:8px;margin:8px 0;font-size:14px}
-table{width:100%;border-collapse:collapse;font-size:14px}
-th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--borde)}
-th{color:var(--tenue);font-weight:600;font-size:11px;text-transform:uppercase}
-.chip{display:inline-block;padding:2px 9px;border-radius:99px;font-size:12px;
-  background:var(--borde);margin:2px 4px 2px 0}
-.chip.est{background:rgba(200,16,46,.2)}
-code{background:var(--fondo);padding:1px 5px;border-radius:4px;font-size:12px}
-.vacio{color:var(--tenue);padding:40px 10px;text-align:center}
+/*
+ * Solo el armazon de DOS COLUMNAS, que es propio de esta pantalla. Todo lo
+ * demas -- colores, botones, tablas, mensajes-- sale de homesi.css sobre los
+ * tokens de marca.
+ */
+html, body { height: 100% }
+.wrap { display: grid; grid-template-columns: 340px 1fr; height: calc(100% - 52px) }
+@media (max-width: 860px){ .wrap { grid-template-columns: 1fr } .side { display: none } }
+.side { border-right: 1px solid var(--slate-200); display: flex;
+  flex-direction: column; min-height: 0; background: var(--white) }
+.filtros { padding: 12px; border-bottom: 1px solid var(--slate-200); display: grid; gap: 8px }
+.filtros label { margin: 0 }
+.frow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
+.cuenta { padding: 8px 12px; font-size: 12px; color: var(--slate-500);
+  border-bottom: 1px solid var(--slate-200) }
+.listaSide { overflow: auto; flex: 1; min-height: 0 }
+.fila { padding: 10px 12px; border-bottom: 1px solid var(--slate-100);
+  cursor: pointer; display: flex; gap: 10px; align-items: flex-start }
+.fila:hover { background: var(--accent-soft) }
+.fila.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--coral) }
+.punto { width: 8px; height: 8px; border-radius: var(--radius-full);
+  margin-top: 6px; flex: none; background: var(--slate-300) }
+.punto.si { background: var(--emerald-700) }
+.fila .n { font-weight: 600; font-size: 14px; color: var(--navy) }
+.fila .m { color: var(--slate-500); font-size: 12px }
+.main { overflow: auto; min-height: 0; padding: 20px 22px 60px }
+.main h1 { font: 600 20px/1.2 var(--font-display); color: var(--navy); margin: 0 0 3px }
+.vacio { color: var(--slate-400); padding: 44px 10px; text-align: center }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px }
 </style>
 </head>
 <body>
-<div class="top">
-  <b>Mesa de trabajo</b>
-  <span class="est" id="estadoGlobal">cargando…</span>
-  <span class="sep"></span>
-  <span class="est">Homesí · PACS-H</span>
-</div>
+<header class="hub-header">
+  <span class="marca"></span>
+  <h1>Mesa de trabajo</h1>
+  <span class="sub" id="estadoGlobal">cargando…</span>
+  <span class="sub">Homesí · PACS-H</span>
+</header>
 
 <div class="wrap">
   <aside class="side">
@@ -109,7 +64,7 @@ code{background:var(--fondo);padding:1px 5px;border-radius:4px;font-size:12px}
       </div>
     </div>
     <div class="cuenta" id="cuenta"></div>
-    <div class="lista" id="lista"></div>
+    <div class="listaSide" id="lista"></div>
   </aside>
   <main class="main" id="detalle">
     <div class="vacio">Elegí un realtor de la lista para abrir su ficha.</div>
@@ -185,10 +140,13 @@ function abrir(id){
 }
 
 /* ── ficha ────────────────────────────────────────────────────────────── */
+/* `Model Match` YA no está deshabilitada: no necesita el motor, sólo lee
+   `parseado` de la base y lo muestra. Las otras siguen apagadas porque su
+   contenido sí se consume del motor de Python. */
 const PESTANAS = [
   ['lectura','Lectura del perfil',false],
   ['calculo','Cómo se calculó',false],
-  ['mm','Model Match',false],
+  ['mm','Model Match',true],
   ['mercados','Mercados',true],
   ['ig','Instagram',false],
   ['dossier','Dossier A–G',false],
@@ -198,19 +156,148 @@ const PESTANAS = [
 function pintarFicha(){
   if(!SEL){ $('#detalle').innerHTML = '<div class="vacio">Elegí un realtor.</div>'; return }
   const tabs = PESTANAS.map(([k,t,activa]) =>
-    `<button class="tab ${TAB===k?'act':''}" data-tab="${k}" ${activa?'':'disabled'}
-      title="${activa?'':'todavía no: la lógica se consume del motor de Python'}">${t}</button>`
+    `<button class="tab" role="tab" aria-selected="${TAB===k}" data-tab="${k}"
+      ${activa?'':'disabled'}
+      title="${activa?'':'todavía no: el contenido se consume del motor de Python'}">${t}</button>`
   ).join('');
   $('#detalle').innerHTML = `
     <h1>${esc(SEL.nombre_completo)}</h1>
     <p class="sub">${esc(SEL.brokerage || '—')} · ${esc(SEL.estado || '—')}
       ${SEL.sf_lead_id ? ' · Lead ' + esc(SEL.sf_lead_id) : ' · <b>sin llave dura</b>'}</p>
-    <div class="tabs">${tabs}</div>
+    <div class="tabs" role="tablist">${tabs}</div>
     <div id="cuerpo"></div>`;
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
     TAB = b.dataset.tab; pintarFicha();
   });
   if(TAB === 'mercados') vMercados();
+  if(TAB === 'mm') vModelMatch();
+}
+
+/* ══ LA CONFIRMACIÓN ═══════════════════════════════════════════════════════
+ * Lo mismo se pinta al guardar y al auditar una captura vieja: si se vieran
+ * distinto habría que aprender dos pantallas para leer el mismo dato.
+ */
+const dinero = v => v == null ? '—'
+  : v >= 1e9 ? '$' + (v/1e9).toFixed(1) + 'B'
+  : v >= 1e6 ? '$' + (v/1e6).toFixed(1) + 'M'
+  : '$' + Math.round(v/1e3) + 'K';
+const pct = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
+
+function pintarResumen(r){
+  if(!r) return '';
+  const secc = r.secciones.map(s => {
+    const donde = s.seccion === 'market_signals'
+      ? (s.nivel === 'estado' ? 'estado' : 'condado') + ' · ' + esc(s.etiqueta || '—')
+      : '';
+    return `<li><b>${esc(s.seccion)}</b> ${donde}
+      <span class="pista">· ${s.caracteres.toLocaleString('es')} caracteres</span></li>`;
+  }).join('');
+
+  const geo = r.geografias.map(g => `
+    <tr class="metric ${g.volumen_repetido ? 'repetido' : ''}">
+      <td class="lbl">${esc(g.etiqueta || '(estado)')}</td>
+      <td>${esc(g.nivel || '—')}</td>
+      <td>${dinero(g.total_volume)}</td>
+      <td>${pct(g.mkt_fha)}</td>
+      <td>${pct(g.fallout)}</td>
+      <td class="totcol">${g.campos == null ? '—' : g.campos}</td>
+    </tr>`).join('');
+
+  const repes = (r.volumenes_repetidos || []).length
+    ? `<div class="err"><b>Dos geografías con el mismo volumen:</b>
+        ${r.volumenes_repetidos.map(n => esc(n.join(' y '))).join('; ')}.
+        Eso es el Rolling Monthly Performance, que no respeta el filtro de
+        ubicación. Hay que copiar la sección <b>Market Overview</b>.</div>`
+    : '';
+
+  const orig = r.originadores.length ? r.originadores.map(o => `
+      <li><b>${esc(o.nombre || '—')}</b> · ${esc(o.empresa || '—')}
+        <span class="pista">· ${o.unidades ?? '—'} u · ${pct(o.share)}</span>
+        ${o.de_la_casa ? '<span class="pill casa">de la casa</span>' : ''}</li>`).join('')
+    : '<li class="pista">sin relaciones de originador en esta captura</li>';
+
+  const casa = r.share_de_la_casa || {};
+  const casaLinea = casa.share != null
+    ? `<span class="pill ${casa.share > 0 ? 'casa' : 'ok'}">Everett/Supreme:
+        ${pct(casa.share)} · ${casa.unidades} de ${casa.unidades_totales} unidades</span>`
+    : `<span class="pill alerta">no se pudo calcular</span>
+       <div class="pista" style="margin-top:6px">${esc(casa.razon || '')}</div>`;
+
+  const fallos = (r.fallos || []).length
+    ? `<div class="tarjeta"><h2>Fallos de lectura</h2>
+        <p class="sub">Secciones que venían en el texto y quedaron vacías. El
+          crudo está guardado: se arregla el parser y se re-deriva sin volver a
+          capturar.</p>
+        ${r.fallos.map(f => `<div class="avi"><b>${esc(f.seccion)}</b> →
+          <code>${esc(f.campo)}</code><br>${esc(f.por_que_importa || '')}</div>`).join('')}</div>`
+    : `<div class="tarjeta"><h2>Fallos de lectura</h2>
+        <p class="sub" style="margin:0"><span class="pill ok">ninguno</span>
+          Todas las secciones presentes en el texto llegaron a un campo.</p></div>`;
+
+  const p = r.perfil || {};
+  return `
+    ${repes}
+    <div class="tarjeta">
+      <h2>Bloques separados · ${r.secciones.length}</h2>
+      <ul class="lista">${secc}</ul>
+    </div>
+    <div class="tarjeta">
+      <h2>Por geografía</h2>
+      <p class="sub">Volumen, FHA del mercado y fallout. Si dos filas repiten
+        volumen, salen en rojo.</p>
+      <div class="tbl-scroll">
+        <table class="piv">
+          <thead><tr>
+            <th class="lbl">Geografía</th><th>Nivel</th><th>Volumen</th>
+            <th>FHA</th><th>Fallout</th><th class="totcol">Campos</th>
+          </tr></thead>
+          <tbody>${geo || '<tr class="metric"><td class="lbl">—</td></tr>'}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="tarjeta">
+      <h2>Originadores · por unidades</h2>
+      <div style="margin-bottom:8px">${casaLinea}</div>
+      <ul class="lista">${orig}</ul>
+    </div>
+    <div class="tarjeta">
+      <h2>Perfil</h2>
+      <div class="grid2">
+        <div><span class="pista">nombre</span><br><b>${esc(p.nombre || '—')}</b></div>
+        <div><span class="pista">buyer units</span><br><b>${p.buyer_units ?? '—'}</b></div>
+        <div><span class="pista">TPO del agente</span><br><b>${pct(p.tpo_pct)}</b></div>
+        <div><span class="pista">lenders</span><br><b>${p.lenders ?? 0}</b></div>
+        <div><span class="pista">cobertura del mix</span><br>
+          <b>${pct(p.cobertura_mix)}</b>
+          ${p.cobertura_mix != null && p.cobertura_mix < 50
+            ? '<span class="pill alerta">no pasa la guardia</span>' : ''}</div>
+      </div>
+    </div>
+    ${fallos}`;
+}
+
+/* ── pestaña Model Match · lo capturado, desde la base ────────────────────── */
+async function vModelMatch(){
+  $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando capturas…</div>';
+  try{
+    const d = await api('/api/capturas?realtor_id=' + encodeURIComponent(SEL.id));
+    if(!d.capturas.length){
+      $('#cuerpo').innerHTML = `<div class="tarjeta">
+        <h2>Model Match</h2>
+        <p class="sub" style="margin:0">Este realtor no tiene capturas vigentes.
+          Se pegan desde la pestaña <b>Mercados</b>.</p></div>`;
+      return;
+    }
+    $('#cuerpo').innerHTML = d.capturas.map((c, i) => `
+      <div class="tarjeta">
+        <h2>Captura ${d.capturas.length - i} de ${d.capturas.length}</h2>
+        <p class="sub" style="margin:0">${esc(c.capturado_en || '')} ·
+          ${esc(c.estado || '—')} · ${c.caracteres.toLocaleString('es')} caracteres ·
+          <code>${esc(c.version_parser || '')}</code></p>
+      </div>` + pintarResumen(c.resumen)).join('');
+  }catch(e){
+    $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
 }
 
 /* ── pestaña Mercados · el pegado va acá, dentro de la ficha ──────────── */
@@ -237,6 +324,7 @@ function vMercados(){
         <span class="pista" id="tam"></span>
       </div>
     </div>
+    <div id="confirmacion"></div>
     <div class="tarjeta">
       <h2>Biblioteca de geografías</h2>
       <div id="biblio" class="pista">cargando…</div>
@@ -270,14 +358,15 @@ async function guardar(){
       })
     });
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');
-    const vols = (d.volumenes||[]).map(v => '$' + (v/1e9).toFixed(1) + 'B').join(' · ');
     const cond = (d.condados||[]).join(' · ');
     const cont = (d.contactos||[]).map(c => c.canal + ': ' + c.valor).join(' · ');
-    $('#msgs').innerHTML = `<div class="ok"><b>${d.bloques} bloques</b> ·
-      lote <code>${esc(d.upload_batch_id)}</code>
+    $('#msgs').innerHTML = `<div class="ok"><b>${d.bloques} bloques guardados</b> ·
+      ${esc(d.estado || '')} · lote <code>${esc(d.upload_batch_id)}</code>
       ${cond ? '<br>condados: ' + esc(cond) : ''}
-      ${vols ? '<br>volúmenes leídos: ' + esc(vols) : ''}
       ${cont ? '<br>contactos: ' + esc(cont) : ''}</div>${avisos}`;
+    /* La confirmación va DEBAJO de la caja y no se borra: es lo que se mira
+       antes de pasar al realtor siguiente. */
+    $('#confirmacion').innerHTML = pintarResumen(d.resumen);
     $('#volcado').value = '';
     $('#tam').textContent = '';
     cargarBiblio();
@@ -301,9 +390,13 @@ async function cargarBiblio(){
     const d = await api('/api/geografias');
     GEO = d.geografias;
     $('#biblio').innerHTML = GEO.length
-      ? `<table><tr><th>Geografía</th><th>Nivel</th><th>Realtors</th><th>Capturas</th></tr>` +
-        GEO.map(g => `<tr><td>${esc(g.clave)}</td><td>${esc(g.nivel)}</td>
-          <td>${g.realtors}</td><td>${g.capturas}</td></tr>`).join('') + '</table>'
+      ? `<div class="tbl-scroll"><table class="piv"><thead><tr>
+          <th class="lbl">Geografía</th><th>Nivel</th><th>Realtors</th>
+          <th class="totcol">Capturas</th></tr></thead><tbody>` +
+        GEO.map(g => `<tr class="metric"><td class="lbl">${esc(g.clave)}</td>
+          <td>${esc(g.nivel)}</td><td>${g.realtors}</td>
+          <td class="totcol">${g.capturas}</td></tr>`).join('') +
+        '</tbody></table></div>'
       : 'Todavía no hay ninguna geografía capturada.';
   }catch(e){ $('#biblio').innerHTML = `<div class="avi">${esc(e.message)}</div>` }
 }

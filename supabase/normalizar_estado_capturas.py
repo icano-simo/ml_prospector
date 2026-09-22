@@ -61,10 +61,24 @@ def main(aplicar: bool) -> int:
             print("   estado=%-12s nivel=%-7s etiqueta=%-14s %3d filas%s"
                   % (estado, nivel or "-", etiq or "-", n, marca))
 
-        if not cambios:
-            print("\nno hay nada que normalizar")
+        # La copia de la etiqueta que vive DENTRO del jsonb se cuenta aparte:
+        # corregir solo la columna deja las dos en desacuerdo, y la pantalla lee
+        # el jsonb. Va fuera del `if not cambios` porque la desincronizacion
+        # sobrevive a que las columnas ya esten bien -- que es exactamente como
+        # quedo despues de la primera corrida.
+        cur.execute("""
+            select count(*) from pacs.capturas_modelmatch
+             where geografia_etiqueta is not null
+               and parseado->>'etiqueta_geografica'
+                   is distinct from geografia_etiqueta
+        """)
+        desync = cur.fetchone()[0]
+        print("\nfilas con el jsonb en desacuerdo con la columna: %d" % desync)
+
+        if not cambios and not desync:
+            print("no hay nada que normalizar")
             return 0
-        print("\n%d grupos a corregir, %d filas"
+        print("%d grupos de columna a corregir, %d filas"
               % (len(cambios), sum(c[5] for c in cambios)))
 
         # Guarda redundante a proposito: ninguna correccion puede dejar una
@@ -88,6 +102,20 @@ def main(aplicar: bool) -> int:
                    and geografia_nivel is not distinct from %s
                    and geografia_etiqueta is not distinct from %s
             """, (e2, t2, estado, nivel, etiq))
+
+        # Y la copia que vive DENTRO del jsonb. Corregir solo la columna deja
+        # las dos en desacuerdo, y quien lea `parseado` -- que es lo que muestra
+        # la pantalla-- sigue viendo la forma vieja. Una etiqueta guardada en
+        # dos sitios se desincroniza en cuanto se corrige uno.
+        cur.execute("""
+            update pacs.capturas_modelmatch
+               set parseado = jsonb_set(parseado, '{etiqueta_geografica}',
+                                        to_jsonb(geografia_etiqueta))
+             where geografia_etiqueta is not null
+               and parseado->>'etiqueta_geografica'
+                   is distinct from geografia_etiqueta
+        """)
+        print("\njsonb sincronizado con la columna: %d filas" % cur.rowcount)
         con.commit()
 
         cur.execute(consulta)

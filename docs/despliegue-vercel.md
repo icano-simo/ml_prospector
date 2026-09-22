@@ -109,3 +109,68 @@ GET  /api/geografias      {"geografias":[…]}
 
 Si `/api/realtors` devuelve `{"error":"Faltan SUPABASE_URL…"}`, las variables
 están puestas pero no se redesplegó.
+
+---
+
+## La marca no se escribe acá
+
+`public/tokens.css` está **portado sin cambios** desde
+`icano-simo/homesi-reporte-actividad`, `app/styles/tokens.css`. Canvas
+`#FCFCFA`, navy `#001A40`, coral `#FF4040`, Light Sky `#A6DEFF`.
+
+Si hay que actualizar la paleta, **se vuelve a bajar el archivo; no se edita
+este**. Dos copias divergentes de una paleta es como se pierde una marca, y la
+divergencia no falla: simplemente las apps dejan de parecerse.
+
+`public/homesi.css` sí es propio, pero sus patrones de tabla —primera y última
+columna fijas, zebra, hover Light Sky al 20%— salen de `components.css` de esa
+misma app, con los mismos nombres de clase (`.tbl-scroll`, `table.piv`,
+`th.lbl`, `td.totcol`, `tr.metric`).
+
+Una diferencia declarada: allá `.totcol` tiene el aspecto de última columna pero
+**no** es sticky. Acá se le agregó `position: sticky; right: 0` con su fondo
+opaco, siguiendo el razonamiento que el original documenta para la primera —un
+fondo translúcido deja ver las columnas pasando por debajo al scrollear.
+
+---
+
+## Listas vacías: los tres modos de fallo, y cuál NO aplica acá
+
+De la skill `commercial-activity`, porque saber cuál es cuál ahorra una hora:
+
+| | Síntoma |
+|---|---|
+| sin `GRANT` | PostgREST dice que **la tabla no existe** — construye su caché de esquema con lo que el rol puede ver |
+| con `GRANT`, sin política | **cero filas y `error: null`**, indistinguible de una tabla vacía. El peligroso |
+| con los dos | los datos |
+
+Y la trampa de los claims: **un claim otorgado después del login no surte efecto
+hasta volver a iniciar sesión**, porque viaja dentro del token. RLS no rechaza,
+**filtra**: sin el claim la política devuelve cero filas, que se ven igual que
+una tabla vacía.
+
+### Por qué acá el diagnóstico es otro
+
+**Esta app no habla con Supabase desde el navegador.** El front pide a `/api/*`
+y esas funciones usan la `service_role` del lado del servidor, que **salta RLS
+por completo**. No hay sesión de usuario, no hay claim, no hay política que
+filtre.
+
+O sea: **una lista vacía acá no es RLS.** Las causas reales son otras —filtro
+demasiado estrecho, `Accept-Profile` faltante, lote apagado— y buscarla en las
+políticas es perder la hora que la tabla de arriba quería ahorrar.
+
+Queda escrita por dos razones: el día que la pantalla pase a Supabase Auth va a
+aplicar entera, y cualquiera que consulte `pacs` con la `anon` key desde otro
+sitio se la va a encontrar.
+
+### La que sí aplica: el lote apagado
+
+El equivalente local de «cero filas sin error» es
+`v_capturas_modelmatch_current`, que solo devuelve filas de lotes con
+`es_vigente = true`. Una captura que no aparece puede estar guardada con su lote
+apagado: las filas siguen en `pacs.capturas_modelmatch` y la vista no las
+muestra.
+
+`supabase/apagar_lotes_de_ensayo.py` sin `--aplicar` lista el estado de cada
+lote con su evidencia, que es el primer sitio donde mirar.

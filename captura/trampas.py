@@ -172,8 +172,14 @@ def wallet_share_para_exclusion(perfil: dict) -> list[dict]:
     if not reparto:
         return []
 
-    base = ((perfil.get("wallet_share_base") or {})
-            .get(SECCION_POR_BASE[BASE_PARA_EXCLUSION]) or {})
+    # `base_normalizada` porque las capturas guardadas antes traen un string
+    # plano aca. Una etiqueta declarada no cuenta como medicion: entra como
+    # `medida = None`, o sea "no se pudo medir", que es lo que era.
+    from captura.parser_mm import base_normalizada
+
+    base = base_normalizada(
+        (perfil.get("wallet_share_base") or {})
+        .get(SECCION_POR_BASE[BASE_PARA_EXCLUSION]))
     medida = base.get("medida")
     if medida is not None and medida not in BASES_ACEPTADAS:
         raise TrampaDetectada(

@@ -21,6 +21,7 @@ for ruta in (AQUI, os.path.dirname(AQUI)):
 from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
 from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
+from captura.trampas import es_de_la_casa, share_de_la_casa  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
     detectar_inversion,
     parsear_mercado,
@@ -142,6 +143,114 @@ def _contactos_de(perfil: dict, realtor_id: str, lote: str,
     agregar("oficina", c.get("oficina"))
     agregar("direccion", c.get("direccion"))
     return filas
+
+
+#: Las tres metricas con las que se verifica una geografia de un vistazo.
+#: Volumen porque es la que delata el grafico rodante, FHA y fallout porque son
+#: las dos mitades de los contrastes que mas se usan.
+METRICAS_DE_VISTAZO = (
+    ("total_volume", "volumen", "dinero"),
+    ("mkt_fha", "FHA", "pct"),
+    ("fallout", "fallout", "pct"),
+)
+
+
+#: El orden de captura, que es tambien el de lectura. Las filas vuelven de
+#: PostgREST en orden arbitrario cuando comparten `capturado_en` -- y todas las
+#: de una captura lo comparten, porque se escriben en la misma peticion.
+_ORDEN_SECCION = {"overview": 0, "market_signals": 1, "originators": 2,
+                  "lenders": 3}
+
+
+def _en_orden(filas: list[dict]) -> list[dict]:
+    """Overview, los mercados por posicion, Originators, Lenders.
+
+    El orden de los bloques de mercado NO es presentacion: es lo que los
+    etiqueta. Mostrarlos desordenados obliga a reconstruir mentalmente cual era
+    cual, que es justo lo que la pantalla tiene que ahorrar.
+    """
+    return sorted(filas, key=lambda f: (
+        _ORDEN_SECCION.get(f["parseado"].get("seccion"), 9),
+        f["parseado"].get("orden") or 0))
+
+
+def resumen_de_captura(filas: list[dict], perfil_unido: dict) -> dict:
+    """Lo que hay que poder mirar SIN abrir la base.
+
+    Capturar 25 condados a ciegas y descubrir el problema al final es la forma
+    cara de descubrirlo. Esto va en la respuesta del guardado para que cada
+    captura se audite en el momento, que es cuando el volcado todavia esta en
+    el portapapeles y repetirlo cuesta nada.
+    """
+    filas = _en_orden(filas)
+    secciones = [{
+        "seccion": f["parseado"]["seccion"],
+        "nivel": f["parseado"].get("nivel"),
+        "etiqueta": f["parseado"].get("etiqueta_geografica"),
+        "orden": f["parseado"].get("orden"),
+        "caracteres": len(f["texto_crudo"]),
+    } for f in filas]
+
+    geografias = []
+    for f in filas:
+        if f["parseado"]["seccion"] != "market_signals":
+            continue
+        m = f["parseado"].get("metricas") or {}
+        geografias.append({
+            "etiqueta": f["parseado"].get("etiqueta_geografica"),
+            "nivel": f["parseado"].get("nivel"),
+            "orden": f["parseado"].get("orden"),
+            "campos": m.get("campos"),
+            **{clave: m.get(clave) for clave, _n, _t in METRICAS_DE_VISTAZO},
+        })
+
+    # Dos geografias con el MISMO volumen es la firma del grafico rodante, que
+    # muestra el numero del estado para todos los condados. Se marca cual, no
+    # solo que pasa: con cuatro bloques hay que saber donde mirar.
+    vistos: dict = {}
+    for g in geografias:
+        v = g.get("total_volume")
+        if v is not None:
+            vistos.setdefault(v, []).append(g["etiqueta"] or "(estado)")
+    for g in geografias:
+        v = g.get("total_volume")
+        g["volumen_repetido"] = bool(v is not None and len(vistos.get(v, [])) > 1)
+
+    originadores = [{
+        "nombre": o.get("nombre"),
+        "empresa": o.get("empresa"),
+        "unidades": o.get("unidades"),
+        "share": o.get("share"),
+        "de_la_casa": es_de_la_casa(o),
+    } for o in (perfil_unido.get("orig_buyer") or [])]
+
+    # `share_de_la_casa` revienta a proposito sobre un fallo declarado. Aca eso
+    # NO puede tumbar el guardado -- el crudo ya esta-- pero si tiene que
+    # aparecer en pantalla con su razon.
+    try:
+        casa = share_de_la_casa(perfil_unido)
+    except Exception as exc:  # noqa: BLE001
+        casa = {"share": None, "base": "unidades",
+                "razon": "no se pudo calcular: %s" % str(exc).split("\n")[0]}
+
+    return {
+        "secciones": secciones,
+        "geografias": geografias,
+        "volumenes_repetidos": [nombres for nombres in vistos.values()
+                                if len(nombres) > 1],
+        "originadores": originadores,
+        "share_de_la_casa": casa,
+        "fallos": perfil_unido.get("fallos") or [],
+        "perfil": {
+            "nombre": perfil_unido.get("nombre"),
+            "buyer_units": perfil_unido.get("buyer_units"),
+            "tpo_pct": perfil_unido.get("tpo_pct"),
+            "lenders": len(perfil_unido.get("tabla_lenders") or []),
+            "loan_mix": (perfil_unido.get("loan_mix_buyer") or {}).get("filas"),
+            "cobertura_mix": (perfil_unido.get("loan_mix_buyer")
+                              or {}).get("cobertura"),
+        },
+    }
 
 
 def guardar(d: dict) -> tuple[int, dict]:
@@ -385,14 +494,82 @@ def guardar(d: dict) -> tuple[int, dict]:
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
                  "condados": condados, "avisos": avisos, "volumenes": vols,
                  "estado": estado, "hash_volcado": huella,
-                 "originadores": len(perfil_unido.get("orig_buyer") or []),
+                 "resumen": resumen_de_captura(filas, perfil_unido),
                  "contactos": [{"canal": c["canal"], "valor": c["valor"]}
                                for c in contactos]}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+
+def capturas(params: dict) -> tuple[int, dict]:
+    """Lo capturado de un realtor, ya parseado, para auditarlo en pantalla.
+
+    Lee `v_capturas_modelmatch_current` y no la tabla: la vista deja fuera los
+    lotes apagados, que es donde viven los ensayos. Pedirle a la tabla devuelve
+    tambien los payloads de prueba, y eso ya costo un diagnostico entero.
+
+    Devuelve lo mismo que el resumen del guardado, para que auditar una captura
+    vieja se vea igual que acabar de hacerla.
+    """
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+
+    cod, filas, _ = leer(
+        "v_capturas_modelmatch_current",
+        "?select=upload_batch_id,capturado_en,alcance,estado,"
+        "geografia_etiqueta,geografia_nivel,texto_crudo,parseado,"
+        "version_parser,hash_volcado"
+        "&parseado->>realtor_id=eq.%s&order=capturado_en.desc"
+        % urllib.parse.quote(realtor_id))
+    if cod >= 400:
+        return cod, {"error": "supabase", "detalle": filas}
+
+    por_lote: dict = {}
+    for f in filas or []:
+        lote = por_lote.setdefault(f["upload_batch_id"], {
+            "upload_batch_id": f["upload_batch_id"],
+            "capturado_en": f.get("capturado_en"),
+            "estado": f.get("estado"),
+            "version_parser": f.get("version_parser"),
+            "hash_volcado": f.get("hash_volcado"),
+            "_filas": [],
+        })
+        # La ETIQUETA autoritativa es la COLUMNA, no la del jsonb. Se subio a
+        # columna justamente para poder distinguir dos bloques que se ven
+        # iguales, y la normalizacion de estado corrigio la columna -- asi que
+        # el jsonb de las capturas viejas todavia dice `CALIFORNIA` donde la
+        # columna ya dice `CA`. Leer el jsonb las mostraria como dos mercados.
+        p = dict(f.get("parseado") or {})
+        if f.get("geografia_etiqueta") is not None:
+            p["etiqueta_geografica"] = f["geografia_etiqueta"]
+        if f.get("geografia_nivel") is not None:
+            p["nivel"] = f["geografia_nivel"]
+        lote["_filas"].append({
+            "parseado": p,
+            "texto_crudo": f.get("texto_crudo") or "",
+        })
+
+    salida = []
+    for lote in por_lote.values():
+        crudas = lote.pop("_filas")
+        perfiles = [(c["parseado"].get("perfil") or {}) for c in crudas
+                    if c["parseado"].get("seccion") in ("overview",
+                                                        "originators",
+                                                        "lenders")]
+        unido = unir_perfiles([p for p in perfiles if isinstance(p, dict)])
+        lote["resumen"] = resumen_de_captura(crudas, unido)
+        lote["caracteres"] = sum(len(c["texto_crudo"]) for c in crudas)
+        salida.append(lote)
+
+    salida.sort(key=lambda x: x.get("capturado_en") or "", reverse=True)
+    return 200, {"capturas": salida, "total": len(salida)}
 
 
 #: ruta -> (funcion, metodo)
 RUTAS = {
     "/api/realtors": (realtors, "GET"),
     "/api/geografias": (geografias, "GET"),
+    "/api/capturas": (capturas, "GET"),
     "/api/guardar": (guardar, "POST"),
 }
