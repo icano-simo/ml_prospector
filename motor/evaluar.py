@@ -1,0 +1,216 @@
+"""El motor: aplica las reglas declaradas y devuelve la cadena de evidencia.
+
+Nunca devuelve un valor suelto. Cada qualifier activado sale con la regla que
+lo disparo, los campos que leyo, el grado de evidencia, si la intensidad se
+recorto por el techo, y el acto de habla que le corresponde al copy.
+
+Y cada evaluacion sale con la lista de reglas que **no se pudieron evaluar**,
+con el campo que faltaba. Una regla que no se evaluo no es una regla que no
+aplica, y esa distincion es la segunda guardia del proyecto.
+"""
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+from dataclasses import asdict, dataclass, field
+
+from motor.reglas import (
+    ORDEN_FAMILIA,
+    QUALIFIER_GATING,
+    REGLAS,
+    Regla,
+)
+from pacs.guardas import (
+    GradoEvidencia,
+    acto_de_habla,
+    intensidad_con_techo,
+)
+
+#: Version del catalogo de reglas. Cambia cuando cambian las reglas, y queda
+#: guardada en cada evaluacion: sin esto, dentro de tres meses no se sabe con
+#: que reglas se produjo un diagnostico viejo.
+VERSION_REGLAS = "2026.09.22-propias-portadas-del-prototipo"
+
+
+def huella_del_catalogo() -> str:
+    """Huella de las reglas activas. Detecta un cambio no declarado.
+
+    Si alguien toca una intensidad y no sube `VERSION_REGLAS`, las evaluaciones
+    viejas y las nuevas quedan indistinguibles. La huella lo delata.
+    """
+    partes = [
+        "%s|%s|%d|%s|%s|%s" % (r.id, r.qualifier, r.intensidad, r.grado,
+                               r.origen, r.texto)
+        for r in REGLAS
+    ]
+    return hashlib.sha256("\n".join(partes).encode("utf-8")).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class Activacion:
+    """Un qualifier activado, con todo lo que lo sostiene."""
+
+    qualifier: str
+    familia: str
+    intensidad: int
+    grado: GradoEvidencia
+    texto: str
+    regla_id: str
+    origen: str
+    referencia: str
+    #: Campos del registro que la regla leyo, con su valor. La respuesta a
+    #: "de donde sacaste eso".
+    campos_leidos: dict
+    #: Nota si el techo por grado de evidencia recorto la intensidad.
+    nota_techo: str | None = None
+    #: Intensidad que la regla proponia antes del techo.
+    intensidad_propuesta: int | None = None
+    #: AFIRMA solo con intensidad 3 y E0. Todo lo demas PREGUNTA.
+    acto: str = "PREGUNTA"
+    #: Otras reglas del mismo qualifier que tambien dieron True.
+    tambien_activaron: tuple[str, ...] = ()
+    discrepancia: str | None = None
+    gancho: str | None = None
+
+
+@dataclass(frozen=True)
+class ReglaNoEvaluada:
+    """Una regla que no se pudo evaluar. NO es una regla que no aplica."""
+
+    regla_id: str
+    qualifier: str
+    campos_faltantes: tuple[str, ...]
+    motivo: str = "falta el dato de entrada"
+
+
+@dataclass
+class Evaluacion:
+    """El resultado completo de una corrida del motor sobre un realtor.
+
+    Se persiste entero, con timestamp, append-only. No es auditoria: es la
+    infraestructura de la correlacion futura. Dentro de tres meses la pregunta
+    va a ser que diagnostico predijo conversion, y sin el historico no se puede
+    responder.
+    """
+
+    realtor_id: str
+    evaluado_en: str
+    version_reglas: str
+    huella_reglas: str
+    activaciones: list[Activacion] = field(default_factory=list)
+    no_evaluadas: list[ReglaNoEvaluada] = field(default_factory=list)
+    dolor_primario: str | None = None
+    dolores_secundarios: tuple[str, ...] = ()
+    gating: Activacion | None = None
+    #: Campos del registro que llegaron vacios. El denominador de todo lo demas.
+    campos_ausentes: tuple[str, ...] = ()
+
+    def a_json(self) -> str:
+        return json.dumps(asdict(self), ensure_ascii=False, sort_keys=True,
+                          default=str)
+
+
+def evaluar(
+    registro: dict,
+    *,
+    realtor_id: str,
+    reglas: tuple[Regla, ...] = REGLAS,
+    ahora: dt.datetime | None = None,
+) -> Evaluacion:
+    """Aplica todas las reglas a un registro y devuelve la evaluacion completa.
+
+    La resolucion es la del archivo 06: **cuando varias reglas apuntan al mismo
+    qualifier, gana la de mayor intensidad**. A igual intensidad gana la que
+    esta declarada primero, que es la del grado de evidencia mas fuerte porque
+    asi estan ordenadas.
+
+    El prototipo usa `if/elif`, o sea la primera que coincide. Donde las dos
+    difieren esta anotado en la regla y medido en el documento de la etapa.
+    """
+    ahora = ahora or dt.datetime.now(dt.timezone.utc)
+
+    candidatas: dict[str, list[tuple[Regla, dict]]] = {}
+    no_evaluadas: list[ReglaNoEvaluada] = []
+
+    for regla in reglas:
+        veredicto = regla.condicion(registro)
+        leidos = {c: registro.get(c) for c in regla.campos}
+
+        if veredicto is None:
+            faltan = tuple(c for c in regla.campos if registro.get(c) is None)
+            no_evaluadas.append(ReglaNoEvaluada(
+                regla_id=regla.id, qualifier=regla.qualifier,
+                campos_faltantes=faltan or regla.campos,
+            ))
+            continue
+        if veredicto:
+            candidatas.setdefault(regla.qualifier, []).append((regla, leidos))
+
+    activaciones: list[Activacion] = []
+    for qualifier, lista in candidatas.items():
+        # Gana la de mayor intensidad. El indice en REGLAS desempata, y como
+        # estan declaradas por intensidad descendente eso equivale a preferir
+        # el grado de evidencia mas fuerte.
+        ganadora, leidos = min(
+            lista, key=lambda par: (-par[0].intensidad, reglas.index(par[0]))
+        )
+        final, nota = intensidad_con_techo(ganadora.intensidad, ganadora.grado)
+        activaciones.append(Activacion(
+            qualifier=qualifier,
+            familia=ganadora.familia,
+            intensidad=final,
+            grado=ganadora.grado,
+            texto=ganadora.texto,
+            regla_id=ganadora.id,
+            origen=ganadora.origen,
+            referencia=ganadora.referencia,
+            campos_leidos=leidos,
+            nota_techo=nota,
+            intensidad_propuesta=ganadora.intensidad,
+            acto=acto_de_habla(final, ganadora.grado),
+            tambien_activaron=tuple(
+                r.id for r, _ in lista if r.id != ganadora.id
+            ),
+            discrepancia=ganadora.discrepancia,
+            gancho=ganadora.gancho,
+        ))
+
+    gating = next((a for a in activaciones if a.qualifier == QUALIFIER_GATING),
+                  None)
+    dolores = _ordenar_dolores(activaciones)
+
+    campos_declarados = {c for r in reglas for c in r.campos}
+    ausentes = tuple(sorted(
+        c for c in campos_declarados if registro.get(c) is None
+    ))
+
+    return Evaluacion(
+        realtor_id=realtor_id,
+        evaluado_en=ahora.isoformat(timespec="seconds"),
+        version_reglas=VERSION_REGLAS,
+        huella_reglas=huella_del_catalogo(),
+        activaciones=sorted(
+            activaciones,
+            key=lambda a: (-a.intensidad, ORDEN_FAMILIA[a.familia], a.qualifier),
+        ),
+        no_evaluadas=sorted(no_evaluadas, key=lambda n: n.regla_id),
+        dolor_primario=dolores[0] if dolores else None,
+        dolores_secundarios=tuple(dolores[1:3]),
+        gating=gating,
+        campos_ausentes=ausentes,
+    )
+
+
+def _ordenar_dolores(activaciones: list[Activacion]) -> list[str]:
+    """Selecciona el dolor primario segun el archivo 06.
+
+    1. intensidad descendente
+    2. a igual intensidad, familia P sobre J sobre G
+    3. **J-Q01 queda excluido**: es la compuerta, no un dolor
+    """
+    elegibles = [a for a in activaciones if a.qualifier != QUALIFIER_GATING]
+    elegibles.sort(
+        key=lambda a: (-a.intensidad, ORDEN_FAMILIA[a.familia], a.qualifier)
+    )
+    return [a.qualifier for a in elegibles]
