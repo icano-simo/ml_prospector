@@ -64,6 +64,41 @@ prueba que verifica que hoy todas son propias.
 
 ---
 
+## Las cuatro discrepancias · decididas el 2026-09-22
+
+| | Decisión | Efecto medido |
+|---|---|---|
+| **A · resolución** | gana la documentación; el `elif` era un bug | 23 filas de P-Q07 pasan de fuerza 1 a 2 |
+| **B · dolor primario** | gana el prototipo; el primario sale **solo de familia P** | **544 filas** cambian, y **1.230 quedan sin primario** |
+| **C · techo** | J-Q04 baja a 2; **no** se abre la excepción E1→3 | 191 filas recibían J-Q04 en 3 |
+| **D · acto de habla** | sin efecto, queda como invariante con prueba | 0 filas |
+
+El archivo 06 de la skill quedó corregido para B y C, con respaldo en
+`homesi-pacs-scoring.skill.respaldo-20260922` y verificación de que **solo
+cambió ese archivo** dentro del zip.
+
+### B tiene una consecuencia más grande de lo que parecía
+
+La medición anterior decía 89 filas. Esa comparaba dos variantes que **las dos**
+tenían fallback a un J/G. Con la regla decidida —sin fallback— el número real es
+otro:
+
+> **544 registros (12,8%)** cambian respecto del prototipo, y **los 544 son el
+> mismo caso**: el prototipo les daba un J-Q como dolor primario porque no había
+> ningún P activo. Matthew Guzman, Joshua Hernández y Kristina Valente abrían
+> con J-Q03 —«quiere ser percibida como la que resuelve en su comunidad»— y
+> ahora abren con la pregunta del lender.
+>
+> Y el total sin dolor primario es **1.230 registros, el 28,9% del libro.**
+
+Casi un tercio del libro abre con la pregunta de cierre de brecha. Eso es lo
+correcto según la decisión —no tienen ningún dolor diagnosticado y fingir uno es
+peor— pero es un hecho operativo que conviene mirar antes de que salga la
+primera secuencia: **el copy de esa apertura genérica pasa a ser el más usado de
+todos**, y hoy es el menos trabajado.
+
+---
+
 ## Qué se encontró
 
 Cuatro puntos donde el prototipo y la documentación no coinciden. **Ninguno se
@@ -224,12 +259,30 @@ con `es_la_casa = true` en el propio esquema, no en un script aparte.
    que cambian de dolor primario— es la que más consecuencia tiene, porque el
    primario decide el copy. Necesita tu decisión, no la mía.
 
-4. **La confianza global del archivo 06 no está implementada.** Sus coeficientes
-   están declarados como arbitrarios en la propia documentación
-   (`0,15 + 0,07×categorías + 0,06×qualifiers + 0,10 si bio legible`). La dejé
-   afuera a propósito: es un puntaje compuesto, y el brief pide no producirlos
-   sin poder mostrar de dónde salen. Si la querés, va con sus cuatro términos
-   visibles y no como un número.
+4. ~~La confianza global no está implementada.~~ **Implementada sin número
+   compuesto**, en [`motor/confianza.py`](../motor/confianza.py). No devuelve
+   ningún porcentaje: devuelve la lista de términos presentes con su cuenta al
+   lado — *«3 categorías de señal presentes (S1, S3, S4) · 2 qualifiers en
+   fuerza 2 o más (P-Q01, P-Q19) · bio legible · Model Match capturado»*. El
+   nivel ALTA/MEDIA/BAJA se conserva porque hay que poder ordenar una lista de
+   prospección, pero sale de **contar términos presentes**, no de sumar pesos.
+   Un término que no se verificó cuenta como ausente **y lo dice**.
+
+5. **El campo del apellido está fuera del dataset**, no solo bloqueado.
+   [`motor/entrada.py`](../motor/entrada.py) lo saca antes de que el motor lo
+   vea, con la razón escrita al lado, y `verificar_dataset()` revienta si
+   quedó. Junto a `ev: broker apellido hisp` saqué también
+   `ev: broker palabras es`, que deduce el perfil del brokerage de su nombre —
+   por precaución, hasta que alguien documente qué mide y contra qué. Si
+   resulta legítima, se saca de la lista con su justificación.
+
+6. **`recurso_sin_verificar` está implementado** en
+   [`motor/recursos.py`](../motor/recursos.py). Seis recursos catalogados,
+   **los seis en `verificado = False`**, que es el estado real hoy. Un `Recurso`
+   no se puede construir como verificado sin decir quién y cuándo: un
+   verificado sin firma parece lo contrario de lo que es. Y un toque que
+   promete algo que **no está en el catálogo** se reporta aparte, porque es el
+   caso más grave: nadie puede ni empezar a verificar lo que nadie catalogó.
 
 5. **Los sub-nichos SN01-SN11 y los arquetipos no se portaron.** Están en
    `sub_nichos()` del prototipo y en el archivo 07. No entraban en esta etapa.

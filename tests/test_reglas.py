@@ -210,32 +210,38 @@ def test_son_37_reglas_sobre_19_qualifiers():
     assert len(por_qualifier()) == 19, sorted(por_qualifier())
 
 
-def test_la_regla_que_supera_su_techo_lo_declara():
-    """Una regla puede proponer mas de lo que su evidencia sostiene.
+def test_ninguna_regla_supera_hoy_su_techo():
+    """Decision del 2026-09-22: J-Q04 bajo a 2 y no se abrio la excepcion E1->3.
 
-    Lo que no puede es hacerlo en silencio. Si la propone, el techo la recorta
-    en el motor y la discrepancia tiene que estar escrita en el catalogo, para
-    que se vea que es un conflicto pendiente y no un descuido.
-
-    Hoy hay una: J-Q04-1, donde el archivo 06 y el techo del 05 no coinciden.
+    El motivo: intensidad 3 con E0 es lo unico que autoriza al copy a afirmar.
+    Una excepcion que permita afirmar sobre evidencia de registro hace la
+    segunda excepcion mas facil.
     """
-    sin_declarar = [
-        r.id for r in REGLAS
-        if r.intensidad > TECHO_POR_GRADO[r.grado] and not r.discrepancia
-    ]
-    assert not sin_declarar, (
-        "proponen mas de lo que su evidencia sostiene y no lo declaran: %s"
-        % sin_declarar
+    for r in REGLAS:
+        assert r.intensidad <= TECHO_POR_GRADO[r.grado], (
+            "%s propone %d con evidencia %s, techo %d. Si esto es "
+            "deliberado, hay que declarar la excepcion por escrito en el "
+            "archivo 05, no dejarla pasar aca."
+            % (r.id, r.intensidad, r.grado, TECHO_POR_GRADO[r.grado])
+        )
+
+
+def test_ninguna_regla_E0_se_queda_en_intensidad_2():
+    """La invariante D · discrepancia teorica que hay que mantener teorica.
+
+    El prototipo afirmaba con E0 e intensidad >= 2; el archivo 05 exige 3. Hoy
+    la diferencia es cero porque no existe ninguna regla con E0 e intensidad 2.
+
+    Si alguien escribe una, el acto de habla de ese qualifier cambia sin que
+    nadie lo note: pasaria de AFIRMA en el prototipo a PREGUNTA aca. Esta
+    prueba lo detecta en el momento en que se escriba.
+    """
+    sospechosas = [r.id for r in REGLAS if r.grado == "E0" and r.intensidad == 2]
+    assert not sospechosas, (
+        "reglas con evidencia E0 e intensidad 2: %s. El copy las trataria como "
+        "PREGUNTA y el prototipo las trataba como AFIRMA. Hay que decidir cual "
+        "vale antes de dejarlas entrar." % sospechosas
     )
-
-
-def test_el_motor_recorta_lo_que_el_techo_no_sostiene():
-    """Y deja la nota. El recorte es parte de la cadena de evidencia."""
-    ev = _evaluar(DISPARA["J-Q04-1"], solo=_regla("J-Q04-1"))
-    a = ev.activaciones[0]
-    assert a.intensidad_propuesta == 3
-    assert a.intensidad == 2, "E1 no sostiene intensidad 3"
-    assert a.nota_techo and "recortada de 3 a 2" in a.nota_techo
 
 
 def test_todas_las_reglas_portadas_son_propias():
@@ -366,24 +372,66 @@ def test_j_q01_nunca_es_el_dolor_primario():
     assert QUALIFIER_GATING not in ev.dolores_secundarios
 
 
-def test_a_igual_intensidad_gana_P_sobre_J_sobre_G():
+def test_el_primario_sale_SOLO_de_la_familia_P():
+    """Decision del 2026-09-22, a favor del prototipo y contra el archivo 06.
+
+    Un J-Q no es un dolor: es un trabajo por hacer. Abrir un primer mensaje con
+    «construyes audiencia como estrategia deliberada» no le duele a nadie.
+
+    Aca J-Q03 llega a intensidad 3 y P-Q11 a 1. Con la regla del archivo 06
+    ganaba J-Q03; con la decidida gana P-Q11, que es el caso de SINDY MATA.
+    """
     registro = {
-        "ev2_credito": True,          # P-Q19 intensidad 3
-        "ev2_comunidad": True,        # J-Q03 intensidad 2
-        "ev2_testimonio": True,       # J-Q03 sube a 3
-        "ig_seguidores": 10000,       # G-Q04 intensidad 2, J-Q04 intensidad 3
-        "ev_bio_legible": True,
+        "ev2_comunidad": True,      # J-Q03
+        "ev2_testimonio": True,     # J-Q03 -> intensidad 3
+        "unidades_ano": 25,         # P-Q11 -> intensidad 1
     }
     ev = _evaluar(registro)
-    assert ev.dolor_primario == "P-Q19", [
-        (a.qualifier, a.intensidad) for a in ev.activaciones
-    ]
+    por_q = {a.qualifier: a.intensidad for a in ev.activaciones}
+    assert por_q["J-Q03"] == 3 and por_q["P-Q11"] == 1
+    assert ev.dolor_primario == "P-Q11", (
+        "«pierde el contacto después del cierre» es una apertura; "
+        "«quiere ser percibida como la que resuelve» no"
+    )
+    assert "J-Q03" in ev.moduladores
+    assert "J-Q03" not in ev.dolores_secundarios
 
 
-def test_sin_ningun_dolor_el_primario_es_none():
+def test_los_J_y_G_son_moduladores_no_dolores():
+    # ev2_equipo va en False a proposito: con True se activa P-Q21, que SI es
+    # familia P, y el caso dejaria de probar lo que quiere probar.
+    registro = {"ig_seguidores": 12000, "ev_bio_legible": True,
+                "ev2_equipo": False, "ev2_video_contenido": False,
+                "ev2_educacion": True, "ev2_primera_casa": False}
+    ev = _evaluar(registro)
+    familias = {a.familia for a in ev.activaciones}
+    assert "P" not in familias, [a.qualifier for a in ev.activaciones]
+    assert ev.dolor_primario is None, "ningun P activo: no hay dolor primario"
+    assert set(ev.moduladores) >= {"J-Q04", "G-Q04"}
+    assert ev.apertura == "pregunta_de_cierre_de_brecha_lender"
+
+
+def test_sin_ningun_P_el_primer_mensaje_abre_con_la_pregunta_del_lender():
     ev = _evaluar({"ev2_credito": False})
     assert ev.dolor_primario is None
     assert ev.dolores_secundarios == ()
+    assert ev.apertura == "pregunta_de_cierre_de_brecha_lender"
+
+
+def test_con_un_P_activo_no_hay_apertura_generica():
+    ev = _evaluar({"ev2_credito": True})
+    assert ev.dolor_primario == "P-Q19"
+    assert ev.apertura is None
+
+
+def test_a_igual_intensidad_entre_P_gana_el_de_codigo_menor():
+    """El desempate tiene que ser determinista aunque sea arbitrario."""
+    registro = {"ev2_credito": True, "ev2_va_militar": True}
+    ev = _evaluar(registro)
+    assert ev.dolor_primario == "P-Q17", [
+        (a.qualifier, a.intensidad) for a in ev.activaciones
+    ]
+    assert "P-Q19" in ev.dolores_secundarios
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -520,6 +568,153 @@ def test_el_sql_escapa_las_comillas_del_texto():
     assert _sql_literal("l'agent") == "'l''agent'"
     assert _sql_literal(None) == "null"
     assert _sql_literal(["a", "b"]) == "array['a', 'b']"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LA CONFIANZA, SIN NUMERO COMPUESTO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_la_confianza_no_produce_ningun_porcentaje():
+    """Un 72% no se puede discutir: parece medido."""
+    from motor.confianza import evaluar_confianza
+
+    ev = _evaluar({"ev2_credito": True, "ev2_itin": True})
+    c = evaluar_confianza(ev, categorias_acreditadas={"S1", "S3", "S4"},
+                          bio_legible=True, modelmatch_capturado=False)
+    d = c.a_dict()
+    assert "puntaje" not in d and "score" not in d
+    assert not any(isinstance(v, float) for v in d.values())
+    assert d["nivel"] in ("ALTA", "MEDIA", "BAJA")
+
+
+def test_cada_termino_dice_su_cuenta():
+    from motor.confianza import evaluar_confianza
+
+    ev = _evaluar({"ev2_credito": True, "ev2_itin": True})
+    c = evaluar_confianza(ev, categorias_acreditadas={"S1", "S3", "S4"},
+                          bio_legible=True, modelmatch_capturado=True)
+    frase = c.frase()
+    assert "3 categorías de señal presentes" in frase
+    assert "qualifiers en fuerza 2 o más" in frase
+    assert "bio legible" in frase
+    assert "Model Match capturado" in frase
+    assert c.nivel == "ALTA"
+
+
+def test_un_termino_no_verificado_no_cuenta_pero_lo_dice():
+    """Nada se llena por descarte, tampoco en la confianza."""
+    from motor.confianza import evaluar_confianza
+
+    ev = _evaluar({"ev2_credito": True})
+    c = evaluar_confianza(ev)  # los tres argumentos en None
+    d = c.a_dict()
+    detalles = [t["detalle"] for t in d["terminos"]]
+    assert any("no se verificó si la bio" in x for x in detalles)
+    assert any("no se verificó si hay captura" in x for x in detalles)
+    assert c.nivel == "BAJA"
+
+
+def test_una_categoria_inventada_revienta():
+    from motor.confianza import evaluar_confianza
+
+    ev = _evaluar({"ev2_credito": True})
+    try:
+        evaluar_confianza(ev, categorias_acreditadas={"S1", "S99"})
+    except ValueError as exc:
+        assert "S99" in str(exc)
+    else:
+        raise AssertionError("una categoria fuera de S1-S10 tiene que fallar")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EL CAMPO DEL APELLIDO, FUERA DEL DATASET
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_el_campo_del_apellido_no_entra_al_motor():
+    """No basta con que ninguna regla lo use: se saca del dataset.
+
+    Un campo que existe y que la guarda bloquea es una tentación esperando.
+    """
+    from motor.entrada import limpiar_entrada
+
+    crudo = {"ev2_itin": True, "ev: broker apellido hisp": 1}
+    limpio, sacados = limpiar_entrada(crudo)
+    assert "ev: broker apellido hisp" not in limpio
+    assert sacados == ["ev: broker apellido hisp"]
+    assert limpio["ev2_itin"] is True
+
+
+def test_la_guarda_redundante_del_dataset_revienta():
+    """Redundante a proposito: `limpiar_entrada` ya lo saca.
+
+    Existe porque la leccion de redactar() fue que una guarda que no esta en el
+    camino que produce el archivo no es una guarda.
+    """
+    from motor.entrada import CampoProhibidoEnElDataset, verificar_dataset
+
+    verificar_dataset(["ev2_itin", "R5_espanol"])
+    try:
+        verificar_dataset(["ev2_itin", "ev: broker apellido hisp"])
+    except CampoProhibidoEnElDataset as exc:
+        assert "ECOA" in str(exc)
+    else:
+        raise AssertionError("tiene que fallar ruidosamente")
+
+
+def test_cada_campo_excluido_trae_su_razon_escrita():
+    from motor.entrada import CAMPOS_FUERA_DEL_MOTOR
+
+    for campo, razon in CAMPOS_FUERA_DEL_MOTOR.items():
+        assert len(razon) > 40, campo
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RECURSOS SIN VERIFICAR
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_hoy_ningun_recurso_esta_verificado():
+    """El estado real al 2026-09-22. Cuando el equipo confirme, esto cambia."""
+    from motor.recursos import CATALOGO
+
+    assert CATALOGO
+    assert all(not r.verificado for r in CATALOGO.values())
+
+
+def test_un_toque_que_promete_un_recurso_sin_verificar_queda_marcado():
+    from motor.recursos import ToqueConRecursos
+
+    t = ToqueConRecursos(numero=3, recursos=("mapa_dpa_condado",))
+    assert t.recurso_sin_verificar is True
+    assert t.sin_verificar == ("mapa_dpa_condado",)
+
+
+def test_un_toque_sin_recursos_no_queda_marcado():
+    from motor.recursos import ToqueConRecursos
+
+    t = ToqueConRecursos(numero=1, recursos=())
+    assert t.recurso_sin_verificar is False
+
+
+def test_un_recurso_fuera_del_catalogo_es_el_caso_mas_grave():
+    """Nadie puede ni empezar a verificar lo que nadie catalogo."""
+    from motor.recursos import ToqueConRecursos, verificar_secuencia
+
+    t = ToqueConRecursos(numero=4, recursos=("tabla_magica_inventada",))
+    assert t.desconocidos == ("tabla_magica_inventada",)
+    motivos = verificar_secuencia([t])
+    assert any("no están en el catálogo" in m for m in motivos)
+
+
+def test_un_recurso_verificado_sin_firma_no_se_puede_construir():
+    """Un verificado sin firma parece lo contrario de lo que es."""
+    from motor.recursos import Recurso
+
+    try:
+        Recurso("x", "algo", verificado=True)
+    except ValueError as exc:
+        assert "quien y cuando" in str(exc)
+    else:
+        raise AssertionError("tiene que exigir quien lo confirmo y cuando")
 
 
 def _correr():

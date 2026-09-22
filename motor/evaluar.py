@@ -103,6 +103,11 @@ class Evaluacion:
     dolor_primario: str | None = None
     dolores_secundarios: tuple[str, ...] = ()
     gating: Activacion | None = None
+    #: Con que abre el primer mensaje cuando no hay ningun dolor de familia P.
+    apertura: str | None = None
+    #: J-Q y G-Q activados. No son dolores: son moduladores. Elevan un angulo,
+    #: dan contexto y aparecen en el toque 5. Nunca abren la conversacion.
+    moduladores: tuple[str, ...] = ()
     #: Campos del registro que llegaron vacios. El denominador de todo lo demas.
     campos_ausentes: tuple[str, ...] = ()
 
@@ -198,19 +203,48 @@ def evaluar(
         dolor_primario=dolores[0] if dolores else None,
         dolores_secundarios=tuple(dolores[1:3]),
         gating=gating,
+        apertura=None if dolores else APERTURA_SIN_DOLOR,
+        moduladores=tuple(
+            a.qualifier for a in sorted(
+                (x for x in activaciones
+                 if x.familia != "P" and x.qualifier != QUALIFIER_GATING),
+                key=lambda a: (-a.intensidad, ORDEN_FAMILIA[a.familia],
+                               a.qualifier),
+            )
+        ),
         campos_ausentes=ausentes,
     )
 
 
 def _ordenar_dolores(activaciones: list[Activacion]) -> list[str]:
-    """Selecciona el dolor primario segun el archivo 06.
+    """Selecciona el dolor primario. **Solo familia P.**
 
-    1. intensidad descendente
-    2. a igual intensidad, familia P sobre J sobre G
-    3. **J-Q01 queda excluido**: es la compuerta, no un dolor
+    Decision del 2026-09-22, a favor del prototipo y contra el archivo 06, que
+    estaba mal escrito. El motivo importa mas que la regla:
+
+        El dolor primario es lo que ABRE la conversacion. Un J-Q no es un dolor:
+        es un trabajo por hacer. Abrir un primer mensaje con «construyes
+        audiencia como estrategia deliberada» no le duele a nadie -- le suena a
+        halago o a nada.
+
+    Los J-Q y los G-Q son **moduladores**: elevan un angulo, dan contexto,
+    aparecen en el toque 5. Nunca son la apertura.
+
+    El caso que lo ilustra: SINDY MATA pasaba de P-Q11 a J-Q03 con la regla del
+    archivo 06. «Quiere ser percibida como la que resuelve en su comunidad» no
+    es una apertura; «pierde el contacto despues del cierre» si.
+
+    Si ningun P se activo **no hay dolor primario**, y el primer mensaje abre
+    con la pregunta de cierre de brecha, que es la del lender.
     """
-    elegibles = [a for a in activaciones if a.qualifier != QUALIFIER_GATING]
-    elegibles.sort(
-        key=lambda a: (-a.intensidad, ORDEN_FAMILIA[a.familia], a.qualifier)
-    )
+    elegibles = [
+        a for a in activaciones
+        if a.familia == "P" and a.qualifier != QUALIFIER_GATING
+    ]
+    elegibles.sort(key=lambda a: (-a.intensidad, a.qualifier))
     return [a.qualifier for a in elegibles]
+
+
+#: Cuando no hay ningun dolor de familia P, el primer mensaje abre con esto.
+#: No es un dolor diagnosticado: es la pregunta que cierra la brecha.
+APERTURA_SIN_DOLOR = "pregunta_de_cierre_de_brecha_lender"

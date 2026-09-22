@@ -252,10 +252,11 @@ REGLAS: tuple[Regla, ...] = (
         campos=("ev2_primera_casa",),
         condicion=lambda r: _b(r, "ev2_primera_casa"),
         discrepancia=(
-            "El prototipo evalua la regla de intensidad 1 (P-Q07-3) ANTES que "
-            "esta, con `elif`, asi que un agente que cumple las dos se queda "
-            "con 1. El archivo 06 dice que gana la de mayor intensidad, o sea "
-            "2. Aca gana 2. Efecto medido en docs/etapa-1-esquema-y-motor.md."
+            "RESUELTO 2026-09-22 · gana la documentacion. El prototipo evalua "
+            "la regla de intensidad 1 (P-Q07-3) ANTES que esta, con `elif`, "
+            "asi que un agente que cumple las dos se quedaba con 1. El `elif` "
+            "era un bug, no una decision: el archivo 06 dice que gana la de "
+            "mayor intensidad. Son 23 filas del libro v3 que pasan de 1 a 2."
         ),
     ),
     Regla(
@@ -312,12 +313,14 @@ REGLAS: tuple[Regla, ...] = (
         condicion=lambda r: _y(_b(r, "ev2_inversion"),
                                _ge(r, "ev_hits_lujo_inversion", 1)),
         discrepancia=(
-            "El prototipo le da 3 a inversion CON marcadores de lujo y 2 a "
-            "inversion SIN ellos, pero el propio archivo 06 advierte que "
+            "ABIERTA · el prototipo le da 3 a inversion CON marcadores de lujo "
+            "y 2 a inversion SIN ellos, pero el propio archivo 06 advierte que "
             "«inversión + lujo suele ser anti-ICP, no oportunidad». O sea que "
-            "la combinacion que el texto marca como señal de alarma es la que "
-            "recibe la intensidad mas alta. Se porta tal cual y se deja "
-            "anotado: cambiarlo es una decision de metodologia, no de codigo."
+            "la combinacion que el texto marca como señal de alarma recibe la "
+            "intensidad mas alta. Medido: 0 filas de diferencia, porque las dos "
+            "condiciones son mutuamente excluyentes y da igual cual se evalue "
+            "primero. Lo que queda abierto no es la resolucion sino si la "
+            "intensidad esta al reves. Es decision de metodologia."
         ),
     ),
     Regla(
@@ -426,21 +429,20 @@ REGLAS: tuple[Regla, ...] = (
 
     # ── J-Q04 · Audiencia propia como estrategia ────────────────────────────
     Regla(
-        id="J-Q04-1", qualifier="J-Q04", familia="J", intensidad=3, grado="E1",
+        id="J-Q04-1", qualifier="J-Q04", familia="J", intensidad=2, grado="E1",
         texto="audiencia propia grande",
         campos=("ig_seguidores", "ev_bio_legible"),
         condicion=lambda r: _y(_ge(r, "ig_seguidores", 10000),
                                _b(r, "ev_bio_legible")),
         discrepancia=(
-            "CONFLICTO ENTRE DOS DOCUMENTOS DE LA METODOLOGIA, no una decision "
-            "mia. El archivo 06 declara esta regla con intensidad 3 y grado E1, "
-            "y el techo del archivo 05 dice que E1 no pasa de 2. El prototipo "
-            "emite 3 porque no aplica ningun techo: la funcion no existe ahi. "
-            "Aca se declara 3 -- que es lo que dice la regla-- y el techo la "
-            "recorta a 2, dejando la nota en `nota_techo` de la activacion. "
-            "Resolverlo es una decision de metodologia: o la regla baja a 2, o "
-            "el archivo 05 declara la excepcion E1->3 por escrito, que es el "
-            "mecanismo que `intensidad_con_techo` ya soporta."
+            "RESUELTO 2026-09-22 · baja de 3 a 2. El archivo 06 la declaraba en "
+            "3 con grado E1 y el techo del 05 dice que E1 no pasa de 2. Se "
+            "decidio NO abrir la excepcion E1->3: intensidad 3 con E0 es lo "
+            "unico que autoriza al copy a afirmar, y una excepcion que permita "
+            "afirmar sobre evidencia de registro hace la segunda excepcion mas "
+            "facil. Ademas J-Q04 nunca puede ser primario (es familia J), asi "
+            "que la excepcion no compraba nada y costaba la disciplina. El "
+            "archivo 05 queda como esta; se corrigio el 06."
         ),
     ),
     Regla(
