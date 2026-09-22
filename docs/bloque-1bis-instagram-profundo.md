@@ -207,6 +207,138 @@ marcada con `motor="heuristica"`**, y el informe de la pasada 2 lo declara en
 
 ---
 
+## Corrección · `privado` se estaba infiriendo de la ausencia
+
+> **Esta sección corrige lo que dicen las dos siguientes.** El Bloque 1 mató el
+> bug de «señal ausente = False». Quedó vivo un pariente cercano: **«sin
+> publicaciones = privado»**, que es la misma familia — concluir algo sobre una
+> persona a partir de que nuestro lector falló.
+
+La evidencia llegó del propio piloto: **cinco de los siete perfiles marcados
+como privados traían títulos de destacadas reales** — «2023 Sales», «New
+Listings», «Closings», «R E A L T O R». Una cuenta privada no le muestra las
+destacadas a quien no la sigue. Esas páginas estaban abiertas.
+
+Y es peor que cinco de siete. Los **siete** salieron por la misma rama, con la
+misma cadena de evidencia, que decía esto literalmente:
+
+```
+se leyo el meta pero cero posts y SIN AVISO DE CUENTA PRIVADA:
+puede ser cuenta sin publicaciones o render parcial.
+Se trata como privado para que las señales queden en null
+```
+
+**El código sabía que no tenía evidencia, lo escribió, y afirmó privado igual.**
+El comentario que lo acompañaba decía que era «el estado conservador», y no lo
+era: es conservador sobre la *disponibilidad* —las señales quedaban en null,
+bien— pero afirma algo sobre *la cuenta de una persona* que no se midió.
+
+Y `es_privado` en el perfil decía `True`, lo que parecía confirmación
+independiente. No lo era: salía de `diag.estado is PRIVADO`, o sea de la misma
+inferencia. Un círculo de una sola vuelta. Ahora sale del `is_private` del JSON,
+y es `None` cuando la página no lo trae.
+
+### Ninguna prueba cubría esa rama
+
+Las siete pruebas de `privado` le pasaban el texto afirmativo. **La rama que
+produjo 7 de las 20 filas del piloto no tenía ni una.** Por ahí se fue.
+
+### La regla nueva
+
+`PRIVADO` sale **solo** con evidencia afirmativa: el texto literal de la página
+(«This Account is Private», «Esta cuenta es privada», «Follow to see their
+photos and videos») o el `is_private` del JSON. Nada más.
+
+La ausencia de publicaciones se reparte entre cuatro causas que se arreglan de
+formas distintas:
+
+| Estado | Qué pasó | ¿Reintentar? |
+|---|---|---|
+| `muro_de_sesion` | apareció el modal o el enlace de login | **sí** |
+| `sin_grid` | la página cargó, el meta se leyó, la cuadrícula no rindió | **sí** |
+| `degradado` | la respuesta vino incompleta o con error | **sí** |
+| `vacio` | el perfil declara 0 publicaciones | no |
+
+Las cuatro dejan las señales de contenido en `null`, igual que antes. Lo que
+cambia es que ya no se afirma algo que no se midió — y que **el reintento
+ahora las alcanza**, que es la otra mitad del punto.
+
+**El enum del CSV pasa de 5 valores a 9.** Los nuevos salen tal cual en vez de
+mapearse de vuelta, porque mapearlos escondería la distinción que existen para
+hacer. Es seguro para la app: **`publico_leido` no cambia**, y es el valor sobre
+el que se filtra para saber si hay contenido. Lo único que cambia de
+comportamiento es el código que comparaba `== "privado"` — y a ese código se le
+estaba mintiendo.
+
+### Los 20 crudos, reclasificados sin volver a raspar
+
+El HTML no se guardaba, pero `estado_evidencia` sí, y dice literalmente «sin
+aviso de cuenta privada». Eso alcanza para descartar `privado`. Los siete van a
+**`sin_grid`**:
+
+| Perfil | Declara | Evidencia |
+|---|---|---|
+| `@realtor_anakaren` | 395 | destacadas reales: 💌, coffee pls, #Realtorlife |
+| `@xochiltherealtor` | 182 | destacadas reales: Fitness 2025, Closings, Faith |
+| `@yourrealtorclarissa` | 1.162 | destacadas reales: ✨💍, CDMX📍, R E A L T O R |
+| `@eddie_turealtor` | 200 | destacadas reales: 2026 Vibes, 2023 Sales |
+| `@realtor_karla_` | 731 | sin destacadas; no hay más evidencia en el crudo |
+| `@jennyfertherealtor` | 120 | sin destacadas; no hay más evidencia en el crudo |
+| `@alanlozano_12` | 99 | lo que tenía era el carrusel de sugerencias |
+
+Ninguno declara 0 publicaciones, así que ninguno es `vacio`. Para separar
+`muro_de_sesion` de `degradado` haría falta el marcador que estos crudos no
+tienen — **y ese es el hallazgo**: un crudo que guarda la conclusión y no la
+evidencia obliga a raspar de nuevo, que es justo lo que «crudo primero» existe
+para evitar. Los crudos nuevos guardan `marcadores_de_estado` con el texto de
+privacidad visto, el `is_private` del JSON, el muro de sesión y si hubo
+cuadrícula.
+
+**Cuántos eran falsos positivos:** al menos los cuatro con destacadas reales,
+como máximo los siete. De los otros tres no se puede decir, y decirlo es parte
+de la respuesta.
+
+### Y el carrusel de «Sugerencias para ti»
+
+Segundo bug, misma familia. El selector `section ul li div span` casa con
+cualquier lista, y en `@alanlozano_12` agarró veinte entradas que eran **diez
+pares de handle y nombre de otros agentes** — `lauren.fischerhomes`, «Lauren |
+Fischer Homes», `carsonthacker`, «Carson Thacker». Cuentas que Instagram
+sugiere, no gente con la que el agente tiene relación.
+
+Entró justo ahí por una razón que conviene saber: **el carrusel se muestra sobre
+todo cuando el perfil no rinde publicaciones**, que es exactamente el caso en el
+que no hay destacadas reales que leer. El ruido entra donde no hay señal.
+
+Dos filtros independientes, como en la grilla de posts: se ancla en
+`/stories/highlights/<id>/`, que el carrusel no tiene, y se descarta lo que
+tiene pinta de handle.
+
+**¿Se coló en S6? No.** Verificado sobre los 20: `cuentas_hipotecarias_etiquetadas`
+y `menciona_lender` no leen `titulos_destacadas` en ningún camino, y el único
+lender del piloto (`@loans_by_ara`) sale de una mención en un caption. Hay una
+prueba que lo fija, porque si una cuenta sugerida se llamara `algo_lending`
+entraría como socio hipotecario.
+
+### ¿Era la sesión degradándose? No
+
+La pregunta que decidía si el lote de diez horas podía salir. **Las posiciones
+de los siete en el orden de captura son 2, 3, 5, 9, 13, 16 y 20** — repartidas
+por toda la corrida, tres en la segunda mitad, `http_status` 200 en los veinte.
+Entre cada par hay capturas completas de 20 posts, y el perfil 19 trajo 20.
+
+**No hay degradación progresiva.** El lote puede salir.
+
+Aun así se agregó un freno por degradación, y conviene ser claro: **la medición
+no lo exigió.** Es seguro barato para una corrida catorce veces más larga que el
+piloto — si la sesión se cae a la hora seis, sin esto el proceso sigue
+escribiendo nulos durante cuatro horas y el archivo no lo dice. Salta con 7 de
+los últimos 10 sin contenido, que es bastante más que el 35% repartido del
+piloto, y hay una prueba que corre el patrón real del piloto y verifica que
+**no** salta.
+
+---
+
 ## Estado del perfil · el bug que había que matar
 
 `estado_perfil` expone los cinco valores del brief:

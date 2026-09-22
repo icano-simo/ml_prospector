@@ -1070,6 +1070,194 @@ class _Elemento:
         return self._href if nombre == "href" else None
 
 
+# ══ EL `privado` INFERIDO POR AUSENCIA ════════════════════════════════════════
+
+def test_un_privado_heredado_sin_aviso_se_reclasifica_a_sin_grid():
+    """Los 7 del piloto. El HTML no se guardaba, pero la evidencia si.
+
+    `estado_evidencia` dice literalmente «cero posts y sin aviso de cuenta
+    privada», o sea que el propio crudo registra que no se vio ningun texto de
+    privacidad. Eso alcanza para descartar `privado`.
+    """
+    from instagram.finder import reclasificar_estado_heredado
+
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["estado_evidencia"] = (
+        "se leyo el meta pero cero posts y sin aviso de cuenta privada: puede "
+        "ser cuenta sin publicaciones o render parcial"
+    )
+    crudo["perfil"]["n_publicaciones"] = 731
+    assert reclasificar_estado_heredado(crudo) == "sin_grid"
+
+    fila = parsear_crudo(crudo)
+    assert fila["estado_perfil"] == "sin_grid"
+    assert fila["captions_es_ratio"] is None, "las señales siguen en null"
+    assert fila["captions_n"] is None
+
+
+def test_un_privado_heredado_CON_aviso_se_respeta():
+    """Si el crudo viejo si vio el texto de privacidad, era privado."""
+    from instagram.finder import reclasificar_estado_heredado
+
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["estado_evidencia"] = "texto de cuenta privada: 'this account is private'"
+    assert reclasificar_estado_heredado(crudo) == "privado"
+
+
+def test_un_crudo_nuevo_no_se_reclasifica():
+    """Trae `marcadores_de_estado`, asi que el diagnostico ya corrio bien."""
+    from instagram.finder import reclasificar_estado_heredado
+
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["estado_evidencia"] = "el JSON del perfil trae is_private = true"
+    crudo["marcadores_de_estado"] = {"is_private_json": True}
+    assert reclasificar_estado_heredado(crudo) == "privado"
+
+
+def test_cero_publicaciones_declaradas_va_a_vacio_no_a_sin_grid():
+    from instagram.finder import reclasificar_estado_heredado
+
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["estado_evidencia"] = "cero posts y sin aviso de cuenta privada"
+    crudo["perfil"]["n_publicaciones"] = 0
+    assert reclasificar_estado_heredado(crudo) == "vacio"
+
+
+def test_los_estados_nuevos_llegan_al_csv_con_su_nombre():
+    """El enum del CSV pasa de 5 valores a 9, a proposito.
+
+    Mapearlos de vuelta a los cinco viejos escondería la distincion que existen
+    para hacer. Lo que NO cambia es `publico_leido`, que es el valor sobre el
+    que se filtra para saber si hay contenido.
+    """
+    from instagram.finder import MAPA_ESTADO_CSV
+
+    for nuevo in ("muro_de_sesion", "sin_grid", "degradado", "vacio"):
+        assert MAPA_ESTADO_CSV[nuevo] == nuevo
+    assert MAPA_ESTADO_CSV["publico_leido"] == "publico_leido"
+
+
+def test_el_freno_por_degradacion_no_salta_con_la_tasa_del_piloto():
+    """7 de 20 repartidos NO es degradacion, y el freno no debe confundirlos.
+
+    Un freno que salta con la tasa normal de perfiles raros para el lote de
+    diez horas sin motivo, y uno que nunca salta no sirve de nada.
+    """
+    from instagram.finder import (
+        MAX_SIN_CONTENIDO_EN_VENTANA,
+        VENTANA_DEGRADACION,
+    )
+
+    # El patron real del piloto: posiciones 2,3,5,9,13,16,20 de 20.
+    piloto = [i in (2, 3, 5, 9, 13, 16, 20) for i in range(1, 21)]
+    salto = False
+    ventana = []
+    for sin_contenido in piloto:
+        ventana.append(sin_contenido)
+        if len(ventana) > VENTANA_DEGRADACION:
+            ventana.pop(0)
+        if (len(ventana) == VENTANA_DEGRADACION
+                and sum(ventana) >= MAX_SIN_CONTENIDO_EN_VENTANA):
+            salto = True
+    assert not salto, "el piloto no fue degradacion y el freno no debe decir que si"
+
+
+def test_el_freno_si_salta_con_una_sesion_que_se_cae():
+    """Diez perfiles seguidos sin contenido despues de una racha buena."""
+    from instagram.finder import (
+        MAX_SIN_CONTENIDO_EN_VENTANA,
+        VENTANA_DEGRADACION,
+    )
+
+    caida = [False] * 10 + [True] * 10
+    salto_en = None
+    ventana = []
+    for i, sin_contenido in enumerate(caida, 1):
+        ventana.append(sin_contenido)
+        if len(ventana) > VENTANA_DEGRADACION:
+            ventana.pop(0)
+        if (len(ventana) == VENTANA_DEGRADACION
+                and sum(ventana) >= MAX_SIN_CONTENIDO_EN_VENTANA
+                and salto_en is None):
+            salto_en = i
+    assert salto_en is not None, "una sesion caida tiene que frenar el lote"
+    assert salto_en <= 17, (
+        "y frenar pronto: cada perfil de mas son tres minutos escribiendo nulos"
+    )
+
+
+def test_sin_grid_es_reintentable_y_privado_no():
+    """La mitad del punto de separarlos: el reintento alcanza a uno y al otro no."""
+    from instagram.estado import EstadoPerfil
+
+    assert EstadoPerfil.SIN_GRID.conviene_reintentar is True
+    assert EstadoPerfil.MURO_DE_SESION.conviene_reintentar is True
+    assert EstadoPerfil.DEGRADADO.conviene_reintentar is True
+    assert EstadoPerfil.PRIVADO.conviene_reintentar is False
+    assert EstadoPerfil.VACIO.conviene_reintentar is False, (
+        "una cuenta sin publicaciones no mejora reintentando"
+    )
+
+
+# ══ EL CARRUSEL DE SUGERENCIAS ════════════════════════════════════════════════
+
+def test_el_carrusel_de_sugerencias_no_son_destacadas():
+    """@alanlozano_12: veinte entradas, diez pares de handle y nombre.
+
+    Son cuentas que Instagram sugiere, no personas con las que el agente tiene
+    relacion.
+    """
+    carrusel = [
+        "lauren.fischerhomes", "Lauren | Fischer Homes",
+        "rajabovdavron282", "Davron Rajabov",
+        "chela.aguilar.94", "Chela Aguilar",
+        "carsonthacker", "Carson Thacker",
+        "quietskysmedia", "Indiana Real Estate Media",
+        "caleybendell.realtor", "Caley Bendell | IN Real Estate",
+    ]
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["perfil"]["titulos_destacadas"] = carrusel
+    fila = parsear_crudo(crudo)
+    assert fila["destacadas_titulos"] is None, fila["destacadas_titulos"]
+
+
+def test_las_destacadas_de_verdad_sobreviven():
+    reales = ["⭐️⭐️⭐️⭐️⭐️", "2026 Vibes", "Recognitions 🙏", "New Listings 🏡",
+              "2023 Sales", "R E A L T O R", "closings", "home tours"]
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["perfil"]["titulos_destacadas"] = reales
+    fila = parsear_crudo(crudo)
+    for r in reales:
+        assert r in fila["destacadas_titulos"], r
+
+
+def test_un_solo_titulo_con_punto_no_es_el_carrusel():
+    """Hacen falta tres. Uno podria ser una destacada que se llama asi."""
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["perfil"]["titulos_destacadas"] = ["2023 Sales", "casa.nueva", "Closings"]
+    fila = parsear_crudo(crudo)
+    assert "2023 Sales" in fila["destacadas_titulos"]
+    assert "Closings" in fila["destacadas_titulos"]
+
+
+def test_el_carrusel_no_llego_nunca_a_S6():
+    """Verificado sobre el piloto: S6 no lee `titulos_destacadas`.
+
+    Esta prueba lo fija, porque el carrusel son cuentas de otros agentes y si
+    alguna se llamara `algo_lending` entraria como socio hipotecario.
+    """
+    crudo = _crudo(posts=[], estado="privado")
+    crudo["perfil"]["titulos_destacadas"] = [
+        "maria.loanofficer", "Maria | Loan Officer",
+        "acme_mortgage_co", "Acme Mortgage",
+        "first.lending", "First Lending",
+    ]
+    fila = parsear_crudo(crudo)
+    assert fila["menciona_lender"] is None
+    assert fila["cuentas_hipotecarias_etiquetadas"] is None
+    assert fila["destacadas_titulos"] is None
+
+
 def test_el_geotag_del_pie_de_pagina_no_entra_al_csv():
     """«Locations» salio 106 veces de unos 180 geotags del piloto.
 

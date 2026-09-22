@@ -61,6 +61,114 @@ def test_privado_no_devuelve_false_en_las_senales():
     assert "privada" in d.estado.motivo()
 
 
+# ══ AUSENCIA DE PUBLICACIONES NO ES PRIVACIDAD ════════════════════════════════
+#
+# La rama que producia esto no tenia NI UNA prueba, y produjo 7 de las 20 filas
+# del piloto. Todas las pruebas de `privado` pasaban el texto afirmativo, asi
+# que ninguna tocaba el camino que fallaba.
+#
+# La evidencia de que estaba mal: cinco de los siete perfiles marcados privados
+# traian titulos de destacadas reales -- "2023 Sales", "Closings",
+# "R E A L T O R". Una cuenta privada no le muestra las destacadas a quien no la
+# sigue. Esas paginas estaban abiertas.
+
+def test_cero_posts_sin_aviso_de_privacidad_NO_es_privado():
+    """El caso exacto de los siete perfiles del piloto."""
+    d = diagnosticar(
+        handle="realtor_karla_", codigo_http=200,
+        titulo="Karla (@realtor_karla_) - Instagram",
+        texto_body="4,055 followers · 731 posts",
+        hay_meta_description=True, n_articulos_con_posts=0,
+        declara_n_publicaciones=731,
+    )
+    assert d.estado is not EstadoPerfil.PRIVADO, d.evidencia
+    assert d.estado is EstadoPerfil.SIN_GRID
+    assert d.estado.contenido_legible is False, (
+        "las señales siguen en null: lo que cambia es que ya no se afirma "
+        "algo sobre la cuenta de una persona que no se midio"
+    )
+    assert d.estado.conviene_reintentar is True, (
+        "y ahora el reintento lo alcanza, que es la mitad del punto"
+    )
+
+
+def test_el_muro_de_sesion_se_separa_del_perfil_sin_grid():
+    d = diagnosticar(
+        handle="x", codigo_http=200, titulo="Instagram",
+        texto_body="4,055 followers", hay_meta_description=True,
+        n_articulos_con_posts=0, hay_muro_de_sesion=True,
+        declara_n_publicaciones=731,
+    )
+    assert d.estado is EstadoPerfil.MURO_DE_SESION
+    assert "nuestro acceso" in d.estado.motivo()
+
+
+def test_una_respuesta_incompleta_es_degradado():
+    d = diagnosticar(
+        handle="x", codigo_http=200, titulo="Instagram",
+        texto_body="4,055 followers", hay_meta_description=True,
+        n_articulos_con_posts=0, respuesta_incompleta=True,
+        motivo_incompleta="el HTML pesa 812 bytes", declara_n_publicaciones=731,
+    )
+    assert d.estado is EstadoPerfil.DEGRADADO
+    assert "812 bytes" in d.evidencia
+
+
+def test_cero_publicaciones_declaradas_es_vacio():
+    d = diagnosticar(
+        handle="x", codigo_http=200, titulo="Instagram",
+        texto_body="12 followers · 0 posts", hay_meta_description=True,
+        n_articulos_con_posts=0, declara_n_publicaciones=0,
+    )
+    assert d.estado is EstadoPerfil.VACIO
+    assert d.estado.conviene_reintentar is False, (
+        "una cuenta sin publicaciones no mejora reintentando"
+    )
+
+
+def test_el_texto_de_privacidad_sigue_dando_privado():
+    """La evidencia afirmativa no se toca."""
+    for frase in ("This Account is Private",
+                  "Esta cuenta es privada",
+                  "Already follow karla? to see their photos and videos"):
+        d = diagnosticar(
+            handle="x", codigo_http=200, titulo="Instagram", texto_body=frase,
+            hay_meta_description=True, n_articulos_con_posts=0,
+            declara_n_publicaciones=731,
+        )
+        assert d.estado is EstadoPerfil.PRIVADO, (frase, d.estado)
+
+
+def test_is_private_del_json_es_la_otra_evidencia_afirmativa():
+    d = diagnosticar(
+        handle="x", codigo_http=200, titulo="Instagram",
+        texto_body="4,055 followers", hay_meta_description=True,
+        n_articulos_con_posts=0, es_privado_declarado=True,
+        declara_n_publicaciones=731,
+    )
+    assert d.estado is EstadoPerfil.PRIVADO
+    assert "is_private" in d.evidencia
+
+
+def test_is_private_false_no_fuerza_privado_ni_lo_impide():
+    """False es informacion; None es ausencia. Ninguno de los dos afirma."""
+    d = diagnosticar(
+        handle="x", codigo_http=200, titulo="Instagram",
+        texto_body="4,055 followers", hay_meta_description=True,
+        n_articulos_con_posts=0, es_privado_declarado=False,
+        declara_n_publicaciones=731,
+    )
+    assert d.estado is EstadoPerfil.SIN_GRID
+
+
+def test_los_cuatro_estados_nuevos_dejan_las_senales_en_null():
+    """La regla del brief: todos con las señales de contenido en null."""
+    for estado in (EstadoPerfil.MURO_DE_SESION, EstadoPerfil.SIN_GRID,
+                   EstadoPerfil.DEGRADADO, EstadoPerfil.VACIO):
+        assert estado.contenido_legible is False, estado
+        assert estado.motivo(), estado
+
+
 def test_bloqueado_se_distingue_de_privado():
     """Un muro de login dice 'log in to see' y NO significa cuenta privada."""
     d = diagnosticar(

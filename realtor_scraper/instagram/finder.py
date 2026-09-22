@@ -591,6 +591,18 @@ ESQUEMA_CSV = "ig-signals-v1"
 # seis, porque distingue "no habia handle candidato" de "el handle no existe".
 # Se mapea, y el detalle fino queda en el JSON crudo.
 
+#: Estado interno -> valor del CSV.
+#:
+#: **El enum del CSV pasa de 5 valores a 9.** Los cuatro nuevos
+#: -- `muro_de_sesion`, `sin_grid`, `degradado`, `vacio`-- salen tal cual en vez
+#: de mapearse de vuelta a uno de los cinco, porque mapearlos escondería
+#: exactamente la distincion que existen para hacer.
+#:
+#: Por que es seguro para la app que ya consume el archivo: **`publico_leido`
+#: no cambia**, y es el valor sobre el que se filtra para saber si hay
+#: contenido. Los cuatro nuevos no tienen `contenido_legible`, igual que
+#: `privado`. Lo unico que cambia de comportamiento es el codigo que comparaba
+#: `== "privado"` -- y a ese codigo se le estaba mintiendo.
 MAPA_ESTADO_CSV = {
     EstadoPerfil.PUBLICO_LEIDO.value: "publico_leido",
     EstadoPerfil.PRIVADO.value: "privado",
@@ -598,6 +610,10 @@ MAPA_ESTADO_CSV = {
     EstadoPerfil.BLOQUEADO.value: "bloqueado",
     EstadoPerfil.HANDLE_EQUIVOCADO.value: "handle_dudoso",
     EstadoPerfil.SIN_HANDLE.value: "no_encontrado",
+    EstadoPerfil.MURO_DE_SESION.value: "muro_de_sesion",
+    EstadoPerfil.SIN_GRID.value: "sin_grid",
+    EstadoPerfil.DEGRADADO.value: "degradado",
+    EstadoPerfil.VACIO.value: "vacio",
 }
 
 MAPA_CONFIANZA_CSV = {
@@ -1125,6 +1141,38 @@ ESTADOS_QUE_DETIENEN = {EstadoPerfil.BLOQUEADO.value}
 #: raro; tres seguidos es la cuenta.
 MAX_BLOQUEOS_SEGUIDOS = 3
 
+# ── Freno por degradacion ────────────────────────────────────────────────────
+#
+# Estados en los que la pagina cargo pero NO se leyo el contenido. No son
+# bloqueos -- Instagram no nos dijo que no-- pero tampoco son datos: son filas
+# de nulos.
+#
+# **Que medicion motiva esto, y cual no.** El piloto dio 7 de 20 sin
+# cuadricula, o sea el 35%, y la primera sospecha fue que la sesion se estaba
+# degradando con el tiempo. Se midio y NO: las posiciones son 2, 3, 5, 9, 13,
+# 16 y 20, repartidas por toda la corrida, con capturas completas de 20 posts
+# inmediatamente antes y despues de cada una, y el perfil 19 trajo 20 posts.
+# No hay degradacion progresiva.
+#
+# Este freno se agrega igual, y conviene ser claro: **la medicion no lo
+# exigio.** Es seguro barato para una corrida de diez horas, que es catorce
+# veces mas larga que el piloto. Si la sesion se degrada a la hora seis, sin
+# esto el proceso sigue escribiendo nulos durante cuatro horas y el archivo no
+# lo dice.
+ESTADOS_SIN_CONTENIDO = {
+    EstadoPerfil.SIN_GRID.value,
+    EstadoPerfil.MURO_DE_SESION.value,
+    EstadoPerfil.DEGRADADO.value,
+}
+#: Ventana movil sobre la que se mide la tasa de vacios.
+VENTANA_DEGRADACION = 10
+#: Cuantos de esa ventana sin contenido hacen sospechar de la sesion.
+#:
+#: 7 de 10 es bastante mas de lo que dio el piloto (35% repartido), asi que no
+#: se dispara con la tasa normal de cuentas privadas o perfiles raros. Salta
+#: cuando la cosa cambia de naturaleza.
+MAX_SIN_CONTENIDO_EN_VENTANA = 7
+
 
 def correr_lote(
     *,
@@ -1213,6 +1261,9 @@ def correr_lote(
         return resumen
 
     bloqueos_seguidos = 0
+    #: Ventana movil de "cargo pero sin contenido", para el freno por
+    #: degradacion. Booleanos, de largo VENTANA_DEGRADACION.
+    ventana: list[bool] = []
 
     with sync_playwright() as p:
         contexto = crear_contexto(p, headless=headless, perfil_dir=PERFIL_IG_DIR)
@@ -1337,6 +1388,32 @@ def correr_lote(
             else:
                 bloqueos_seguidos = 0
 
+            # Freno por degradacion: la pagina carga pero no se lee nada.
+            ventana.append(estado in ESTADOS_SIN_CONTENIDO)
+            if len(ventana) > VENTANA_DEGRADACION:
+                ventana.pop(0)
+            if (len(ventana) == VENTANA_DEGRADACION
+                    and sum(ventana) >= MAX_SIN_CONTENIDO_EN_VENTANA):
+                checkpoint["detenido_por"] = "degradacion"
+                checkpoint["detenido_en"] = dt.datetime.now().isoformat(
+                    timespec="seconds"
+                )
+                _guardar_checkpoint(checkpoint)
+                resumen["detenido_por"] = "degradacion"
+                logger.error(
+                    "{} de los ultimos {} perfiles cargaron SIN CONTENIDO. "
+                    "ME DETENGO.\n"
+                    "No es un bloqueo: Instagram responde 200 y el meta se lee. "
+                    "Es la cuadricula la que vuelve vacia, y a esta tasa no son "
+                    "cuentas privadas: es la sesion.\n"
+                    "Estos perfiles NO quedan como privados -- quedan como "
+                    "sin_grid, que es reintentable. Al reanudar hay que sacarlos "
+                    "del checkpoint para que se vuelvan a pedir.\n"
+                    "El checkpoint quedo en {}.",
+                    sum(ventana), VENTANA_DEGRADACION, RUTA_CHECKPOINT,
+                )
+                break
+
             if i < len(pendientes):
                 if i % CADA_N_PAUSA_LARGA == 0:
                     larga = random.uniform(*PAUSA_LARGA)
@@ -1440,6 +1517,83 @@ def _truncar(texto: str) -> tuple[str, bool]:
     return texto[:MAX_CHARS_CELDA], True
 
 
+#: Pinta de handle: minusculas, sin espacios, con punto o guion bajo.
+_RE_PINTA_DE_HANDLE = re.compile(r"^[a-z0-9._]{3,30}$")
+#: Cuantos handles seguidos hacen falta para declarar que es el carrusel.
+#: Dos podrian ser casualidad; el carrusel real trae diez pares.
+MIN_HANDLES_PARA_CARRUSEL = 3
+
+
+def _sin_carrusel_de_sugerencias(titulos: list[str]) -> list[str]:
+    """Saca el carrusel de «Sugerencias para ti» de las destacadas.
+
+    El scraper ya no lo captura (ver `_titulos_de_destacadas`), pero los crudos
+    tomados antes del arreglo lo llevan dentro y el crudo no se reescribe. Se
+    filtra aca para que esos perfiles salgan limpios sin volver a raspar.
+
+    En `@alanlozano_12` eran veinte entradas: diez pares de handle y nombre de
+    otros agentes. Se detecta por eso -- varias entradas con pinta de handle en
+    la misma lista-- y en ese caso se descarta la lista ENTERA, porque los
+    nombres que la acompañan tampoco son destacadas suyas.
+    """
+    con_pinta = [t for t in titulos
+                 if _RE_PINTA_DE_HANDLE.match(t or "") and ("." in t or "_" in t)]
+    if len(con_pinta) >= MIN_HANDLES_PARA_CARRUSEL:
+        return []
+    return [t for t in titulos if t not in con_pinta]
+
+
+#: La cadena que el diagnostico viejo escribia al inferir privado por ausencia.
+#: Es literal: el codigo admitia en su propia evidencia que no habia evidencia.
+_EVIDENCIA_DE_LA_INFERENCIA_VIEJA = "sin aviso de cuenta privada"
+
+
+def reclasificar_estado_heredado(crudo: dict) -> str:
+    """Corrige el `privado` inferido por ausencia en los crudos ya capturados.
+
+    **No hace falta volver a raspar, y no se puede:** el HTML no se guardaba.
+    Pero `estado_evidencia` si se guardaba, y en los 7 perfiles del piloto dice
+    literalmente *«cero posts y **sin aviso de cuenta privada**»* -- o sea que
+    el propio crudo registra que **no se vio ningun texto de privacidad**. Eso
+    alcanza para descartar `privado`, que es lo que importa.
+
+    A que estado van. Con lo que el crudo guarda se puede decidir:
+
+      - ninguno de los 7 declara 0 publicaciones (declaran entre 99 y 1.162),
+        asi que ninguno es `vacio`;
+      - cinco traen titulos de destacadas reales, y una pagina con la tira de
+        destacadas rendida no es un muro de sesion ni una respuesta degradada;
+      - queda `sin_grid`: la pagina cargo, el meta se leyo, y la cuadricula
+        devolvio cero.
+
+    Para separar `muro_de_sesion` y `degradado` haria falta el marcador que
+    ahora se guarda en `marcadores_de_estado` y que estos crudos no tienen. Eso
+    **es** el hallazgo: un crudo que guarda la conclusion y no la evidencia
+    obliga a raspar de nuevo, que es justo lo que «crudo primero» existe para
+    evitar. Los crudos nuevos ya lo guardan.
+
+    Un crudo nuevo pasa por aca sin cambios: trae `marcadores_de_estado`.
+    """
+    estado = crudo.get("estado_perfil") or EstadoPerfil.SIN_HANDLE.value
+    if estado != EstadoPerfil.PRIVADO.value:
+        return estado
+
+    marcas = crudo.get("marcadores_de_estado")
+    if marcas is not None:
+        # Crudo nuevo: el diagnostico ya corrio con la regla correcta.
+        return estado
+
+    evidencia = (crudo.get("estado_evidencia") or "").lower()
+    if _EVIDENCIA_DE_LA_INFERENCIA_VIEJA not in evidencia:
+        # Un `privado` de antes que SI vio el texto de privacidad. Se respeta.
+        return estado
+
+    declaradas = (crudo.get("perfil") or {}).get("n_publicaciones")
+    if declaradas == 0:
+        return EstadoPerfil.VACIO.value
+    return EstadoPerfil.SIN_GRID.value
+
+
 def parsear_crudo(crudo: dict) -> dict:
     """Un JSON crudo -> una fila derivada de ig_signals.csv.
 
@@ -1459,7 +1613,7 @@ def parsear_crudo(crudo: dict) -> dict:
     posts = crudo.get("posts") or []
     comentarios_por_post = crudo.get("comentarios_por_post") or {}
 
-    estado_bruto = crudo.get("estado_perfil") or EstadoPerfil.SIN_HANDLE.value
+    estado_bruto = reclasificar_estado_heredado(crudo)
     estado_csv = MAPA_ESTADO_CSV.get(estado_bruto, estado_bruto)
 
     handle = perfil.get("handle") or crudo.get("handle_pedido") or \
@@ -1518,7 +1672,7 @@ def parsear_crudo(crudo: dict) -> dict:
     # Estas dos se leen del perfil y existen incluso en una cuenta privada.
     fila["designaciones"] = ", ".join(_designaciones_de_bio(bio)) or None
     fila["destacadas_titulos"] = ", ".join(
-        perfil.get("titulos_destacadas") or []
+        _sin_carrusel_de_sugerencias(perfil.get("titulos_destacadas") or [])
     ) or None
     fila["texto_truncado"] = False
 
@@ -1865,6 +2019,21 @@ def parsear_crudos(
             ilegibles.append("%s (parser: %r)" % (ruta.name, exc))
 
     ruta_csv.parent.mkdir(parents=True, exist_ok=True)
+    # Windows bloquea el archivo mientras Excel lo tiene abierto, y el CSV
+    # existe justamente para abrirlo en Excel. Sin esto el parser termina en un
+    # traceback de PermissionError, que no dice que hacer -- y el peor momento
+    # para descubrirlo es al final de un lote de diez horas.
+    try:
+        with ruta_csv.open("a", encoding="utf-8-sig"):
+            pass
+    except PermissionError:
+        raise SystemExit(
+            "No puedo escribir %s: el archivo esta abierto en otro programa "
+            "(casi siempre Excel).\n"
+            "Cerralo y volve a correr --parsear. Los crudos no se tocaron, asi "
+            "que no se perdio nada." % ruta_csv
+        ) from None
+
     with ruta_csv.open("w", encoding="utf-8-sig", newline="") as fh:
         escritor = csv.DictWriter(
             fh, fieldnames=COLUMNAS_CSV, extrasaction="ignore",

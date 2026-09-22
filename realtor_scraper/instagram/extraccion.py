@@ -35,7 +35,13 @@ from dataclasses import dataclass, field
 from loguru import logger
 
 from instagram.comentarios import Comentario
-from instagram.estado import Diagnostico, EstadoPerfil, diagnosticar
+from instagram.estado import (
+    _PATRONES_PRIVADO,
+    Diagnostico,
+    EstadoPerfil,
+    _alguno,
+    diagnosticar,
+)
 from instagram.posts import Post, TipoDePost
 
 IG_BASE = "https://www.instagram.com/"
@@ -455,21 +461,73 @@ def destino_limpio(url: str | None) -> str | None:
         return url
 
 
+#: Un handle: minusculas, sin espacios, con punto o guion bajo. Lo que el
+#: carrusel de "Sugerencias para ti" pone junto al nombre para mostrar.
+_RE_PINTA_DE_HANDLE = re.compile(r"^[a-z0-9._]{3,30}$")
+
+
 def _titulos_de_destacadas(page) -> list[str]:
     """Titulos de las historias destacadas. Alimentan S3 y S4.
 
     Un agente con destacadas tituladas "FHA", "Primera casa", "Testimonios"
     esta declarando su nicho en un lugar que nadie mira.
+
+    **El bug que estas lineas arreglan.** El selector `section ul li div span`
+    casa con cualquier lista de la pagina, y en `@alanlozano_12` agarro el
+    carrusel de **«Sugerencias para ti»**: veinte entradas que son diez pares
+    de handle y nombre de OTROS agentes -- `lauren.fischerhomes`, «Lauren |
+    Fischer Homes», `carsonthacker`, «Carson Thacker». Eso no son sus
+    destacadas: son cuentas que Instagram sugiere, gente con la que no tiene
+    ninguna relacion.
+
+    Y aparecio justo ahi por una razon que conviene saber: **el carrusel de
+    sugerencias se muestra sobre todo cuando el perfil no rinde publicaciones**,
+    que es exactamente el caso en el que este extractor se queda sin destacadas
+    reales que leer. O sea que el ruido entra precisamente donde no hay señal.
+
+    Dos filtros independientes, como en la grilla de posts:
+
+      1. se ancla en el enlace de la destacada, `/stories/highlights/<id>/`,
+         que el carrusel de sugerencias no tiene;
+      2. se descarta lo que tiene pinta de handle, porque un titulo de
+         destacada no es `lauren.fischerhomes`.
     """
     titulos: list[str] = []
+
+    def _agregar(t: str) -> None:
+        t = (t or "").strip()
+        if not t or len(t) > 30 or t in titulos or t.isdigit():
+            return
+        # Filtro 2: pinta de handle. Un titulo puede ser "closings" o "2023
+        # Sales"; no es "lauren.fischerhomes".
+        if _RE_PINTA_DE_HANDLE.match(t) and ("." in t or "_" in t):
+            return
+        titulos.append(t)
+
+    # Filtro 1: el ancla. Cada destacada es un enlace a /stories/highlights/.
     try:
-        for el in page.query_selector_all(
-            "ul li button span, div[role='menuitem'] span, "
-            "section ul li div span"
-        ):
-            t = (el.inner_text() or "").strip()
-            if t and len(t) <= 30 and t not in titulos and not t.isdigit():
-                titulos.append(t)
+        for el in page.query_selector_all("a[href*='/stories/highlights/']"):
+            try:
+                _agregar(el.inner_text())
+            except Exception:  # noqa: BLE001
+                continue
+            if len(titulos) >= 20:
+                break
+    except Exception:  # noqa: BLE001
+        pass
+
+    if titulos:
+        return titulos
+
+    # Respaldo: el boton de la tira de destacadas, que en algunos renders no
+    # es un <a>. Se mantiene acotado a `ul li button` -- NO a `section ul li
+    # div span`, que es por donde entraba el carrusel.
+    try:
+        for el in page.query_selector_all("ul li button span"):
+            try:
+                _agregar(el.inner_text())
+            except Exception:  # noqa: BLE001
+                continue
             if len(titulos) >= 20:
                 break
     except Exception:  # noqa: BLE001
@@ -569,6 +627,82 @@ def _engagement(page) -> tuple[int | None, int | None]:
 _RE_LOCATION_REAL = re.compile(r"/explore/locations/\d+")
 #: Y su texto, por si el href cambia. En los idiomas que sirve Instagram aca.
 _TEXTOS_DE_PIE = ("locations", "ubicaciones", "lugares")
+
+
+#: Selectores del muro de inicio de sesion. No es la cuenta: somos nosotros.
+_SELECTORES_MURO_SESION = (
+    "form[action*='/accounts/login']",
+    "a[href^='/accounts/login']",
+    "div[role='dialog'] a[href*='/accounts/login']",
+)
+#: La cuadricula de publicaciones. Si no esta, no se llego a ver si hay posts.
+_SELECTORES_GRID = ("main article", "article", "main div[style*='flex-direction']")
+
+
+def _marcadores_de_estado(page, titulo: str, cuerpo: str) -> dict:
+    """La evidencia cruda del estado, para guardarla en el crudo.
+
+    **Por que existe.** El piloto marco 7 perfiles como privados y despues no
+    se pudo decir de cual de las causas posibles era cada uno, porque el crudo
+    guardaba la conclusion (`estado_perfil`) y no la evidencia. Un crudo que no
+    guarda lo suficiente para rehacer la clasificacion obliga a raspar otra vez,
+    que es justo lo que «crudo primero» existe para evitar.
+
+    Devuelve hechos, no interpretaciones: que texto aparecio, que selector
+    existio. Quien decide es `diagnosticar`.
+    """
+    marcas: dict = {
+        "texto_privado": None,
+        "is_private_json": None,
+        "muro_de_sesion": False,
+        "hay_grid": None,
+        "respuesta_incompleta": False,
+        "motivo_incompleta": None,
+    }
+    texto = "%s\n%s" % (titulo or "", cuerpo or "")
+
+    encontrado = _alguno(_PATRONES_PRIVADO, texto)
+    if encontrado:
+        marcas["texto_privado"] = encontrado
+
+    for selector in _SELECTORES_MURO_SESION:
+        try:
+            if page.query_selector(selector):
+                marcas["muro_de_sesion"] = True
+                break
+        except Exception:  # noqa: BLE001
+            continue
+
+    # `is_private` del JSON embebido, cuando la pagina lo trae. Es la segunda
+    # evidencia afirmativa que acepta `diagnosticar`.
+    try:
+        html = page.content() or ""
+    except Exception:  # noqa: BLE001
+        html = ""
+    if html:
+        m = re.search(r'"is_private"\s*:\s*(true|false)', html)
+        if m:
+            marcas["is_private_json"] = m.group(1) == "true"
+        # Una pagina que no trae ni el JSON del perfil ni el cuerpo esperado
+        # vino incompleta.
+        if len(html) < 20_000:
+            marcas["respuesta_incompleta"] = True
+            marcas["motivo_incompleta"] = "el HTML pesa %d bytes" % len(html)
+    else:
+        marcas["respuesta_incompleta"] = True
+        marcas["motivo_incompleta"] = "no se pudo leer el HTML de la pagina"
+
+    for selector in _SELECTORES_GRID:
+        try:
+            if page.query_selector(selector):
+                marcas["hay_grid"] = True
+                break
+        except Exception:  # noqa: BLE001
+            continue
+    if marcas["hay_grid"] is None:
+        marcas["hay_grid"] = False
+
+    return marcas
 
 
 def _geotag(page) -> str | None:
@@ -1144,6 +1278,15 @@ def capturar_por_dom_con_sesion(
     meta = _atributo(page, "meta[name=description]", "content")
     seguidores, siguiendo, n_declarados = extraer_conteos_de_meta(meta)
 
+    # ── Los marcadores de estado, GUARDADOS ──────────────────────────────────
+    #
+    # Sin esto el crudo no permitia distinguir «privado» de «no cargo», y por
+    # eso los 7 perfiles del piloto quedaron sin poder reclasificarse a partir
+    # del archivo. Ahora la evidencia se guarda, asi que un cambio de criterio
+    # se puede re-aplicar sobre lo capturado en vez de tener que raspar otra vez.
+    marcadores = _marcadores_de_estado(page, titulo, cuerpo)
+    crudo["marcadores_de_estado"] = marcadores
+
     diag = diagnosticar(
         handle=limpio, codigo_http=codigo, titulo=titulo, texto_body=cuerpo,
         hay_meta_description=bool(meta),
@@ -1151,6 +1294,11 @@ def capturar_por_dom_con_sesion(
             page.query_selector_all("a[href*='/p/'], a[href*='/reel/']")
             if codigo not in (401, 403, 429, 404) else []
         ),
+        es_privado_declarado=marcadores.get("is_private_json"),
+        hay_muro_de_sesion=bool(marcadores.get("muro_de_sesion")),
+        declara_n_publicaciones=n_declarados,
+        respuesta_incompleta=bool(marcadores.get("respuesta_incompleta")),
+        motivo_incompleta=marcadores.get("motivo_incompleta"),
     )
     crudo["estado_perfil"] = diag.estado.value
     crudo["estado_evidencia"] = diag.evidencia
@@ -1166,7 +1314,13 @@ def capturar_por_dom_con_sesion(
         "seguidos": siguiendo,
         "n_publicaciones": n_declarados,
         "enlace_bio": _link_de_bio(page),
-        "es_privado": diag.estado is EstadoPerfil.PRIVADO,
+        # Del JSON de la pagina, NO del diagnostico. Antes era
+        # `diag.estado is PRIVADO`, o sea que repetia la conclusion y parecia
+        # una confirmacion independiente: en los 7 perfiles del piloto decia
+        # `True` porque el diagnostico habia dicho privado, y el diagnostico lo
+        # habia dicho por ausencia de posts. Un circulo de una sola vuelta.
+        # None cuando la pagina no lo trae, que es lo honesto.
+        "es_privado": marcadores.get("is_private_json"),
         "es_cuenta_empresa": None,
         "categoria_declarada": extraer_categoria(_texto(page, "header section")
                                                  or _texto(page, "header")),
