@@ -60,6 +60,10 @@ class Captura:
 
     realtor: str | None
     estado: str | None
+    #: La llave. Sin alguna, la captura de perfil no se puede pegar a nadie
+    #: despues -- y la restriccion de la base lo impide.
+    mmi_agent_id: str | None = None
+    sf_lead_id: str | None = None
     condados: list[str] = field(default_factory=list)
     bloques: list[Bloque] = field(default_factory=list)
     advertencias: list[str] = field(default_factory=list)
@@ -133,15 +137,30 @@ def armar_captura(
     lenders: str | None = None,
     realtor: str | None = None,
     estado: str | None = None,
+    mmi_agent_id: str | None = None,
+    sf_lead_id: str | None = None,
 ) -> Captura:
     """Valida el protocolo y devuelve la captura etiquetada.
 
     Levanta `ProtocoloInvalido` antes de que nada llegue a la base.
     """
+    if not (mmi_agent_id or sf_lead_id):
+        raise ProtocoloInvalido(
+            "Falta la llave: hace falta el MMI Agent ID o el Lead ID de "
+            "Salesforce.\n"
+            "\n"
+            "Sin una llave, esta captura no se puede pegar a ningun realtor "
+            "despues. El nombre no es llave: hay dos ANDREA SAAVEDRA en el "
+            "libro y el cruce por nombre ya nos dio 301 filas sobre 300.\n"
+            "\n"
+            "El MMI Agent ID esta en el propio perfil de Model Match."
+        )
+
     filas = condados_del_overview(overview)
     nombres = [n for n, _ in filas]
 
-    cap = Captura(realtor=realtor, estado=estado, condados=nombres)
+    cap = Captura(realtor=realtor, estado=estado, condados=nombres,
+                  mmi_agent_id=mmi_agent_id, sf_lead_id=sf_lead_id)
     cap.bloques.append(Bloque("overview", 0, overview))
     cap.bloques.extend(etiquetar_por_posicion(market_signals, nombres))
 

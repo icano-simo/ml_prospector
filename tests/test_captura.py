@@ -111,6 +111,7 @@ def test_la_captura_completa_valida_y_etiqueta():
         market_signals=["ms ca", "ms solano", "ms cc", "ms alameda"],
         originators="orig", lenders="lend",
         realtor="Armando Ochoa", estado="CA",
+        mmi_agent_id="MMI-9001",
     )
     assert cap.condados == ["Solano", "Contra Costa", "Alameda"]
     assert len(cap.market_signals) == 4
@@ -119,15 +120,44 @@ def test_la_captura_completa_valida_y_etiqueta():
 
 def test_sin_originators_se_advierte_porque_se_pierde_la_exclusion():
     cap = armar_captura(overview=OVERVIEW,
-                        market_signals=["a", "b", "c", "d"])
+                        market_signals=["a", "b", "c", "d"],
+                        mmi_agent_id="MMI-9001")
     assert any("Everett" in a for a in cap.advertencias)
 
 
 def test_sin_tabla_de_condados_se_advierte_lo_de_View_Counties():
     cap = armar_captura(overview="Armando Ochoa\neXp Realty",
-                        market_signals=["solo el estado"])
+                        market_signals=["solo el estado"],
+                        mmi_agent_id="MMI-9001")
     assert cap.condados == []
     assert any("View Counties" in a for a in cap.advertencias)
+
+
+# ══ LA LLAVE ═════════════════════════════════════════════════════════════════
+
+def test_sin_llave_no_se_arma_la_captura():
+    """La restriccion de la base lo impide igual; esto lo dice ANTES y mejor.
+
+    Se descubrio al primer guardado real: `captura_perfil_trae_llave` exigia
+    licencia, que un perfil de Model Match no trae. La restriccion tenia razon
+    en el espiritu y no en la lista de llaves aceptadas.
+    """
+    try:
+        armar_captura(overview=OVERVIEW,
+                      market_signals=["a", "b", "c", "d"])
+    except ProtocoloInvalido as exc:
+        assert "MMI Agent ID" in str(exc)
+        assert "El nombre no es llave" in str(exc)
+    else:
+        raise AssertionError("sin llave la captura no se puede pegar a nadie")
+
+
+def test_el_lead_id_de_salesforce_tambien_sirve_de_llave():
+    cap = armar_captura(overview=OVERVIEW,
+                        market_signals=["a", "b", "c", "d"],
+                        sf_lead_id="00Q5f00000ABCDE")
+    assert cap.sf_lead_id == "00Q5f00000ABCDE"
+    assert cap.mmi_agent_id is None
 
 
 # ══ TRAMPA 1 · el grafico rodante ════════════════════════════════════════════
