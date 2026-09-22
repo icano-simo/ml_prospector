@@ -214,71 +214,44 @@ function vMercados(){
   $('#cuerpo').innerHTML = `
     <div class="tarjeta">
       <h2>Pegar Model Match</h2>
-      <p class="sub" style="margin:0 0 12px">El orden de captura:
+      <p class="sub" style="margin:0 0 12px">Una sola caja. Recorré el perfil en
+        este orden y pegá todo seguido acá:
         <b>1</b> Overview con <i>View Counties</i> ·
         <b>2</b> Market Signals del estado ·
         <b>3</b> Market Signals de cada condado, en el orden del Overview ·
-        <b>4</b> Originators con filtro Buyer · <b>5</b> Lenders</p>
+        <b>4</b> Originators con filtro Buyer · <b>5</b> Lenders.<br>
+        Los cortes los encuentra el servidor por los títulos de sección; no hay
+        que separar nada.</p>
       <div id="msgs"></div>
-      <label>Overview <span class="pista">con View Counties activado</span></label>
-      <textarea id="ov" placeholder="Ctrl+A, Ctrl+C en la pestaña Overview"></textarea>
-      <div style="margin:10px 0">
-        <button class="btn sec" id="btnLeer">Leer los condados</button>
+      <label>Volcado completo
+        <span class="pista">Ctrl+A, Ctrl+C en cada pestaña, una debajo de otra</span></label>
+      <textarea id="volcado" style="min-height:320px"
+        placeholder="Pegá acá el perfil entero, en orden."></textarea>
+      <div id="extra"></div>
+      <div style="margin-top:12px">
+        <button class="btn" id="btnGuardar">Guardar</button>
+        <span class="pista" id="tam"></span>
       </div>
-      <div id="cajas"></div>
     </div>
     <div class="tarjeta">
       <h2>Biblioteca de geografías</h2>
       <div id="biblio" class="pista">cargando…</div>
     </div>`;
-  $('#btnLeer').onclick = leerCondados;
+  if(!SEL.sf_lead_id) $('#extra').innerHTML =
+    `<label>MMI Agent ID <span class="pista">este realtor no tiene Lead ID,
+      así que hace falta</span></label><input type="text" id="agent">`;
+  $('#volcado').oninput = () => {
+    const n = $('#volcado').value.length;
+    $('#tam').textContent = n ? n.toLocaleString('es') + ' caracteres' : '';
+  };
+  $('#btnGuardar').onclick = guardar;
   cargarBiblio();
 }
 
-let CONDADOS = [];
-function leerCondados(){
-  const ov = $('#ov').value;
-  const filas = [...ov.matchAll(
-    /^[ \t]*([A-Z][A-Za-z.\-' ]{2,40}?)[ \t]*(?:County)?[ \t]*[\t|][ \t]*(\d+)[ \t]*$/gm)]
-    .map(m => [m[1].trim(), +m[2]])
-    .filter(([n]) => !['total','county','counties','units'].includes(n.toLowerCase()));
-  CONDADOS = filas.map(f => f[0]);
-  if(!CONDADOS.length){
-    $('#msgs').innerHTML = `<div class="avi">El Overview no trajo tabla de
-      condados. Revisá que <b>View Counties</b> estuviera activado antes de
-      copiar. Podés guardar igual: se capturará solo el estado.</div>`;
-  } else {
-    $('#msgs').innerHTML = '';
-  }
-  const cajas = [`<label>Market Signals · <b>${esc(SEL.estado || 'el estado')}</b>
-    <span class="pista">Set Location en el estado</span></label>
-    <textarea id="ms0"></textarea>`];
-  filas.forEach(([n,u], i) => cajas.push(
-    `<label>Market Signals · <b>${esc(n)}</b>
-      <span class="pista">${u} unidades · bloque ${i+2}</span></label>
-     <textarea id="ms${i+1}"></textarea>`));
-  cajas.push(`<label>Originators <span class="pista">con filtro Buyer</span></label>
-    <textarea id="orig"></textarea>
-    <label>Lenders</label><textarea id="lend"></textarea>`);
-  if(!SEL.sf_lead_id) cajas.push(
-    `<label>MMI Agent ID <span class="pista">este realtor no tiene Lead ID,
-      así que hace falta</span></label><input type="text" id="agent">`);
-  cajas.push(`<div style="margin-top:12px">
-    <button class="btn" id="btnGuardar">Guardar</button></div>`);
-  $('#cajas').innerHTML = cajas.join('');
-  $('#btnGuardar').onclick = guardar;
-}
-
 async function guardar(){
-  const ms = [];
-  for(let i=0; document.getElementById('ms'+i); i++)
-    ms.push(document.getElementById('ms'+i).value);
-  const vacios = ms.map((t,i) => t.trim() ? null : i+1).filter(Boolean);
-  if(vacios.length){
-    $('#msgs').innerHTML = `<div class="err">Faltan ${vacios.length} bloques de
-      Market Signals (posiciones ${vacios.join(', ')}). No se guarda nada: un
-      bloque vacío desalinea las etiquetas de todos los que vienen después.</div>`;
-    window.scrollTo({top:0, behavior:'smooth'});
+  const volcado = $('#volcado').value;
+  if(!volcado.trim()){
+    $('#msgs').innerHTML = `<div class="err">La caja está vacía.</div>`;
     return;
   }
   $('#btnGuardar').disabled = true;
@@ -289,17 +262,20 @@ async function guardar(){
       body: JSON.stringify({
         realtor_id: SEL.id, sf_lead_id: SEL.sf_lead_id, estado: SEL.estado,
         mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
-        overview: $('#ov').value,
-        market_signals: ms,
-        originators: $('#orig').value, lenders: $('#lend').value,
+        volcado: volcado,
       })
     });
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');
     const vols = (d.volumenes||[]).map(v => '$' + (v/1e9).toFixed(1) + 'B').join(' · ');
+    const cond = (d.condados||[]).join(' · ');
+    const cont = (d.contactos||[]).map(c => c.canal + ': ' + c.valor).join(' · ');
     $('#msgs').innerHTML = `<div class="ok"><b>${d.bloques} bloques</b> ·
-      lote <code>${esc(d.upload_batch_id)}</code>${vols ? '<br>volúmenes leídos: ' + esc(vols) : ''}</div>${avisos}`;
-    $('#cajas').innerHTML = '';
-    $('#ov').value = '';
+      lote <code>${esc(d.upload_batch_id)}</code>
+      ${cond ? '<br>condados: ' + esc(cond) : ''}
+      ${vols ? '<br>volúmenes leídos: ' + esc(vols) : ''}
+      ${cont ? '<br>contactos: ' + esc(cont) : ''}</div>${avisos}`;
+    $('#volcado').value = '';
+    $('#tam').textContent = '';
     cargarBiblio();
   }catch(e){
     $('#msgs').innerHTML = `<div class="err">${esc(e.message)}</div>`;

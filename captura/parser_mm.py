@@ -72,6 +72,29 @@ def _g(plano: str, patron: str, grupo: int = 1) -> str | None:
     return m.group(grupo) if m else None
 
 
+def _clave(etiqueta: str) -> str:
+    """'Banked - Retail' -> 'banked_retail'."""
+    return re.sub(r"[^a-z0-9]+", "_", etiqueta.lower()).strip("_")
+
+
+def _zona(txt: str, desde: str, hasta: str | None = None) -> str:
+    """El trozo entre dos marcadores. '' si no aparece el de apertura.
+
+    Existe para que ningun campo se lea del documento entero. `Avg Loan Size`
+    sale dos veces en el mismo perfil con valores distintos ($444K en la
+    cabecera del comprador, $361K en la de lenders), y `Not Labeled` sale en
+    Transaction Type y otra vez en Loan Channel. Un `re.search` sobre todo el
+    texto se lleva el primero y no avisa.
+    """
+    partes = re.split(desde, txt, flags=re.IGNORECASE)
+    if len(partes) < 2:
+        return ""
+    z = partes[1]
+    if hasta:
+        z = re.split(hasta, z, flags=re.IGNORECASE)[0]
+    return z
+
+
 def _n(plano: str, patron: str, grupo: int = 1) -> float | None:
     v = _g(plano, patron, grupo)
     if v is None:
@@ -85,6 +108,82 @@ def _n(plano: str, patron: str, grupo: int = 1) -> float | None:
 # ══════════════════════════════════════════════════════════════════════════════
 # MERCADO · Market Signals
 # ══════════════════════════════════════════════════════════════════════════════
+
+#: Los canales de originacion, tal como los nombra Model Match.
+CANALES = ("Banked - Retail", "Banked - Wholesale", "Correspondent",
+           "Brokered", "Not Labeled")
+
+
+def _loan_channel(txt: str) -> dict:
+    """Loan Channel Distribution, la mitad de mercado del contraste de canal.
+
+    La otra mitad es el `TPO %` de la cabecera de Lenders del AGENTE, que se lee
+    en `parsear_perfil`. Se guardan las dos crudas y no se calcula un "TPO del
+    mercado" sumando canales: **Model Match no dice que canales cuentan como
+    TPO**, y elegirlo aca seria inventar el denominador del contraste dentro del
+    parser, donde nadie lo vuelve a mirar.
+
+    `Not Labeled` aparece tambien en Transaction Type Distribution con otro
+    valor (11,6% contra 0,9%), asi que se lee acotado a esta seccion.
+    """
+    z = _zona(txt, r"Loan Channel Distribution",
+              r"Market Signals|Originators this agent|Total Originators")
+    if not z:
+        return {}
+    salida = {}
+    for etiqueta in CANALES:
+        m = re.search(r"^[ \t]*%s[ \t]*\r?\n[ \t]*([\d.]+)%%"
+                      % re.escape(etiqueta), z, re.MULTILINE | re.IGNORECASE)
+        if m:
+            salida[_clave(etiqueta)] = float(m.group(1))
+    return salida
+
+
+def _conforming(txt: str, unidades_del_mercado: float | None) -> dict:
+    """TRAMPA 2 · conforming/jumbo tiene su PROPIO denominador.
+
+    Medido: el mercado declara 1.096.337 unidades y el bloque conforming/jumbo
+    declara 613,2K. El 17,0% de jumbo es sobre 613,2K, no sobre 1.096.337 --
+    multiplicarlo por las unidades del mercado da casi el doble de operaciones
+    jumbo de las que hay.
+
+    Por eso el denominador se guarda **explicito y al lado del porcentaje**, y
+    la suma de los dos conteos se compara contra el: 509.013 + 104.166 = 613.179
+    contra 613,2K. Si no cuadran, el bloque se leyo cruzado con otro.
+    """
+    z = _zona(txt, r"Conforming vs Jumbo",
+              r"Borrower Profile|Product & Distribution|Application Performance")
+    if not z:
+        return {}
+
+    o: dict = {"denominador_propio": mval(
+        _g(z, r"Total Units\s*([\d.,]+\s*[MKB]?)")),
+        "unidades_del_mercado": unidades_del_mercado}
+
+    for tramo in ("Conforming", "Jumbo"):
+        m = re.search(r"^[ \t]*%s[ \t]*\r?\n[ \t]*([\d,]+)[ \t]*loans?[ \t]*"
+                      r"\r?\n[ \t]*([\d.]+)%%" % tramo, z,
+                      re.MULTILINE | re.IGNORECASE)
+        if m:
+            o[tramo.lower() + "_loans"] = float(m.group(1).replace(",", ""))
+            o[tramo.lower() + "_pct"] = float(m.group(2))
+
+    suma = sum(o.get(k) or 0.0 for k in ("conforming_loans", "jumbo_loans"))
+    den = o.get("denominador_propio")
+    o["suma_de_tramos"] = suma or None
+    # El denominador viene redondeado ("613.2K"), asi que la comparacion
+    # tolera el redondeo -- pero no tolera que sea otro numero.
+    o["cuadra"] = (None if not (suma and den)
+                   else abs(suma - den) / den < 0.01)
+    # Y el suyo no puede ser mayor que el del mercado entero: si lo es, el
+    # bloque se leyo cruzado con el de otra geografia. La misma comprobacion
+    # esta en `MixConforming.verificar`, y esta redundancia es a proposito:
+    # la de alla hay que construirla a mano y esta corre sola en cada captura.
+    o["mayor_que_el_mercado"] = (
+        None if not (den and unidades_del_mercado)
+        else den > unidades_del_mercado)
+    return o
+
 
 def parsear_mercado(crudo: str) -> dict:
     """Un bloque de Market Signals -> metricas.
@@ -118,7 +217,12 @@ def parsear_mercado(crudo: str) -> dict:
     # TRAMPA 1 · de Market Overview, no del grafico rodante.
     o["total_volume"] = mval(
         _g(plano, r"Total Loan Volume\s*(?:\(i\))?\s*(\$[\d.,]+\s*[MKB]?)"))
-    o["total_units"] = _n(plano, r"Total Units\s*(?:\(i\))?\s*([\d,]+)")
+    # Y acotado a lo que va ANTES de Conforming vs Jumbo, que trae su propio
+    # `Total Units` (613,2K). Hoy gana el del Market Overview por estar primero,
+    # pero en un bloque al que le falte esa seccion el patron se llevaria el
+    # 613 del otro denominador: un numero absurdo con formato correcto.
+    antes_conf = re.split(r"Conforming vs Jumbo", plano, flags=re.IGNORECASE)[0]
+    o["total_units"] = _n(antes_conf, r"Total Units\s*(?:\(i\))?\s*([\d,]+)")
 
     o["avg_rate"] = _n(plano, r"Avg Interest Rate\s*(?:\(i\))?\s*([\d.]+)%")
     o["avg_ltv"] = _n(plano, r"Avg LTV\s*([\d.]+)%")
@@ -142,8 +246,10 @@ def parsear_mercado(crudo: str) -> dict:
     o["genz"] = _n(plano, r"Gen Z\s*([\d.]+)%")
 
     # TRAMPA 2 · el jumbo tiene su propio denominador: NO se cruza con
-    # total_units. Se guarda el porcentaje tal como lo reporta la fuente.
+    # total_units. Se guarda el porcentaje tal como lo reporta la fuente, y el
+    # bloque entero -- con SU denominador y los dos conteos-- al lado.
     o["jumbo"] = _n(plano, r"Jumbo\s*[\d,]*\s*loans?\s*([\d.]+)%")
+    o["conforming"] = _conforming(txt, o["total_units"]) or None
 
     pz = re.split(r"Loan Type Distribution", txt, flags=re.IGNORECASE)
     if len(pz) > 1:
@@ -164,8 +270,15 @@ def parsear_mercado(crudo: str) -> dict:
             if m:
                 o["tx_" + t.lower()] = float(m.group(1))
 
-    o["brokered"] = _n(plano, r"Brokered\s*([\d.]+)%")
-    o["banked_retail"] = _n(plano, r"Banked\s*-\s*Retail\s*([\d.]+)%")
+    # Los cinco canales, acotados a su seccion. `brokered` y `banked_retail`
+    # siguen sueltos por compatibilidad con lo ya capturado, pero salen del
+    # mismo dict: dos copias del mismo patron es como quedo el bug del alt-text.
+    canales = _loan_channel(txt)
+    o["loan_channel"] = canales or None
+    for k, v in canales.items():
+        o["canal_" + k] = v
+    o["brokered"] = canales.get("brokered")
+    o["banked_retail"] = canales.get("banked_retail")
 
     o["campos"] = sum(1 for k, v in o.items()
                       if v is not None and k != "capturado_en")
@@ -289,6 +402,202 @@ def _tabla_originadores(txt: str) -> list[dict]:
     return salida
 
 
+#: Una fila de la tabla de condados, en el formato REAL de Model Match:
+#:
+#:   Solano County, CA\t$2.3M\t5\t$2.3M\t5\t$0\t0
+#:
+#: Siete columnas: nombre, volumen total, UNIDADES TOTALES, volumen comprador,
+#: unidades comprador, volumen vendedor, unidades vendedor.
+#:
+#: La version anterior esperaba `nombre \t numero` al final de la linea y
+#: devolvia CERO condados contra el volcado real. Sin condados no hay
+#: etiquetado por posicion, o sea que la validacion de conteo habria dejado
+#: pasar cualquier cantidad de bloques como si fuera solo el estado.
+_RE_FILA_CONDADO_REAL = re.compile(
+    r"^\s*([A-Z][A-Za-z.\-' ]{2,40}?)\s+County\s*,\s*([A-Z]{2})\s*\t"
+    r"\s*\$[\d.,]+\s*[MKB]?\s*\t\s*(\d+)\s*\t",
+    re.MULTILINE,
+)
+
+
+def _condados(txt: str) -> list[dict]:
+    """Los condados de View Counties, EN ORDEN y con sus unidades totales.
+
+    El orden es dato y no presentacion: es lo que etiqueta cada bloque de
+    Market Signals.
+    """
+    salida = []
+    for nombre, estado_fila, unidades in _RE_FILA_CONDADO_REAL.findall(txt or ""):
+        n = nombre.strip()
+        if n.lower() in ("total", "county", "counties", "units"):
+            continue
+        salida.append({"nombre": n, "estado": estado_fila,
+                       "unidades": int(unidades)})
+    return salida
+
+
+#: Una fila del desglose por tipo de prestamo del agente:
+#:
+#:   FHA
+#:   $1.1M / 2 Units
+#:   66.7%
+_RE_FILA_LOAN_MIX = re.compile(
+    r"^[ \t]*([A-Za-z][A-Za-z ()/.\-]{1,40}?)[ \t]*\r?\n"
+    r"[ \t]*\$([\d.,]+[ \t]*[MKB]?)[ \t]*/[ \t]*([\d,]+)[ \t]*Units?[ \t]*\r?\n"
+    r"[ \t]*([\d.]+)%",
+    re.MULTILINE,
+)
+
+
+def _loan_mix_buyer(txt: str, buyer_units: float | None) -> dict:
+    """Loan Type Breakdown (Buyer): la mitad de agente del contraste FHA.
+
+    **Con su denominador.** En el perfil de prueba el agente declara 9 unidades
+    compradoras, y el desglose por tipo solo identifica 3 (FHA 2 + HE 1). El
+    66,7% de FHA es sobre esas 3, no sobre las 9: son 2 operaciones, no 6.
+
+    Por eso se devuelve `unidades_identificadas` y `cobertura` al lado de las
+    filas. La guardia de PACS-H pide 10 operaciones con tipo identificado y 50%
+    de cobertura del lado comprador; sin estos dos campos esa guardia no tiene
+    con que correr, y una guardia que no puede correr pasa siempre.
+
+    La misma forma `$x / n Units \\n pct%` aparece en `Buyer vs. Listing Side`
+    justo arriba, asi que se lee acotado a esta seccion.
+    """
+    z = _zona(txt, r"Loan Type Breakdown \(Buyer\)",
+              r"Monthly Volume|Buyer Side Relationships|Market Signals")
+    if not z:
+        return {}
+
+    filas = []
+    for tipo, vol, unidades, share in _RE_FILA_LOAN_MIX.findall(z):
+        t = tipo.strip()
+        # Las dos lineas de cabecera de la tabla tienen la misma forma.
+        if t.lower() in ("loan type", "volume", "units", "share", "buyer",
+                         "seller", "represented"):
+            continue
+        filas.append({"tipo": t, "volumen": mval("$" + vol),
+                      "unidades": int(unidades.replace(",", "")),
+                      "share": float(share)})
+    if not filas:
+        return {}
+
+    identificadas = float(sum(f["unidades"] for f in filas))
+    return {
+        "filas": filas,
+        "unidades_identificadas": identificadas,
+        "buyer_units": buyer_units,
+        "cobertura": (None if not buyer_units
+                      else round(100.0 * identificadas / buyer_units, 1)),
+        "base_del_share": "unidades identificadas, NO buyer_units",
+    }
+
+
+#: `Office: (888) 584-9427`
+_RE_TELEFONO_OFICINA = re.compile(r"^[ \t]*Office:[ \t]*([+()\d][\d\s().\-]{6,24})",
+                                  re.MULTILINE | re.IGNORECASE)
+
+#: `San Ramon CA 94583` -- la linea que ancla la direccion postal.
+_RE_CIUDAD_ESTADO_CP = re.compile(
+    r"^[ \t]*([A-Z][A-Za-z.'\- ]{1,40}?)[ \t]+([A-Z]{2})[ \t]+(\d{5})(?:-\d{4})?[ \t]*$",
+    re.MULTILINE,
+)
+
+#: Lineas que son etiqueta de la interfaz y nunca nombre de oficina.
+_NO_ES_OFICINA = ("set date range:", "view more", "agents", "model match",
+                  "search", "overview")
+
+
+def _contacto(txt: str, lineas: list[str]) -> dict:
+    """Oficina, direccion y telefono de la cabecera del perfil.
+
+    Se ancla en la linea `Ciudad ST 99999`, que es la unica con forma
+    inconfundible, y se lee hacia arriba: calle y despues nombre de la oficina.
+    Si esa linea no aparece, **todo queda en None**: una direccion adivinada se
+    guarda igual de bien que una correcta y no hay como distinguirlas despues.
+    """
+    o: dict = {"oficina": None, "calle": None, "ciudad": None,
+               "estado_postal": None, "cp": None, "direccion": None,
+               "telefono_oficina": None, "telefono_oficina_e164": None}
+
+    m = _RE_TELEFONO_OFICINA.search(txt)
+    if m:
+        crudo = m.group(1).strip()
+        o["telefono_oficina"] = crudo
+        digitos = re.sub(r"\D", "", crudo)
+        if len(digitos) == 10:
+            o["telefono_oficina_e164"] = "+1" + digitos
+        elif len(digitos) == 11 and digitos.startswith("1"):
+            o["telefono_oficina_e164"] = "+" + digitos
+
+    m = _RE_CIUDAD_ESTADO_CP.search(txt)
+    if not m:
+        return o
+    linea_cp = m.group(0).strip()
+    try:
+        i = lineas.index(linea_cp)
+    except ValueError:
+        return o
+
+    o["ciudad"], o["estado_postal"], o["cp"] = (m.group(1).strip(), m.group(2),
+                                                m.group(3))
+    if i >= 1:
+        o["calle"] = lineas[i - 1]
+    if i >= 2 and lineas[i - 2].lower().rstrip(":") not in (
+            s.rstrip(":") for s in _NO_ES_OFICINA):
+        o["oficina"] = lineas[i - 2]
+
+    partes = [p for p in (o["calle"], "%s %s %s" % (o["ciudad"],
+                                                    o["estado_postal"],
+                                                    o["cp"])) if p]
+    o["direccion"] = ", ".join(partes)
+    return o
+
+
+def _cabecera_lenders(txt: str) -> dict:
+    """`Total Lenders / Top 5 Concentration / TPO % / Avg Loan Size`.
+
+    Acotada: `Avg Loan Size` sale tambien en la cabecera del comprador con otro
+    valor ($444K contra $361K), y un `re.search` sobre el texto entero se lleva
+    el primero.
+    """
+    z = _zona(txt, r"(?m)^[ \t]*Total Lenders[ \t]*$",
+              r"Lenders this agent has worked with")
+    if not z:
+        return {}
+    return {
+        "total_lenders": _n(z, r"^\s*(\d+)"),
+        "top5_concentracion": _n(z, r"Top 5 Concentration\s*([\d.]+)%"),
+        "tpo_pct": _n(z, r"TPO\s*%\s*([\d.]+)%"),
+        "avg_loan_size": mval(_g(z, r"Avg Loan Size\s*(\$[\d.,]+\s*[MKB]?)")),
+    }
+
+
+def _tabla_lenders(txt: str) -> list[dict]:
+    """La tabla de lenders: nombre, volumen, unidades, promedio y share.
+
+    Mismas cinco columnas que la de originadores, pero el nombre va en la
+    MISMA fila -- no hay que leer hacia atras.
+    """
+    z = _zona(txt, r"Lenders this agent has worked with",
+              r"Rows per page|Title Companies")
+    if not z:
+        return []
+    salida = []
+    for linea in z.split("\n"):
+        m = re.match(r"^\s*(.+?)\s*\t\s*\$([\d.,]+\s*[MKB]?)\s*\t\s*([\d,]+)"
+                     r"\s*\t\s*\$([\d.,]+\s*[MKB]?)\s*\t\s*([\d.]+)%",
+                     linea)
+        if not m:
+            continue
+        salida.append({"nombre": m.group(1).strip(),
+                       "volumen": mval("$" + m.group(2)),
+                       "unidades": int(m.group(3).replace(",", "")),
+                       "promedio": mval("$" + m.group(4)),
+                       "share": float(m.group(5))})
+    return salida
+
+
 def parsear_perfil(crudo: str) -> dict:
     """El Overview + Originators + Lenders de un perfil."""
     txt = (crudo or "").replace("\r", "").replace(" ", " ")
@@ -302,7 +611,17 @@ def parsear_perfil(crudo: str) -> dict:
         return None
 
     o: dict = {"capturado_en": dt.datetime.now(dt.timezone.utc).isoformat()}
-    o["nombre"] = lineas[0] if lineas else None
+
+    # El nombre va DESPUES de `Agents`, que es el ultimo item del menu de
+    # navegacion. La primera linea del volcado es "Model Match" -- el nombre de
+    # la aplicacion-- porque Ctrl+A copia el cromo entero.
+    #
+    # Tomar lineas[0] daba "Model Match" como nombre del agente en TODOS los
+    # perfiles: un campo que se llena siempre, con el mismo valor, y que nadie
+    # mira porque el nombre ya viene de la fila del realtor.
+    o["nombre"] = despues("Agents") or (lineas[0] if lineas else None)
+    if o["nombre"] and o["nombre"].lower() in ("model match", "search"):
+        o["nombre"] = None
     o["licencia"] = _g(plano, r"(?:DRE|TREC|License)\s*#?\s*([A-Z0-9-]+)")
     o["emails"] = sorted(set(re.findall(r"[\w.+-]+@[\w-]+\.[\w.]+", txt)))
     o["rango_fechas"] = _g(plano, r"Last\s+(\d+)\s+Months")
@@ -320,14 +639,21 @@ def parsear_perfil(crudo: str) -> dict:
     o["buyer_volume"] = mval(
         _g(plano, r"Buyer Volume\s*(?:\(i\))?\s*(\$[\d.,]+\s*[MKB]?)"))
 
-    # TRAMPA 6 · los condados, del bloque View Counties, EN ORDEN.
-    o["condados"] = [
-        {"nombre": n.strip(), "unidades": int(u)}
-        for n, u in re.findall(
-            r"^\s*([A-Z][A-Za-z.\-' ]{2,40}?)\s*(?:County)?\s*[\t|]\s*(\d+)\s*$",
-            txt, re.MULTILINE)
-        if n.strip().lower() not in ("total", "county", "counties", "units")
-    ]
+    o["condados"] = _condados(txt)
+
+    # La mitad de agente del contraste FHA, con su denominador al lado.
+    o["loan_mix_buyer"] = _loan_mix_buyer(txt, o.get("buyer_units")) or None
+
+    # La mitad de agente del contraste de canal. La de mercado es
+    # `loan_channel` de `parsear_mercado`.
+    o["cabecera_lenders"] = _cabecera_lenders(txt) or None
+    o["tpo_pct"] = (o["cabecera_lenders"] or {}).get("tpo_pct")
+    o["tabla_lenders"] = _tabla_lenders(txt)
+
+    # Oficina, direccion y telefono. Van a `pacs.contactos` con fuente Model
+    # Match, y se ACUMULAN: la unique key incluye la fuente, asi que el
+    # telefono de MM convive con el del lote en vez de pisarlo.
+    o["contacto"] = _contacto(txt, lineas)
 
     # TRAMPA 3 · los dos wallet shares, separados y etiquetados.
     o["orig_buyer"] = _relaciones(

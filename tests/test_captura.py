@@ -32,15 +32,32 @@ from captura.trampas import (  # noqa: E402
 #
 # Condados: Solano 5, Contra Costa 3, Alameda 1. Suman 9, igual a Buyer Units.
 
+# El formato REAL de la tabla de condados, del volcado de Armando del
+# 2026-09-22. Siete columnas separadas por tabulador:
+#
+#   nombre, volumen total, UNIDADES totales, vol comprador, unidades comprador,
+#   vol vendedor, unidades vendedor
+#
+# La version sintetica que use antes era `Solano County\t5`, y el patron escrito
+# contra ella devolvia CERO condados con el texto de verdad. Un parser que pasa
+# sus propias pruebas y falla con el dato real es peor que no tenerlo.
 OVERVIEW = """\
+Agents
 Armando Ochoa
-eXp Realty of California
-San Ramon, CA
+
+Exp Realty Of California Inc.
+Buyer Units
+
+9
 
 Counties
-Solano County\t5
-Contra Costa County\t3
-Alameda County\t1
+View States
+View Counties
+County\t
+Solano County, CA\t$2.3M\t5\t$2.3M\t5\t$0\t0
+Contra Costa County, CA\t$1.6M\t3\t$1.6M\t3\t$0\t0
+Alameda County, CA\t$570K\t1\t$570K\t1\t$0\t0
+Top Builders
 """
 
 VOLUMENES = {
@@ -131,6 +148,111 @@ def test_sin_tabla_de_condados_se_advierte_lo_de_View_Counties():
                         mmi_agent_id="MMI-9001")
     assert cap.condados == []
     assert any("View Counties" in a for a in cap.advertencias)
+
+
+# ══ UNA SOLA CAJA · el texto trae sus propios cortes ═════════════════════════
+#
+# Siete pegados por realtor son 175 sobre 25 capturas, y 175 oportunidades de
+# poner algo en la caja equivocada.
+
+def _mercado(nombre, volumen):
+    """Un bloque de Market Signals con la forma real: el par de lineas
+    `Market Signals` + `Set Location` es lo que lo abre."""
+    return ("Market Signals\nSet Location\n\n"
+            "Mortgage activity across this agent's active markets\n\n"
+            "Market Overview\n\nTotal Loan Volume\n\n%s\n\nTotal Units\n\n"
+            "1,096,337\n\nRolling Monthly Performance\n\nVolume\n\n$578.70B\n"
+            % volumen)
+
+
+VOLCADO = (
+    OVERVIEW
+    + _mercado("California", "$578.7B")
+    + _mercado("Solano", "$6.0B")
+    + _mercado("Contra Costa", "$17.2B")
+    + _mercado("Alameda", "$20.2B")
+    + "Originators this agent has worked with and their transaction history\n"
+    + "Grace Davis\nNMLS: 862403\nEverett Financial, Inc.\t$540K\t1\t$540K\t35.3%\n"
+    + "Lenders this agent has worked with and their transaction history\n"
+    + "United Wholesale Mortgage\t$540K\t1\t$540K\t49.9%\n"
+)
+
+
+def test_el_separador_encuentra_las_cuatro_secciones():
+    from captura.protocolo import separar_volcado
+
+    s = separar_volcado(VOLCADO)
+    assert len(s["market_signals"]) == 4
+    assert "Counties" in s["overview"]
+    assert "Market Signals" not in s["overview"], (
+        "el Overview termina donde empieza el primer bloque de mercado"
+    )
+    assert s["originators"].startswith("Originators this agent")
+    assert s["lenders"].startswith("Lenders this agent")
+
+
+def test_Market_Signals_solo_NO_abre_un_bloque():
+    """Aparece en la barra de pestañas de todas las secciones.
+
+    Lo que abre un bloque de verdad es la pareja con `Set Location`, que solo
+    esta en la pestaña de mercado. Sin esa condicion, el separador cortaria una
+    vez por pestaña y daria seis bloques donde hay cuatro.
+    """
+    from captura.protocolo import separar_volcado
+
+    con_barra = ("Agents\nArmando Ochoa\nOverview\nMarket Signals\n"
+                 "Transactions\nOriginators\nLenders\nTitle Companies\n"
+                 + VOLCADO)
+    s = separar_volcado(con_barra)
+    assert len(s["market_signals"]) == 4, len(s["market_signals"])
+
+
+def test_sin_la_seccion_de_Originators_se_rechaza():
+    """Sin cierre, el ultimo bloque se come todo el texto que viene despues.
+
+    Las metricas saldrian igual -- solo que del sitio equivocado, que es el
+    error que no se ve.
+    """
+    from captura.protocolo import separar_volcado
+
+    sin_cierre = VOLCADO.split("Originators this agent")[0]
+    try:
+        separar_volcado(sin_cierre)
+    except ProtocoloInvalido as exc:
+        assert "no tiene cierre" in str(exc)
+        assert "No se guarda nada" in str(exc)
+    else:
+        raise AssertionError("sin cierre no se puede saber donde termina")
+
+
+def test_sin_ningun_bloque_de_mercado_se_rechaza():
+    from captura.protocolo import separar_volcado
+
+    try:
+        separar_volcado(OVERVIEW + "Originators this agent has worked with\n")
+    except ProtocoloInvalido as exc:
+        assert "ningun bloque de Market Signals" in str(exc)
+    else:
+        raise AssertionError("hace falta al menos el bloque del estado")
+
+
+def test_el_separador_y_la_validacion_de_conteo_encajan():
+    """El camino entero: separar, leer condados, etiquetar por posicion."""
+    from captura.parser_mm import parsear_mercado
+    from captura.protocolo import separar_volcado
+
+    s = separar_volcado(VOLCADO)
+    condados = [n for n, _ in condados_del_overview(s["overview"])]
+    assert condados == ["Solano", "Contra Costa", "Alameda"]
+
+    bloques = etiquetar_por_posicion(s["market_signals"], condados)
+    assert [b.nivel for b in bloques] == ["estado", "condado", "condado",
+                                          "condado"]
+    assert [b.etiqueta for b in bloques[1:]] == condados
+
+    vols = [parsear_mercado(b.texto)["total_volume"] for b in bloques]
+    assert vols == [578.7e9, 6.0e9, 17.2e9, 20.2e9], vols
+    assert len(set(vols)) == 4, "el rodante dice $578.70B en los cuatro"
 
 
 # ══ LA LLAVE ═════════════════════════════════════════════════════════════════
@@ -408,6 +530,507 @@ def test_model_match_no_pisa_el_unidades_ano_del_lote():
         assert "del lote" in str(exc)
     else:
         raise AssertionError("son dos mediciones distintas y las dos se guardan")
+
+
+# ══ LOS CAMPOS QUE FALTABAN · texto real del volcado del 2026-09-22 ══════════
+#
+# Todos los fixtures de esta seccion son copias literales del volcado de Armando
+# Ochoa. La ultima vez que invente el formato, el patron paso sus propias
+# pruebas y devolvio cero contra el dato real.
+
+#: La cabecera del perfil, con oficina, direccion y telefono.
+CABECERA_REAL = """\
+Agents
+Armando Ochoa
+
+Set Date Range:
+Exp Realty Of California Inc.
+2603 Camino Ramon
+
+San Ramon CA 94583
+
+View more
+Office: (888) 584-9427
+agentochoa9296@gmail.com
+Producer Tier
+Mid-Tier
+"""
+
+#: El desglose por tipo, con la seccion de arriba que tiene LA MISMA forma.
+LOAN_MIX_REAL = """\
+Buyer Units
+
+9
+
+Buyer vs. Listing Side
+100%
+Buyer
+Represented
+Volume / Units / Share
+Buyer
+$4.9M / 9 Units
+100.0%
+Loan Type Breakdown (Buyer)
+98%
+FHA
+Loan Type
+Volume / Units / Share
+FHA
+$1.1M / 2 Units
+66.7%
+HE (Home Equity)
+$23K / 1 Units
+33.3%
+Monthly Volume
+"""
+
+#: La cabecera de Lenders y su tabla.
+LENDERS_REAL = """\
+Total Lenders
+3
+Top 5 Concentration
+100.0%
+TPO %
+66.7%
+Avg Loan Size
+$361K
+Lending Companies
+Lenders this agent has worked with and their transaction history
+
+All
+all
+Search by lender name...
+United Wholesale Mortgage\t$540K\t1\t$540K\t49.9%
+Kings Mortgage Services Inc\t$520K\t1\t$520K\t48.0%
+Everett Financial Inc\t$23K\t1\t$23K\t2.1%
+Rows per page
+"""
+
+#: Conforming vs Jumbo con su denominador, y el del mercado arriba.
+CONFORMING_REAL = """\
+Market Overview
+
+Total Loan Volume
+
+$578.7B
+
+Total Units
+
+1,096,337
+
+Conforming vs Jumbo
+Total Units
+613.2K
+Role
+Volume / Units
+Conforming
+509,013 loans
+83.0%
+Jumbo
+104,166 loans
+17.0%
+Borrower Profile
+"""
+
+#: Los canales, con `Not Labeled` repetido arriba con OTRO valor.
+CANAL_REAL = """\
+Transaction Type Distribution
+Refinance
+38.3%
+Purchase
+37.2%
+Not Labeled
+11.6%
+Lender Type Distribution
+State Licensed
+52.6%
+Loan Channel Distribution
+Banked - Retail
+57.9%
+Banked - Wholesale
+19.3%
+Correspondent
+16.7%
+Brokered
+5.1%
+Not Labeled
+0.9%
+"""
+
+#: Buyer Side Relationships: reparto por UNIDADES.
+RELACIONES_REAL = """\
+Buyer Side Relationships
+Originator\tTotal Volume\tTotal Units\tWallet Share
+Chris Ruiz
+Everett Financial, Inc.
+
+$470K\t2\t50%
+Grace Davis
+Everett Financial, Inc.
+
+$540K\t1\t25%
+Mario Diaz Hernandez Jr
+Andy's Home Loans
+
+$520K\t1\t25%
+Seller Side Relationships
+No originator relationships found for this period.
+"""
+
+
+# ── el contraste FHA: la mitad del agente, CON su denominador ───────────────
+
+def test_el_loan_mix_del_agente_sale_con_sus_unidades():
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil(LOAN_MIX_REAL)
+    mix = p["loan_mix_buyer"]
+    assert [f["tipo"] for f in mix["filas"]] == ["FHA", "HE (Home Equity)"]
+    assert [f["unidades"] for f in mix["filas"]] == [2, 1]
+    assert [f["share"] for f in mix["filas"]] == [66.7, 33.3]
+    assert mix["filas"][0]["volumen"] == 1.1e6
+
+
+def test_el_loan_mix_NO_se_come_el_Buyer_vs_Listing_de_arriba():
+    """`Buyer / $4.9M / 9 Units / 100.0%` tiene exactamente la misma forma.
+
+    Sin acotar la seccion entraria como un tipo de prestamo llamado `Buyer` con
+    9 unidades, que es mas de las que tiene el desglose entero.
+    """
+    from captura.parser_mm import parsear_perfil
+
+    mix = parsear_perfil(LOAN_MIX_REAL)["loan_mix_buyer"]
+    assert "Buyer" not in [f["tipo"] for f in mix["filas"]]
+    assert mix["unidades_identificadas"] == 3
+
+
+def test_el_share_de_FHA_NO_es_sobre_los_buyer_units():
+    """66,7% de FHA son 2 operaciones sobre 3 identificadas, no 6 sobre 9.
+
+    La guardia de PACS-H pide 10 operaciones con tipo identificado y 50% de
+    cobertura. Sin `cobertura` esa guardia no tiene con que correr, y una
+    guardia que no puede correr pasa siempre.
+    """
+    from captura.parser_mm import parsear_perfil
+
+    mix = parsear_perfil(LOAN_MIX_REAL)["loan_mix_buyer"]
+    assert mix["buyer_units"] == 9
+    assert mix["unidades_identificadas"] == 3
+    assert mix["cobertura"] == 33.3
+    assert mix["cobertura"] < 50, (
+        "este perfil NO pasa la guardia de cobertura, y el parser tiene que "
+        "dejar verlo en vez de reportar un 66,7% pelado"
+    )
+
+
+# ── el contraste de canal: las dos mitades, cada una de su lado ─────────────
+
+def test_el_TPO_del_agente_sale_de_la_cabecera_de_Lenders():
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil(LENDERS_REAL)
+    assert p["tpo_pct"] == 66.7
+    assert p["cabecera_lenders"]["total_lenders"] == 3
+    assert p["cabecera_lenders"]["top5_concentracion"] == 100.0
+
+
+def test_el_Avg_Loan_Size_de_Lenders_no_se_mezcla_con_el_del_comprador():
+    """Sale dos veces en el mismo perfil: $444K arriba y $361K en Lenders."""
+    from captura.parser_mm import parsear_perfil
+
+    texto = "Avg Loan Size\n\n$444K\n\n" + LENDERS_REAL
+    p = parsear_perfil(texto)
+    assert p["cabecera_lenders"]["avg_loan_size"] == 361000.0
+
+
+def test_la_tabla_de_lenders_sale_completa():
+    from captura.parser_mm import parsear_perfil
+
+    filas = parsear_perfil(LENDERS_REAL)["tabla_lenders"]
+    assert [f["nombre"] for f in filas] == [
+        "United Wholesale Mortgage", "Kings Mortgage Services Inc",
+        "Everett Financial Inc"]
+    assert [f["unidades"] for f in filas] == [1, 1, 1]
+    assert [f["share"] for f in filas] == [49.9, 48.0, 2.1]
+    assert filas[0]["volumen"] == 540000.0
+
+
+def test_los_canales_del_mercado_salen_los_cinco():
+    from captura.parser_mm import parsear_mercado
+
+    c = parsear_mercado(CANAL_REAL)["loan_channel"]
+    assert c["banked_retail"] == 57.9
+    assert c["banked_wholesale"] == 19.3
+    assert c["correspondent"] == 16.7
+    assert c["brokered"] == 5.1
+
+
+def test_el_Not_Labeled_del_canal_no_es_el_de_Transaction_Type():
+    """11,6% arriba y 0,9% abajo. Sin acotar se lleva el primero."""
+    from captura.parser_mm import parsear_mercado
+
+    c = parsear_mercado(CANAL_REAL)["loan_channel"]
+    assert c["not_labeled"] == 0.9, c["not_labeled"]
+
+
+# ── conforming vs jumbo: el denominador propio, explicito ───────────────────
+
+def test_conforming_trae_SU_denominador_y_no_el_del_mercado():
+    from captura.parser_mm import parsear_mercado
+
+    m = parsear_mercado(CONFORMING_REAL)
+    c = m["conforming"]
+    assert m["total_units"] == 1096337, "el del mercado"
+    assert c["denominador_propio"] == 613200.0, "el de conforming/jumbo"
+    assert c["unidades_del_mercado"] == 1096337
+    assert c["denominador_propio"] != c["unidades_del_mercado"]
+
+
+def test_los_dos_tramos_suman_su_propio_denominador():
+    """509.013 + 104.166 = 613.179 contra 613,2K. Si no cuadra, se leyo cruzado."""
+    from captura.parser_mm import parsear_mercado
+
+    c = parsear_mercado(CONFORMING_REAL)["conforming"]
+    assert c["conforming_loans"] == 509013
+    assert c["jumbo_loans"] == 104166
+    assert c["suma_de_tramos"] == 613179
+    assert c["cuadra"] is True
+
+
+def test_un_denominador_mayor_que_el_mercado_se_marca():
+    """Si el suyo supera al del mercado, el bloque se leyo cruzado.
+
+    La misma comprobacion existe en `MixConforming.verificar`, que hay que
+    construir a mano. Esta corre sola en cada captura: es redundante a
+    proposito, como toda guarda que protege de un error invisible.
+    """
+    from captura.parser_mm import parsear_mercado
+
+    sano = parsear_mercado(CONFORMING_REAL)["conforming"]
+    assert sano["mayor_que_el_mercado"] is False
+
+    cruzado = parsear_mercado(
+        CONFORMING_REAL.replace("Total Units\n\n1,096,337",
+                                "Total Units\n\n14,315"))["conforming"]
+    assert cruzado["mayor_que_el_mercado"] is True
+
+
+def test_el_17_por_ciento_de_jumbo_NO_se_multiplica_por_el_mercado():
+    """Sobre 1.096.337 daria 186.377 jumbos. Los que hay son 104.166."""
+    from captura.parser_mm import parsear_mercado
+
+    c = parsear_mercado(CONFORMING_REAL)["conforming"]
+    inventado = 0.17 * c["unidades_del_mercado"]
+    assert abs(inventado - c["jumbo_loans"]) > 80000, (
+        "la diferencia entre usar un denominador y el otro es de 82.000 "
+        "operaciones: por eso el denominador va guardado al lado"
+    )
+
+
+# ── el wallet share de la exclusion se decide por UNIDADES ──────────────────
+
+def test_el_reparto_por_unidades_sale_de_Buyer_Side_Relationships():
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil(RELACIONES_REAL)
+    assert [o["nombre"] for o in p["orig_buyer"]] == [
+        "Chris Ruiz", "Grace Davis", "Mario Diaz Hernandez Jr"]
+    assert [o["unidades"] for o in p["orig_buyer"]] == [2, 1, 1]
+    assert p["orig_buyer"][0]["share"] == 50.0
+
+
+def test_Chris_Ruiz_da_50_por_unidades_y_30_7_por_volumen():
+    """El caso exacto donde la eleccion de base cambia el resultado.
+
+    Con un umbral en 40% el mismo originador entra o no entra segun que base se
+    use, y las dos lecturas salen del mismo perfil sin que nada avise.
+    """
+    from captura.parser_mm import _tabla_originadores, parsear_perfil
+
+    por_unidades = parsear_perfil(RELACIONES_REAL)["orig_buyer"]
+    chris_u = [o for o in por_unidades if o["nombre"] == "Chris Ruiz"][0]
+
+    por_volumen = _tabla_originadores(
+        "Originators this agent has worked with\n"
+        "Chris Ruiz\nNMLS: 1544562\n"
+        "Everett Financial, Inc.\t$470K\t2\t$235K\t30.7%\n"
+        "Lenders this agent has worked with\n")
+    chris_v = [o for o in por_volumen if o["nombre"] == "Chris Ruiz"][0]
+
+    assert chris_u["share"] == 50.0
+    assert chris_v["share"] == 30.7
+    assert chris_u["share"] > 40 > chris_v["share"], (
+        "un umbral en 40% lo deja de un lado o del otro segun la base"
+    )
+
+
+def test_la_exclusion_lee_unidades_y_NUNCA_cae_al_de_volumen():
+    from captura.parser_mm import parsear_perfil
+    from captura.trampas import (
+        BASE_PARA_EXCLUSION,
+        wallet_share_para_exclusion,
+    )
+
+    assert BASE_PARA_EXCLUSION == "unidades"
+
+    p = parsear_perfil(RELACIONES_REAL)
+    assert [o["nombre"] for o in wallet_share_para_exclusion(p)] == [
+        "Chris Ruiz", "Grace Davis", "Mario Diaz Hernandez Jr"]
+
+    # Sin Buyer Side Relationships devuelve vacio: NO usa `tab_orig`.
+    solo_volumen = {"tab_orig": [{"nombre": "Chris Ruiz", "share": 30.7}]}
+    assert wallet_share_para_exclusion(solo_volumen) == []
+
+
+def test_el_share_de_la_casa_va_con_su_denominador():
+    """Chris y Grace son de Everett: 3 de las 4 unidades del reparto.
+
+    Y esas 4 no son las 9 unidades compradoras del agente -- la tabla de
+    relaciones tiene su propio alcance. Por eso el denominador viaja al lado.
+    """
+    from captura.parser_mm import parsear_perfil
+    from captura.trampas import share_de_la_casa
+
+    s = share_de_la_casa(parsear_perfil(RELACIONES_REAL))
+    assert s["originadores"] == ["Chris Ruiz", "Grace Davis"]
+    assert s["unidades"] == 3
+    assert s["unidades_totales"] == 4
+    assert s["share"] == 75.0
+    assert s["base"] == "unidades"
+
+
+def test_sin_reparto_el_share_de_la_casa_es_None_y_no_cero():
+    """Un cero dice `no trabaja con la casa`. Es la conclusion contraria."""
+    from captura.trampas import share_de_la_casa
+
+    s = share_de_la_casa({"tab_orig": [{"nombre": "X", "share": 99.0}]})
+    assert s["share"] is None
+    assert "no trajo Buyer Side Relationships" in s["razon"]
+
+
+def test_decidir_la_exclusion_por_volumen_falla_ruidosamente():
+    from captura.trampas import verificar_base_de_exclusion
+
+    verificar_base_de_exclusion("unidades")
+    try:
+        verificar_base_de_exclusion("volumen")
+    except TrampaDetectada as exc:
+        assert "50,0%" in str(exc) and "30,7%" in str(exc)
+    else:
+        raise AssertionError("la base cambia el resultado: no puede pasar")
+
+
+# ── la cabecera del perfil: oficina, direccion y telefono ───────────────────
+
+def test_la_cabecera_da_oficina_direccion_y_telefono():
+    from captura.parser_mm import parsear_perfil
+
+    c = parsear_perfil(CABECERA_REAL)["contacto"]
+    assert c["oficina"] == "Exp Realty Of California Inc."
+    assert c["calle"] == "2603 Camino Ramon"
+    assert c["ciudad"] == "San Ramon"
+    assert c["estado_postal"] == "CA"
+    assert c["cp"] == "94583"
+    assert c["direccion"] == "2603 Camino Ramon, San Ramon CA 94583"
+    assert c["telefono_oficina"] == "(888) 584-9427"
+    assert c["telefono_oficina_e164"] == "+18885849427"
+
+
+def test_sin_la_linea_de_ciudad_la_direccion_queda_en_None():
+    """Una direccion adivinada se guarda igual de bien que una correcta."""
+    from captura.parser_mm import parsear_perfil
+
+    c = parsear_perfil("Agents\nArmando Ochoa\nProducer Tier\nMid-Tier\n")["contacto"]
+    assert c["direccion"] is None
+    assert c["oficina"] is None
+    assert c["calle"] is None
+
+
+def test_Set_Date_Range_no_se_toma_como_nombre_de_oficina():
+    """Es la etiqueta de la interfaz que esta justo encima cuando no hay empresa."""
+    from captura.parser_mm import parsear_perfil
+
+    sin_empresa = ("Agents\nArmando Ochoa\nSet Date Range:\n"
+                   "2603 Camino Ramon\nSan Ramon CA 94583\nView more\n")
+    c = parsear_perfil(sin_empresa)["contacto"]
+    assert c["oficina"] is None
+    assert c["calle"] == "2603 Camino Ramon"
+
+
+def test_los_contactos_van_a_pacs_contactos_con_fuente_Model_Match():
+    """Se ACUMULAN: la unique key incluye la fuente."""
+    sys.path.insert(0, os.path.join(RAIZ, "api"))
+    from api.rutas import FUENTE_CONTACTOS, _contactos_de
+
+    from captura.parser_mm import parsear_perfil
+
+    filas = _contactos_de(parsear_perfil(CABECERA_REAL), "r-1", "lote-1",
+                          "2026-09-22T00:00:00Z")
+    por_canal = {f["canal"]: f["valor"] for f in filas}
+    assert por_canal["telefono"] == "+18885849427"
+    assert por_canal["oficina"] == "Exp Realty Of California Inc."
+    assert por_canal["direccion"] == "2603 Camino Ramon, San Ramon CA 94583"
+    assert all(f["fuente"] == FUENTE_CONTACTOS for f in filas)
+    assert all(f["realtor_id"] == "r-1" for f in filas)
+
+
+def test_un_perfil_sin_contacto_no_escribe_filas_vacias():
+    from api.rutas import _contactos_de
+
+    assert _contactos_de({}, "r-1", "l-1", "t") == []
+    assert _contactos_de({"contacto": {"oficina": "  "}}, "r-1", "l-1", "t") == []
+
+
+# ── los cortes de seccion: cada cabecera con su pestaña ─────────────────────
+
+def test_la_cabecera_de_Lenders_no_queda_en_Originators():
+    """El `TPO %` es la mitad de agente del contraste de canal.
+
+    Cortar por la frase `Lenders this agent has worked with` dejaba las cuatro
+    tarjetas de cabecera -- Total Lenders, Top 5, TPO %, Avg Loan Size-- dentro
+    de la seccion de Originators. El texto se guardaba entero, asi que nada
+    avisaba: solo quedaba bajo la etiqueta equivocada.
+    """
+    from captura.protocolo import separar_volcado
+
+    completo = (
+        OVERVIEW
+        + _mercado("California", "$578.7B")
+        + "Total Originators\n3\nTop 3 Concentration\n100.0%\n"
+        + "Originators this agent has worked with\n"
+        + "Grace Davis\nNMLS: 862403\n"
+          "Everett Financial, Inc.\t$540K\t1\t$540K\t35.3%\n"
+        + LENDERS_REAL
+    )
+    s = separar_volcado(completo)
+    assert "TPO %" in s["lenders"]
+    assert "TPO %" not in s["originators"]
+    assert s["lenders"].startswith("Total Lenders")
+
+
+def test_la_cabecera_de_Originators_no_queda_en_el_ultimo_mercado():
+    from captura.protocolo import separar_volcado
+
+    completo = (
+        OVERVIEW
+        + _mercado("California", "$578.7B")
+        + "Total Originators\n3\nTop 3 Concentration\n100.0%\n"
+        + "Originators this agent has worked with\n"
+        + "Grace Davis\nNMLS: 862403\n"
+          "Everett Financial, Inc.\t$540K\t1\t$540K\t35.3%\n"
+    )
+    s = separar_volcado(completo)
+    assert "Total Originators" not in s["market_signals"][-1]
+    assert s["originators"].startswith("Total Originators")
+
+
+def test_sin_cabecera_el_corte_sigue_siendo_la_frase():
+    """No todos los volcados la traen: el marcador seguro sigue siendo la frase."""
+    from captura.protocolo import separar_volcado
+
+    s = separar_volcado(VOLCADO)
+    assert s["originators"].startswith("Originators this agent")
+    assert s["lenders"].startswith("Lenders this agent")
 
 
 def _correr():

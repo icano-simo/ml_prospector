@@ -111,6 +111,82 @@ class WalletShareCapturado:
                 "distintos sobre el mismo perfil." % self.base)
 
 
+# ── 3-bis · Y para la EXCLUSION se decide por UNIDADES ───────────────────────
+#
+# Guardar las dos bases no dice cual usar, y la exclusion por no-canibalizacion
+# necesita UNA. Se decide por unidades: lo que importa es cuantas operaciones
+# pasan por un colega, no cuantos dolares.
+#
+# El caso que hace que la eleccion cambie el resultado es Chris Ruiz en el
+# perfil de prueba: **50,0% por unidades y 30,7% por volumen**. Con un umbral en
+# 40% el mismo originador entra o no entra segun que base se use, y las dos
+# lecturas salen del mismo perfil sin que nada avise.
+#
+# Que las dos bases discrepen no es raro: un originador con pocas operaciones
+# grandes pesa mas por volumen, y uno con muchas operaciones chicas pesa mas por
+# unidades. La relacion con el realtor se construye por operacion.
+
+BASE_PARA_EXCLUSION = "unidades"
+
+#: De donde sale cada base en el perfil parseado.
+SECCION_POR_BASE = {
+    "unidades": "orig_buyer",   # Buyer Side Relationships, del Overview
+    "volumen": "tab_orig",      # la pestaña Originators
+}
+
+
+def wallet_share_para_exclusion(perfil: dict) -> list[dict]:
+    """El reparto que decide la exclusion: el de UNIDADES.
+
+    Lee `orig_buyer` y no `tab_orig`. Si falta, devuelve lista vacia y **no cae
+    al de volumen**: un reparto con la otra base da un numero plausible con la
+    definicion equivocada, que es exactamente el error que no se ve.
+    """
+    return list(perfil.get(SECCION_POR_BASE[BASE_PARA_EXCLUSION]) or [])
+
+
+def share_de_la_casa(perfil: dict) -> dict:
+    """Cuanto del negocio comprador del realtor ya pasa por Everett/Supreme.
+
+    Devuelve el share por unidades, las unidades que lo respaldan y **el
+    denominador**, porque un porcentaje sobre 3 operaciones y uno sobre 40 se
+    leen igual y no valen lo mismo.
+
+    Sin reparto por unidades devuelve `share=None` con su razon: no se rellena
+    con cero. Un cero aca dice "no trabaja con la casa", que es la conclusion
+    contraria a "no lo pudimos mirar".
+    """
+    reparto = wallet_share_para_exclusion(perfil)
+    if not reparto:
+        return {"share": None, "unidades": None, "unidades_totales": None,
+                "base": BASE_PARA_EXCLUSION,
+                "razon": "el perfil no trajo Buyer Side Relationships, que es "
+                         "la seccion que reparte por unidades"}
+
+    de_la_casa = [o for o in reparto if es_de_la_casa(o)]
+    total = sum(o.get("unidades") or 0 for o in reparto)
+    suyas = sum(o.get("unidades") or 0 for o in de_la_casa)
+    return {
+        "share": (round(100.0 * suyas / total, 1) if total else None),
+        "unidades": suyas,
+        "unidades_totales": total,
+        "base": BASE_PARA_EXCLUSION,
+        "originadores": [o.get("nombre") for o in de_la_casa],
+        # El share declarado por la fuente, para contrastar con el calculado.
+        "share_declarado": sum(o.get("share") or 0.0 for o in de_la_casa) or None,
+    }
+
+
+def verificar_base_de_exclusion(base: str) -> None:
+    """Falla ruidosamente si alguien decide la exclusion por volumen."""
+    if base != BASE_PARA_EXCLUSION:
+        raise TrampaDetectada(
+            "la exclusion por no-canibalizacion se decide por %s, no por %r.\n"
+            "Chris Ruiz da 50,0%% por unidades y 30,7%% por volumen sobre el "
+            "mismo perfil: la base cambia el resultado."
+            % (BASE_PARA_EXCLUSION, base))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 4 · Los conteos de cabecera NO coinciden entre si
 # ══════════════════════════════════════════════════════════════════════════════
