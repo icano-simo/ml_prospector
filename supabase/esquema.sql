@@ -38,6 +38,22 @@ create extension if not exists pgcrypto with schema extensions;
 set search_path = pacs, public, extensions;
 
 
+-- ── ⚠ unaccent vive en `public`, NO en `extensions` ─────────────────────────
+--
+-- Verificado en este proyecto. Toda llamada va calificada: `public.unaccent(x)`.
+--
+-- Por que importa y por que no se va a notar: las funciones `security definer`
+-- de este archivo llevan `set search_path = ''`, que es lo correcto -- sin eso
+-- un search_path manipulado puede cambiar a que funcion resuelve un nombre. Y
+-- con el search_path vacio, `unaccent(x)` sin calificar **no resuelve**, y
+-- revienta dentro de la funcion, que es el unico lugar donde nadie esta
+-- mirando.
+--
+-- Hoy ninguna funcion de este esquema la usa. La primera que normalice nombres
+-- para cruzar realtors la va a necesitar, y va a ser justo una security
+-- definer.
+
+
 -- ════════════════════════════════════════════════════════════════════════════
 -- 0 · EL CLAIM · una sola funcion, usada por TODAS las politicas
 -- ════════════════════════════════════════════════════════════════════════════
@@ -418,6 +434,78 @@ create table if not exists pacs.realtor_originadores (
 
 
 -- ════════════════════════════════════════════════════════════════════════════
+-- 5-bis · NUESTROS LOAN OFFICERS · el padron NO se copia
+-- ════════════════════════════════════════════════════════════════════════════
+--
+-- El padron vive en `org.v_loan_officers`: 39 personas con employee_key,
+-- full_name, email, tier, branch_code, is_branch_manager, is_producing,
+-- is_active. **No se copia nada de eso aca.**
+--
+-- Una copia de la identidad se desactualiza en silencio: alguien deja la
+-- empresa, `org` lo marca inactivo, y nuestra copia lo sigue contando como
+-- cobertura. Lo unico que `org` no tiene son las licencias por estado, que hoy
+-- salen del board de Monday. Eso -- y solo eso-- es lo que guardamos.
+--
+-- La llave es `employee_key`. No el nombre.
+
+create table if not exists pacs.lo_licencias (
+    id              uuid primary key default gen_random_uuid(),
+
+    -- LA LLAVE hacia org.v_loan_officers. No hay FK porque el destino es una
+    -- vista; la integridad la da `v_cobertura_lo`, que hace INNER JOIN: un
+    -- employee_key que no exista alli simplemente no produce cobertura.
+    employee_key    text not null,
+
+    estado          text not null,
+    licencia_numero text,
+    nmls            text,
+    vigente         boolean,
+    vence_en        date,
+
+    fuente          text not null default 'board_monday',
+    upload_batch_id uuid references pacs.upload_batch(id),
+    uploaded_at     timestamptz not null default now(),
+
+    unique (employee_key, estado, fuente)
+);
+
+comment on table pacs.lo_licencias is
+'SOLO las licencias por estado, que es lo unico que org.v_loan_officers no
+tiene. Nombre, email, tier, branch y actividad NO se copian: se leen de org por
+employee_key. Una copia de la identidad se desactualiza en silencio.';
+
+comment on column pacs.lo_licencias.employee_key is
+'La llave hacia org.v_loan_officers. Los nombres no son llave.';
+
+
+-- La cobertura: en que estados podemos originar, hoy.
+--
+-- INNER JOIN a proposito: una licencia cuyo employee_key ya no esta en
+-- org.v_loan_officers deja de contar sola, sin que nadie tenga que acordarse
+-- de borrarla. Y `is_active` e `is_producing` salen de org, no de aca.
+create or replace view pacs.v_cobertura_lo as
+select l.employee_key,
+       o.full_name,
+       o.tier,
+       o.branch_code,
+       o.is_active,
+       o.is_producing,
+       l.estado,
+       l.licencia_numero,
+       l.nmls,
+       l.vigente,
+       l.vence_en
+  from pacs.lo_licencias l
+  join org.v_loan_officers o on o.employee_key = l.employee_key;
+
+alter view pacs.v_cobertura_lo set (security_invoker = on);
+
+comment on view pacs.v_cobertura_lo is
+'Responde "tenemos licencia en su estado?". La identidad sale de org en vivo;
+aca solo esta la licencia.';
+
+
+-- ════════════════════════════════════════════════════════════════════════════
 -- 6 · REGLAS · proyeccion del catalogo de Python
 -- ════════════════════════════════════════════════════════════════════════════
 
@@ -538,8 +626,8 @@ begin
   foreach t in array array[
     'upload_batch','realtors','contactos','capturas_modelmatch','ig_crudo',
     'ig_senales','mercados','realtor_mercados','census_condados','lenders',
-    'originadores','realtor_originadores','reglas','evaluaciones',
-    'evaluacion_contrastes'
+    'originadores','realtor_originadores','lo_licencias',
+    'reglas','evaluaciones','evaluacion_contrastes'
   ] loop
     execute format('alter table pacs.%I enable row level security', t);
     execute format('alter table pacs.%I force row level security', t);
@@ -561,8 +649,8 @@ begin
   foreach t in array array[
     'upload_batch','realtors','contactos','capturas_modelmatch','ig_crudo',
     'ig_senales','mercados','realtor_mercados','census_condados','lenders',
-    'originadores','realtor_originadores','reglas','evaluaciones',
-    'evaluacion_contrastes'
+    'originadores','realtor_originadores','lo_licencias',
+    'reglas','evaluaciones','evaluacion_contrastes'
   ] loop
     execute format($f$
       create policy %I on pacs.%I for insert to service_role with check (true)
@@ -579,7 +667,8 @@ declare t text;
 begin
   foreach t in array array[
     'upload_batch','realtors','contactos','realtor_mercados','census_condados',
-    'lenders','originadores','realtor_originadores','reglas'
+    'lenders','originadores','realtor_originadores',
+    'lo_licencias','reglas'
   ] loop
     execute format($f$
       create policy %I on pacs.%I for update to service_role
@@ -606,8 +695,8 @@ begin
   foreach t in array array[
     'upload_batch','realtors','contactos','capturas_modelmatch','ig_crudo',
     'ig_senales','mercados','realtor_mercados','census_condados','lenders',
-    'originadores','realtor_originadores','reglas','evaluaciones',
-    'evaluacion_contrastes'
+    'originadores','realtor_originadores','lo_licencias',
+    'reglas','evaluaciones','evaluacion_contrastes'
   ] loop
     execute format('grant select on pacs.%I to authenticated', t);
     execute format('grant select, insert on pacs.%I to service_role', t);
@@ -621,7 +710,8 @@ declare t text;
 begin
   foreach t in array array[
     'upload_batch','realtors','contactos','realtor_mercados','census_condados',
-    'lenders','originadores','realtor_originadores','reglas'
+    'lenders','originadores','realtor_originadores',
+    'lo_licencias','reglas'
   ] loop
     execute format('grant update on pacs.%I to service_role', t);
   end loop;
@@ -650,11 +740,19 @@ grant select on pacs.v_capturas_modelmatch_current,
 --    WHERE r.rolname = 'authenticator';
 --
 -- Paso 2 · tomar la lista COMPLETA que devuelva, agregarle `pacs` al final, y
--- reescribirla entera. La lista conocida al 2026-08-17 era
+-- reescribirla entera.
+--
+-- La lista verificada el 2026-09-22 son TRECE esquemas:
 --   public, b2b_metrics, activity_report, pipeline_forecast, finance_pl,
---   hr_us_payroll, finance_division, org, business_plan
--- pero `org` y `business_plan` aparecieron despues de la comprobacion anterior,
--- asi que esa lista es una referencia, NO la fuente. La fuente es el paso 1.
+--   hr_us_payroll, finance_division, org, business_plan, uploads, outlook,
+--   review, comp
+--
+-- Cuatro mas que en la comprobacion del 2026-08-17, que tenia nueve: `uploads`,
+-- `outlook`, `review` y `comp` aparecieron despues. Eso es exactamente por que
+-- esta lista es una REFERENCIA y no la fuente: en cinco semanas crecio un 44%.
+-- La fuente es el paso 1, siempre.
+--
+-- Omitir uno solo al reescribir tumba la app que lo usa, y ya paso dos veces.
 --
 --   ALTER ROLE authenticator SET pgrst.db_schemas = '<lo que devolvio>,pacs';
 --   NOTIFY pgrst, 'reload config';
