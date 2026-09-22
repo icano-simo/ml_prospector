@@ -24,6 +24,8 @@ SUITES = [
     ("instagram", "tests.test_instagram", "estado, verificacion, idioma, posts, comentarios"),
     ("instagram_profundo", "tests.test_instagram_profundo",
      "captura cruda, parser y contrato de ig_signals.csv"),
+    ("captura", "tests.test_captura",
+     "protocolo de Model Match y las seis trampas verificadas"),
     ("reglas", "tests.test_reglas",
      "una prueba por regla: activa, no activa, y sin dato"),
     ("audiencia", "tests.test_audiencia",
