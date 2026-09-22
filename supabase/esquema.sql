@@ -138,18 +138,30 @@ create table if not exists pacs.realtors (
     condado_fips        text,
     rango_volumen       text,
 
+    -- LA LLAVE PRIMARIA del modelo. Salesforce, 15 caracteres: 4.386 valores,
+    -- 4.386 unicos, cero duplicados (verificado 2026-09-22). Es la unica
+    -- fuente que hoy identifica a un realtor sin ambiguedad.
+    sf_lead_id          text unique,
+
+    -- La cascada: sf_lead_id -> licencia -> telefono -> email -> nombre.
     clave_resolucion    text not null
-        check (clave_resolucion in ('licencia', 'telefono', 'email',
-                                    'nombre_condado_volumen')),
+        check (clave_resolucion in ('sf_lead_id', 'licencia', 'telefono',
+                                    'email', 'nombre_condado_volumen')),
     match_confidence    numeric not null check (match_confidence between 0 and 1),
 
     -- Marca las filas que solo se pudieron resolver por nombre. No se
     -- prohiben -- el libro v3 llego asi-- pero quedan contables: es la deuda
     -- que hay que cerrar consiguiendo licencias.
+    -- Ni sf_lead_id ni licencia. El telefono y el email NO cuentan: son
+    -- canales de contacto, no llaves. Dos personas comparten un telefono de
+    -- oficina y un email cambia de empresa; una llave identifica, un canal
+    -- alcanza.
+    --
+    -- Redefinida el 2026-09-22 (migracion 01). Antes incluia los canales y por
+    -- eso daba 0 de 4.249: medía "no se cruza con nada", que es otra pregunta.
     sin_llave_dura      boolean generated always as (
-                            licencia_numero is null
-                            and telefono_e164 is null
-                            and email_principal is null
+                            sf_lead_id is null
+                            and licencia_numero is null
                         ) stored,
 
     brokerage           text,
@@ -174,8 +186,9 @@ Regulation B. El apellido esta dentro de nombre_completo porque hay que
 escribirle a la persona, no para deducir nada de el.';
 
 comment on column pacs.realtors.sin_llave_dura is
-'Sin licencia, telefono ni email no hay con que unir esta persona a una fuente
-futura. En seis meses son la misma gente bajo cuatro formatos distintos.';
+'No tiene NI sf_lead_id NI licencia estatal: no hay con que identificarlo en una
+fuente futura. Telefono y email NO cuentan -- son canales de contacto, no
+llaves. En seis meses son la misma gente bajo cuatro formatos distintos.';
 
 
 create table if not exists pacs.contactos (

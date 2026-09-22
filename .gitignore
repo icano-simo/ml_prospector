@@ -18,6 +18,9 @@ MMI Data.xlsx
 data/realtors.csv
 data/*_enriched*.csv
 data/*_scored*.csv
+# Colas de revision manual: llevan nombre, estado y email de personas reales.
+data/sf_sin_cruce.csv
+data/*_sin_cruce.csv
 realtor_scraper/output/model/
 realtor_scraper/output/*_enriched*.csv
 realtor_scraper/output/*_scored*.csv
