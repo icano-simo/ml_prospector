@@ -36,6 +36,7 @@ SUITES = [
     ("google_places", "tests.test_google_places", "reviews, anonimato, denominadores"),
     ("census", "tests.test_census", "el rechazo con HTTP 200, la clave y los denominadores"),
     ("contrastes", "tests.test_contrastes", "cuatro lecturas de un agente, y la guardia que manda"),
+    ("marca", "tests.test_marca", "la guia de diseño sobre los archivos servidos"),
 ]
 
 

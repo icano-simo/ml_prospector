@@ -1,19 +1,36 @@
 /*
  * La piel de la mesa de trabajo, sobre los tokens de marca.
  *
- * Los patrones de tabla estan PORTADOS de
- * icano-simo/homesi-reporte-actividad, app/styles/components.css -- mismos
- * selectores (.tbl-scroll, table.piv, th.lbl, td.totcol, tr.metric) para que
- * las dos apps se vean iguales y para que quien ya conoce una no tenga que
- * aprender otra.
+ * NINGUN color se escribe aca: los 18 valores de la guia de diseño ya existen
+ * como token en `tokens.css`, que esta portado sin cambios de
+ * commercial-activity. Se cotejaron uno por uno:
  *
- * UNA DIFERENCIA DECLARADA: alla `.totcol` tiene el tratamiento visual de
- * ultima columna (borde izquierdo, negrita, fondo slate-50) pero NO es sticky.
- * El brand book pide las dos fijas, asi que aca se le agrega
- * `position: sticky; right: 0` siguiendo el mismo razonamiento que documenta
- * el original para la primera: fondo PROPIO y OPACO, porque uno translucido
- * deja ver las columnas pasando por debajo al scrollear.
+ *   #001A40 -> --navy        #ECFDF5 #047857 #A7F3D0 -> --emerald-50/700/200
+ *   #FF4040 -> --coral       #FFF1F2 #BE123C #FECDD3 -> --rose-50/700/200
+ *   #A6DEFF -> --sky         #FFFBEB #B45309 #FDE68A -> --amber-50/700/200
+ *   #FCFCFA -> --canvas      #F1F5F9 #334155 #E2E8F0 -> --slate-100/700/200
+ *
+ * LA UNICA EXCEPCION esta abajo, declarada: #34D399 para cifras de banner no
+ * existe en los tokens portados. Vive aca y no alla porque `tokens.css` es una
+ * copia byte a byte que se re-baja, no se edita.
+ *
+ * Los patrones de tabla estan portados de `components.css` de la misma app --
+ * mismos selectores, para que quien conoce una no tenga que aprender otra.
  */
+
+:root {
+  /*
+   * `tokens.css` declara --font-body como `var(--font-inter), ...`, porque
+   * alla los inyecta next/font. Aca no hay Next, asi que se definen las dos
+   * variables que ese archivo espera y su contrato se cumple sin tocarlo.
+   */
+  --font-inter: 'Inter';
+  --font-barlow: 'Plus Jakarta Sans';
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+
+  /* La unica adicion de color. Ver la nota de arriba. */
+  --emerald-400: #34d399;
+}
 
 * { box-sizing: border-box }
 
@@ -21,68 +38,119 @@ html, body {
   margin: 0;
   padding: 0;
   background: var(--canvas);
-  color: var(--slate-800);
-  font: 15px/1.5 var(--font-body);
+  color: var(--slate-700);
+  font: 500 13px/1.55 var(--font-body);
+  -webkit-font-smoothing: antialiased;
 }
 
 a { color: var(--navy) }
 
-/* ── Cabecera navy ─────────────────────────────────────────────────────────
- * Era blanca. El header de la division es navy en las otras apps.
+/*
+ * OBLIGATORIO en todo dato numerico o monetario: las comas y los decimales
+ * tienen que alinearse verticalmente entre filas. Se aplica por clase y
+ * tambien a cada celda de dato de las tablas, porque olvidarse en una columna
+ * es como se rompe una tabla de cifras.
  */
+.num, table.piv td, table.piv th, .kpi, .cifra {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* ── Cabecera navy ───────────────────────────────────────────────────────── */
 .hub-header {
   background: var(--navy);
   color: var(--white);
-  padding: 14px 20px;
+  padding: 14px 22px;
   display: flex;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
+  border-bottom: 2px solid var(--coral);
 }
 .hub-header h1 {
-  font: 600 18px/1.2 var(--font-display);
+  font: 700 17px/1.2 var(--font-display);
   margin: 0;
-  letter-spacing: .2px;
+  letter-spacing: -.01em;
 }
 .hub-header .marca {
   display: inline-block;
   width: 10px; height: 10px;
   border-radius: var(--radius-full);
-  background: var(--coral);           /* el punto de 'Warm Embrace' */
+  background: var(--coral);
 }
-.hub-header .sub { color: var(--sky); font-size: 13px; margin-left: auto }
+.hub-header .sub { color: var(--sky); font-size: 12px; font-weight: 600 }
+.hub-header .sub:first-of-type { margin-left: auto }
 
-.hub-container { max-width: var(--container-max); margin: 0 auto; padding: 18px 20px }
+.hub-container { max-width: var(--container-max); margin: 0 auto; padding: 18px 22px }
 
-/* ── Superficies ─────────────────────────────────────────────────────────── */
+/* ── Tarjetas · TODO va dentro de una ─────────────────────────────────────── */
 .tarjeta, .tbl-card {
   background: var(--white);
   border: 1px solid var(--slate-200);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-lg);      /* rounded-2xl */
   box-shadow: var(--shadow-xs);
-  padding: 16px 18px;
+  padding: 20px;
   margin-bottom: 16px;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
+.tarjeta:hover { border-color: var(--navy) }
+
+/* Encabezado de SECCION: xs, extrabold, mayusculas, tracking ancho, slate. */
+.seccion {
+  font: 800 11px/1.3 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--slate-500);
+  margin: 0 0 10px;
+}
+/* Titulo de TARJETA: sm, bold, navy. */
 .tarjeta h2 {
-  font: 600 15px/1.3 var(--font-display);
+  font: 700 14px/1.35 var(--font-body);
   color: var(--navy);
   margin: 0 0 4px;
+  letter-spacing: -.005em;
 }
-.sub, .pista { color: var(--slate-500); font-size: 13px }
+.sub, .pista { color: var(--slate-500); font-size: 12px; font-weight: 500 }
+
+/* KPIs y totales. */
+.kpi { font-size: 20px; font-weight: 800; color: var(--navy); line-height: 1.15 }
+.kpi.chico { font-size: 17px }
+.kpi-fila { display: flex; gap: 26px; flex-wrap: wrap }
+.kpi-fila > div { min-width: 96px }
+
+/* ── Banner oscuro ───────────────────────────────────────────────────────── */
+.banner {
+  background: var(--navy);
+  color: var(--white);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  border-bottom: 2px solid var(--coral);
+  margin-bottom: 16px;
+}
+.banner .seccion { color: var(--sky); margin-bottom: 8px }
+.banner .cifra { font-size: 22px; font-weight: 800; color: var(--sky) }
+.banner .cifra.bien { color: var(--emerald-400) }
+.banner .pista { color: var(--slate-300) }
 
 /* ── Controles ───────────────────────────────────────────────────────────── */
-label { display: block; font-size: 13px; color: var(--slate-600); margin: 12px 0 5px }
+label {
+  display: block;
+  font: 600 12px/1.4 var(--font-body);
+  color: var(--slate-600);
+  margin: 14px 0 6px;
+}
 input, select, textarea {
   width: 100%;
   background: var(--white);
   color: var(--slate-800);
-  border: 1px solid var(--slate-300);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  font: inherit;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
+  padding: 9px 11px;
+  font: 500 13px/1.4 var(--font-body);
 }
 textarea {
-  font: 13px/1.45 ui-monospace, Consolas, monospace;
+  font: 12px/1.5 var(--font-mono);
   min-height: 130px;
   resize: vertical;
 }
@@ -92,139 +160,188 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-/* El CTA es coral. Era un rojo cualquiera. */
 .btn {
   background: var(--coral);
   color: var(--white);
   border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  padding: 9px 16px;
-  font: 600 14px/1 var(--font-body);
+  border-radius: var(--radius-md);
+  padding: 10px 18px;
+  font: 700 13px/1 var(--font-body);
   cursor: pointer;
+  transition: filter .15s ease;
 }
 .btn:hover { filter: brightness(.93) }
-.btn.sec {
-  background: transparent;
-  color: var(--navy);
-  border-color: var(--slate-300);
-}
-.btn.sec:hover { background: var(--accent-soft); border-color: var(--sky) }
-.btn:disabled { opacity: .5; cursor: default; filter: none }
+.btn.sec { background: transparent; color: var(--navy); border-color: var(--slate-200) }
+.btn.sec:hover { background: var(--accent-soft); border-color: var(--sky); filter: none }
+.btn:disabled { opacity: .45; cursor: default; filter: none }
 
 /* ── Pestañas ────────────────────────────────────────────────────────────── */
-.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--slate-200); margin-bottom: 14px }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--slate-200); margin-bottom: 16px; flex-wrap: wrap }
 .tab {
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
   color: var(--slate-500);
-  padding: 9px 13px;
-  font: 500 14px/1 var(--font-body);
+  padding: 10px 14px;
+  font: 600 13px/1 var(--font-body);
   cursor: pointer;
 }
-.tab[aria-selected="true"] { color: var(--navy); border-bottom-color: var(--coral); font-weight: 600 }
+.tab[aria-selected="true"] { color: var(--navy); border-bottom-color: var(--coral); font-weight: 800 }
 .tab:disabled { color: var(--slate-300); cursor: not-allowed }
+
+/* ── Píldoras y badges ───────────────────────────────────────────────────── */
+/*
+ * Los cuatro tonos pastel de la guia, mapeados a los niveles de calificacion:
+ *   verde    MQL
+ *   rojo     excluido o descartado
+ *   amarillo pre-MQL y bloqueado
+ *   gris     sin evaluar
+ * El icono va dentro del badge, sutil, para que el color no sea el unico
+ * portador del significado.
+ */
+.pill, .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font: 600 11px/1.4 var(--font-body);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.pill i, .badge i { font-style: normal; opacity: .75; font-size: 10px }
+
+.badge.mql,    .pill.ok    { background: var(--emerald-50); color: var(--emerald-700); border-color: var(--emerald-200) }
+.badge.excluido, .pill.casa { background: var(--rose-50);   color: var(--rose-700);    border-color: var(--rose-200) }
+.badge.bloqueado, .pill.alerta { background: var(--amber-50); color: var(--amber-700); border-color: var(--amber-200) }
+.badge.sin-evaluar, .pill.neutro { background: var(--slate-100); color: var(--slate-700); border-color: var(--slate-200) }
+.pill { background: var(--accent-soft); color: var(--navy); border-color: var(--accent-border) }
 
 /* ── Mensajes ────────────────────────────────────────────────────────────── */
 .err, .ok, .avi {
   border-radius: var(--radius-md);
-  padding: 12px 14px;
+  padding: 13px 15px;
   margin-bottom: 12px;
-  font-size: 14px;
+  font-size: 12px;
+  font-weight: 500;
   white-space: pre-wrap;
+  border: 1px solid transparent;
 }
-.err { border-left: 4px solid var(--coral); background: var(--rose-50); color: var(--rose-700) }
-.ok { border-left: 4px solid var(--emerald-700); background: var(--emerald-50); color: var(--emerald-800) }
-.avi { border-left: 4px solid var(--amber-500); background: var(--amber-50); color: var(--amber-800) }
+.err { border-left: 3px solid var(--coral); background: var(--rose-50); color: var(--rose-700); border-color: var(--rose-200) }
+.ok  { border-left: 3px solid var(--emerald-700); background: var(--emerald-50); color: var(--emerald-800); border-color: var(--emerald-200) }
+.avi { border-left: 3px solid var(--amber-500); background: var(--amber-50); color: var(--amber-800); border-color: var(--amber-200) }
 
-/* ══ TABLAS ═══════════════════════════════════════════════════════════════
- * Portado de components.css. `.tbl-scroll` es quien crea el scroll horizontal;
- * las columnas sticky se pegan respecto de el.
- */
-.tbl-scroll { overflow-x: auto; width: 100%; max-width: 100% }
-
-table.piv {
-  border-collapse: collapse;
+/* ══ TABLAS · nunca sin bordes, siempre dentro de una tarjeta ══════════════ */
+.tbl-scroll {
+  overflow-x: auto;
   width: 100%;
-  /* Explicito a proposito: los digitos tienen que alinearse verticalmente
-     entre filas. Es un requisito duro de estas tablas, no una preferencia. */
-  font-variant-numeric: tabular-nums;
-  font-size: 14px;
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
 }
+table.piv { border-collapse: collapse; width: 100%; font-size: 12px }
 table.piv th, table.piv td {
-  padding: 8px 10px;
+  padding: 9px 11px;
   border-bottom: 1px solid var(--slate-200);
   text-align: right;
   white-space: nowrap;
 }
+table.piv tbody tr:last-child td { border-bottom: 0 }
 table.piv thead th {
   background: var(--slate-100);
-  color: var(--navy);
-  font: 600 13px/1.2 var(--font-body);
-  text-align: right;
-  border-bottom: 1px solid var(--slate-300);
+  color: var(--slate-500);
+  font: 800 10px/1.3 var(--font-body);
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  border-bottom: 1px solid var(--slate-200);
 }
 
-/* ---- Primera columna fija ---- */
-table.piv th.lbl,
-table.piv td.lbl {
+/* Primera columna fija. */
+table.piv th.lbl, table.piv td.lbl {
   text-align: left;
   position: sticky;
   left: 0;
   background: var(--white);
   z-index: 2;
-  min-width: 110px;
+  min-width: 118px;
   border-right: 1px solid var(--slate-200);
+  font-family: var(--font-body);
   font-weight: 700;
   color: var(--navy);
 }
-/*
- * La primera columna del thead es sticky, asi que necesita fondo PROPIO y
- * OPACO: si heredara un fondo translucido, al scrollear horizontalmente
- * dejaria ver las columnas pasando por debajo.
- */
-table.piv thead th.lbl { background: var(--slate-100); z-index: 3 }
+/* Fondo PROPIO y OPACO: uno translucido deja ver las columnas por debajo. */
+table.piv thead th.lbl { background: var(--slate-100); z-index: 3; color: var(--slate-500) }
 
-/* ---- Ultima columna fija ---- */
-table.piv td.totcol,
-table.piv th.totcol {
+/* Ultima columna fija. */
+table.piv td.totcol, table.piv th.totcol {
   position: sticky;
   right: 0;
   z-index: 2;
   border-left: 1px solid var(--slate-200);
-  font-weight: 700;
-  background: var(--slate-50);        /* opaco, por lo mismo que la primera */
+  font-weight: 800;
+  background: var(--slate-50);
+  color: var(--navy);
 }
-table.piv thead th.totcol { background: var(--slate-100); z-index: 3 }
+table.piv thead th.totcol { background: var(--slate-100); z-index: 3; color: var(--slate-500) }
 
-/* ---- Filas: zebra + hover ---- */
+/* Zebra + hover 'Light Sky' al 20%. */
 tr.metric td { color: var(--slate-800); transition: background .12s ease }
 tr.metric:nth-child(odd) td { background: rgba(248, 250, 252, .5) }
 tr.metric:nth-child(odd) td.lbl { background: #f9fbfd }
 tr.metric:nth-child(odd) td.totcol { background: var(--slate-100) }
-tr.metric:hover td,
-tr.metric:hover td.lbl,
-tr.metric:hover td.totcol { background: rgba(166, 222, 255, .2) } /* 'Light Sky' @20% */
-
-/* ── Señales de la confirmacion ──────────────────────────────────────────── */
-.pill {
-  display: inline-block;
-  border-radius: var(--radius-full);
-  padding: 2px 9px;
-  font: 600 12px/1.6 var(--font-body);
-  background: var(--accent-soft);
-  color: var(--navy);
-  border: 1px solid var(--accent-border);
+tr.metric:hover td, tr.metric:hover td.lbl, tr.metric:hover td.totcol {
+  background: rgba(166, 222, 255, .2);
 }
-.pill.casa { background: var(--rose-50); color: var(--rose-700); border-color: var(--rose-200) }
-.pill.ok { background: var(--emerald-50); color: var(--emerald-800); border-color: var(--emerald-200) }
-.pill.alerta { background: var(--amber-50); color: var(--amber-800); border-color: var(--amber-200) }
-
-/* Una geografia cuyo volumen se repite: tiene que saltar a la vista. */
 tr.metric.repetido td { background: var(--rose-50) !important }
 tr.metric.repetido td.lbl { color: var(--rose-700) }
 
-.lista { list-style: none; margin: 0; padding: 0 }
-.lista li { padding: 6px 0; border-bottom: 1px solid var(--slate-100); font-size: 14px }
+/* ── Listas · con borde, nunca planas ────────────────────────────────────── */
+.lista { list-style: none; margin: 0; padding: 0; border: 1px solid var(--slate-200); border-radius: var(--radius-md) }
+.lista li {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--slate-200);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 .lista li:last-child { border-bottom: 0 }
-code { font: 12px ui-monospace, Consolas, monospace; color: var(--slate-600) }
+.lista li:nth-child(odd) { background: rgba(248, 250, 252, .5) }
+
+code { font: 11px var(--font-mono); color: var(--slate-600) }
+
+/* ── Panel lateral ───────────────────────────────────────────────────────── */
+.panel {
+  position: fixed;
+  right: 0; top: 0;
+  width: 450px;
+  max-width: 100vw;
+  height: 100%;
+  background: var(--white);
+  box-shadow: var(--shadow-lg);
+  z-index: 50;
+  padding: 24px;
+  overflow: auto;
+  display: none;
+}
+.panel.abierto { display: block }
+.panel h2 { margin-top: 0 }
+.panel .crudo {
+  font: 11px/1.5 var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--slate-50);
+  border: 1px solid var(--slate-200);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  max-height: calc(100% - 140px);
+  overflow: auto;
+}
+.panel .cerrar { position: absolute; right: 18px; top: 18px }
+.velo {
+  position: fixed; inset: 0;
+  background: rgba(0, 26, 64, .3);
+  z-index: 49;
+  display: none;
+}
+.velo.abierto { display: block }

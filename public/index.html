@@ -8,6 +8,15 @@
   La paleta viene PORTADA de commercial-activity, no escrita aca. Ver la
   cabecera de tokens.css: si hay que actualizarla se vuelve a bajar el archivo.
 -->
+<!--
+  Inter para interfaz y Plus Jakarta Sans para títulos. `tokens.css` declara
+  --font-body como `var(--font-inter), …` porque allá los inyecta next/font;
+  acá se cargan de Google Fonts y homesi.css define esas dos variables, así que
+  el contrato del archivo portado se cumple sin editarlo.
+-->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="homesi.css">
 <style>
@@ -21,25 +30,28 @@ html, body { height: 100% }
 @media (max-width: 860px){ .wrap { grid-template-columns: 1fr } .side { display: none } }
 .side { border-right: 1px solid var(--slate-200); display: flex;
   flex-direction: column; min-height: 0; background: var(--white) }
-.filtros { padding: 12px; border-bottom: 1px solid var(--slate-200); display: grid; gap: 8px }
+.filtros { padding: 14px; border-bottom: 1px solid var(--slate-200); display: grid; gap: 8px }
 .filtros label { margin: 0 }
 .frow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px }
-.cuenta { padding: 8px 12px; font-size: 12px; color: var(--slate-500);
+.cuenta { padding: 9px 14px; font: 600 11px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums; color: var(--slate-500);
   border-bottom: 1px solid var(--slate-200) }
 .listaSide { overflow: auto; flex: 1; min-height: 0 }
-.fila { padding: 10px 12px; border-bottom: 1px solid var(--slate-100);
+.fila { padding: 11px 14px; border-bottom: 1px solid var(--slate-200);
   cursor: pointer; display: flex; gap: 10px; align-items: flex-start }
 .fila:hover { background: var(--accent-soft) }
 .fila.sel { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--coral) }
-.punto { width: 8px; height: 8px; border-radius: var(--radius-full);
+.punto { width: 7px; height: 7px; border-radius: var(--radius-full);
   margin-top: 6px; flex: none; background: var(--slate-300) }
 .punto.si { background: var(--emerald-700) }
-.fila .n { font-weight: 600; font-size: 14px; color: var(--navy) }
-.fila .m { color: var(--slate-500); font-size: 12px }
-.main { overflow: auto; min-height: 0; padding: 20px 22px 60px }
-.main h1 { font: 600 20px/1.2 var(--font-display); color: var(--navy); margin: 0 0 3px }
-.vacio { color: var(--slate-400); padding: 44px 10px; text-align: center }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px }
+.fila .n { font-weight: 700; font-size: 13px; color: var(--navy) }
+.fila .m { color: var(--slate-500); font-size: 11px }
+.fila .m b { font-family: var(--font-mono); font-variant-numeric: tabular-nums }
+.main { overflow: auto; min-height: 0; padding: 22px 24px 60px }
+.main h1 { font: 800 21px/1.2 var(--font-display); color: var(--navy);
+  margin: 0 0 3px; letter-spacing: -.02em }
+.vacio { color: var(--slate-400); padding: 52px 10px; text-align: center; font-size: 13px }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px }
 </style>
 </head>
 <body>
@@ -70,6 +82,9 @@ html, body { height: 100% }
     <div class="vacio">Elegí un realtor de la lista para abrir su ficha.</div>
   </main>
 </div>
+
+<div class="velo" id="velo"></div>
+<aside class="panel" id="panel"></aside>
 
 <script>
 const $ = s => document.querySelector(s);
@@ -194,10 +209,11 @@ function pintarResumen(r){
   if(!r) return '';
   const secc = r.secciones.map(s => {
     const donde = s.seccion === 'market_signals'
-      ? (s.nivel === 'estado' ? 'estado' : 'condado') + ' · ' + esc(s.etiqueta || '—')
+      ? `<span class="badge sin-evaluar"><i>▣</i>${s.nivel === 'estado' ? 'estado' : 'condado'}
+         · ${esc(s.etiqueta || '—')}</span>`
       : '';
     return `<li><b>${esc(s.seccion)}</b> ${donde}
-      <span class="pista">· ${s.caracteres.toLocaleString('es')} caracteres</span></li>`;
+      <span class="pista num" style="margin-left:auto">${s.caracteres.toLocaleString('es')} car.</span></li>`;
   }).join('');
 
   const geo = r.geografias.map(g => `
@@ -218,40 +234,60 @@ function pintarResumen(r){
     : '';
 
   const orig = r.originadores.length ? r.originadores.map(o => `
-      <li><b>${esc(o.nombre || '—')}</b> · ${esc(o.empresa || '—')}
-        <span class="pista">· ${o.unidades ?? '—'} u · ${pct(o.share)}</span>
-        ${o.de_la_casa ? '<span class="pill casa">de la casa</span>' : ''}</li>`).join('')
+      <li><b>${esc(o.nombre || '—')}</b>
+        <span class="pista">${esc(o.empresa || '—')}</span>
+        ${o.de_la_casa
+          ? '<span class="badge excluido"><i>⛔</i>de la casa</span>' : ''}
+        <span class="num" style="margin-left:auto">${o.unidades ?? '—'} u · ${pct(o.share)}</span></li>`).join('')
     : '<li class="pista">sin relaciones de originador en esta captura</li>';
 
+  /* Banner oscuro: la cifra que decide la exclusión, en Soft Sky y mono. */
   const casa = r.share_de_la_casa || {};
-  const casaLinea = casa.share != null
-    ? `<span class="pill ${casa.share > 0 ? 'casa' : 'ok'}">Everett/Supreme:
-        ${pct(casa.share)} · ${casa.unidades} de ${casa.unidades_totales} unidades</span>`
-    : `<span class="pill alerta">no se pudo calcular</span>
-       <div class="pista" style="margin-top:6px">${esc(casa.razon || '')}</div>`;
+  const banner = casa.share != null
+    ? `<div class="banner">
+         <div class="seccion">Exclusión por no-canibalización · base ${esc(casa.base || '')}</div>
+         <span class="cifra ${casa.share > 0 ? '' : 'bien'}">${pct(casa.share)}</span>
+         <span class="pista num" style="margin-left:10px">${casa.unidades} de
+           ${casa.unidades_totales} unidades del reparto</span>
+         ${(casa.originadores||[]).length
+           ? '<div class="pista" style="margin-top:6px">' +
+             esc(casa.originadores.join(' · ')) + '</div>' : ''}
+       </div>`
+    : `<div class="banner">
+         <div class="seccion">Exclusión por no-canibalización</div>
+         <span class="badge bloqueado"><i>▲</i>no se pudo calcular</span>
+         <div class="pista" style="margin-top:8px">${esc(casa.razon || '')}</div>
+       </div>`;
 
   const fallos = (r.fallos || []).length
-    ? `<div class="tarjeta"><h2>Fallos de lectura</h2>
+    ? `<div class="tarjeta">
+        <div class="seccion">Fallos de lectura</div>
         <p class="sub">Secciones que venían en el texto y quedaron vacías. El
           crudo está guardado: se arregla el parser y se re-deriva sin volver a
           capturar.</p>
         ${r.fallos.map(f => `<div class="avi"><b>${esc(f.seccion)}</b> →
           <code>${esc(f.campo)}</code><br>${esc(f.por_que_importa || '')}</div>`).join('')}</div>`
-    : `<div class="tarjeta"><h2>Fallos de lectura</h2>
-        <p class="sub" style="margin:0"><span class="pill ok">ninguno</span>
-          Todas las secciones presentes en el texto llegaron a un campo.</p></div>`;
+    : `<div class="tarjeta">
+        <div class="seccion">Fallos de lectura</div>
+        <span class="badge mql"><i>✓</i>ninguno</span>
+        <span class="sub" style="margin-left:8px">Todas las secciones presentes
+          en el texto llegaron a un campo.</span></div>`;
 
   const p = r.perfil || {};
+  const guardia = p.cobertura_mix != null && p.cobertura_mix < 50;
   return `
+    ${banner}
     ${repes}
     <div class="tarjeta">
-      <h2>Bloques separados · ${r.secciones.length}</h2>
-      <ul class="lista">${secc}</ul>
+      <div class="seccion">Bloques separados</div>
+      <h2>${r.secciones.length} secciones, en orden de captura</h2>
+      <ul class="lista" style="margin-top:10px">${secc}</ul>
     </div>
     <div class="tarjeta">
-      <h2>Por geografía</h2>
-      <p class="sub">Volumen, FHA del mercado y fallout. Si dos filas repiten
-        volumen, salen en rojo.</p>
+      <div class="seccion">Por geografía</div>
+      <h2>Volumen, FHA del mercado y fallout</h2>
+      <p class="sub" style="margin-bottom:10px">Si dos filas repiten volumen,
+        salen en rojo: es la firma del gráfico rodante.</p>
       <div class="tbl-scroll">
         <table class="piv">
           <thead><tr>
@@ -263,24 +299,47 @@ function pintarResumen(r){
       </div>
     </div>
     <div class="tarjeta">
-      <h2>Originadores · por unidades</h2>
-      <div style="margin-bottom:8px">${casaLinea}</div>
-      <ul class="lista">${orig}</ul>
+      <div class="seccion">Originadores · reparto por unidades</div>
+      <ul class="lista" style="margin-top:10px">${orig}</ul>
     </div>
     <div class="tarjeta">
-      <h2>Perfil</h2>
-      <div class="grid2">
-        <div><span class="pista">nombre</span><br><b>${esc(p.nombre || '—')}</b></div>
-        <div><span class="pista">buyer units</span><br><b>${p.buyer_units ?? '—'}</b></div>
-        <div><span class="pista">TPO del agente</span><br><b>${pct(p.tpo_pct)}</b></div>
-        <div><span class="pista">lenders</span><br><b>${p.lenders ?? 0}</b></div>
+      <div class="seccion">Perfil</div>
+      <div class="grid2" style="margin-top:12px">
+        <div><span class="pista">nombre</span><br>
+          <b style="color:var(--navy)">${esc(p.nombre || '—')}</b></div>
+        <div><span class="pista">buyer units</span><br>
+          <span class="kpi chico">${p.buyer_units ?? '—'}</span></div>
+        <div><span class="pista">TPO del agente</span><br>
+          <span class="kpi chico">${pct(p.tpo_pct)}</span></div>
+        <div><span class="pista">lenders</span><br>
+          <span class="kpi chico">${p.lenders ?? 0}</span></div>
         <div><span class="pista">cobertura del mix</span><br>
-          <b>${pct(p.cobertura_mix)}</b>
-          ${p.cobertura_mix != null && p.cobertura_mix < 50
-            ? '<span class="pill alerta">no pasa la guardia</span>' : ''}</div>
+          <span class="kpi chico">${pct(p.cobertura_mix)}</span>
+          ${guardia ? '<br><span class="badge bloqueado"><i>▲</i>no pasa la guardia</span>' : ''}</div>
       </div>
     </div>
     ${fallos}`;
+}
+
+/* ── panel lateral · el crudo tal como se pegó ────────────────────────────── */
+let CAPTURAS = [];
+function abrirPanel(i, j){
+  const b = (CAPTURAS[i] || {}).bloques[j];
+  if(!b) return;
+  $('#panel').innerHTML = `
+    <button class="btn sec cerrar" id="cerrarPanel">Cerrar</button>
+    <div class="seccion">${esc(b.seccion)}${b.nivel ? ' · ' + esc(b.nivel) : ''}</div>
+    <h2>${esc(b.etiqueta || 'sin etiqueta geográfica')}</h2>
+    <p class="sub"><span class="num">${b.caracteres.toLocaleString('es')}</span>
+      caracteres, tal como se pegaron</p>
+    <div class="crudo">${esc(b.texto_crudo)}</div>`;
+  $('#cerrarPanel').onclick = cerrarPanel;
+  $('#panel').classList.add('abierto');
+  $('#velo').classList.add('abierto');
+}
+function cerrarPanel(){
+  $('#panel').classList.remove('abierto');
+  $('#velo').classList.remove('abierto');
 }
 
 /* ── pestaña Model Match · lo capturado, desde la base ────────────────────── */
@@ -295,13 +354,25 @@ async function vModelMatch(){
           Se pegan desde la pestaña <b>Mercados</b>.</p></div>`;
       return;
     }
+    CAPTURAS = d.capturas;
     $('#cuerpo').innerHTML = d.capturas.map((c, i) => `
       <div class="tarjeta">
-        <h2>Captura ${d.capturas.length - i} de ${d.capturas.length}</h2>
-        <p class="sub" style="margin:0">${esc(c.capturado_en || '')} ·
-          ${esc(c.estado || '—')} · ${c.caracteres.toLocaleString('es')} caracteres ·
+        <div class="seccion">Captura ${d.capturas.length - i} de ${d.capturas.length}</div>
+        <h2>${esc((c.capturado_en || '').slice(0,16).replace('T',' '))} ·
+          ${esc(c.estado || '—')}</h2>
+        <p class="sub" style="margin-bottom:10px">
+          <span class="num">${c.caracteres.toLocaleString('es')}</span> caracteres ·
           <code>${esc(c.version_parser || '')}</code></p>
+        <div>${(c.bloques||[]).map((b,j) => `
+          <button class="btn sec" style="margin:0 6px 6px 0;padding:6px 11px"
+            data-cap="${i}" data-blo="${j}">
+            ${esc(b.etiqueta || b.seccion)} · <span class="num">${b.caracteres.toLocaleString('es')}</span></button>`).join('')}
+        </div>
+        <p class="pista" style="margin:6px 0 0">El crudo es lo único que no se
+          puede re-derivar de otra cosa: todo lo demás sale de él.</p>
       </div>` + pintarResumen(c.resumen)).join('');
+    document.querySelectorAll('[data-cap]').forEach(b => b.onclick = () =>
+      abrirPanel(+b.dataset.cap, +b.dataset.blo));
   }catch(e){
     $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
@@ -367,8 +438,11 @@ async function guardar(){
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');
     const cond = (d.condados||[]).join(' · ');
     const cont = (d.contactos||[]).map(c => c.canal + ': ' + c.valor).join(' · ');
-    $('#msgs').innerHTML = `<div class="ok"><b>${d.bloques} bloques guardados</b> ·
-      ${esc(d.estado || '')} · lote <code>${esc(d.upload_batch_id)}</code>
+    $('#msgs').innerHTML = `<div class="ok">
+      <b><span class="num">${d.bloques}</span> bloques guardados</b> ·
+      <span class="num">${d.mercados_promovidos ?? 0}</span> promovidos a la
+      biblioteca · ${esc(d.estado || '')} ·
+      lote <code>${esc(d.upload_batch_id)}</code>
       ${cond ? '<br>condados: ' + esc(cond) : ''}
       ${cont ? '<br>contactos: ' + esc(cont) : ''}</div>${avisos}`;
     /* La confirmación va DEBAJO de la caja y no se borra: es lo que se mira
@@ -401,14 +475,17 @@ async function cargarBiblio(){
           <th class="lbl">Geografía</th><th>Nivel</th><th>Realtors</th>
           <th class="totcol">Capturas</th></tr></thead><tbody>` +
         GEO.map(g => `<tr class="metric"><td class="lbl">${esc(g.clave)}</td>
-          <td>${esc(g.nivel)}</td><td>${g.realtors}</td>
+          <td><span class="badge sin-evaluar">${esc(g.nivel)}</span></td>
+          <td>${g.realtors}</td>
           <td class="totcol">${g.capturas}</td></tr>`).join('') +
         '</tbody></table></div>'
-      : 'Todavía no hay ninguna geografía capturada.';
+      : '<span class="badge sin-evaluar"><i>▣</i>Todavía no hay ninguna geografía capturada</span>';
   }catch(e){ $('#biblio').innerHTML = `<div class="avi">${esc(e.message)}</div>` }
 }
 
 /* ── arranque ─────────────────────────────────────────────────────────── */
+$('#velo').onclick = cerrarPanel;
+document.addEventListener('keydown', e => { if(e.key === 'Escape') cerrarPanel() });
 let t = null;
 $('#q').oninput = () => { clearTimeout(t); t = setTimeout(cargarLista, 280) };
 $('#fEstado').onchange = cargarLista;

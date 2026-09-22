@@ -666,10 +666,24 @@ def capturas(params: dict) -> tuple[int, dict]:
             "parseado": p,
             "texto_crudo": f.get("texto_crudo") or "",
         })
+        # El crudo viaja para poder AUDITARLO en pantalla. Es el unico dato que
+        # no se puede re-derivar de otra cosa: todo lo demas sale de el.
+        lote.setdefault("bloques", []).append({
+            "seccion": p.get("seccion"),
+            "nivel": p.get("nivel"),
+            "etiqueta": p.get("etiqueta_geografica"),
+            "orden": p.get("orden"),
+            "caracteres": len(f.get("texto_crudo") or ""),
+            "texto_crudo": f.get("texto_crudo") or "",
+        })
 
     salida = []
     for lote in por_lote.values():
         crudas = lote.pop("_filas")
+        lote["bloques"] = _en_orden([
+            {"parseado": b, "texto_crudo": b["texto_crudo"]}
+            for b in lote.get("bloques", [])])
+        lote["bloques"] = [b["parseado"] for b in lote["bloques"]]
         perfiles = [(c["parseado"].get("perfil") or {}) for c in crudas
                     if c["parseado"].get("seccion") in ("overview",
                                                         "originators",
