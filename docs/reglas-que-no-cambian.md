@@ -111,7 +111,48 @@ pasar.
 
 ---
 
-## 4 · No supongas la forma del destino. Pregúntasela
+## 4 · Un rechazo puede venir con el código de éxito
+
+Pariente de la anterior: la comprobación corre, pero **mira la señal
+equivocada**.
+
+`api.census.gov` contesta **HTTP 200 en los cuatro casos**, y el motivo del
+rechazo viaja en el cuerpo, como HTML:
+
+| lo que se manda | respuesta |
+|---|---|
+| clave buena | `200` · `[["NAME","state"],["California","06"]]` |
+| sin parámetro `key` | `200` · `<title>Missing Key</title>` |
+| `key` vacía | `200` · `<title>Missing Key</title>` |
+| `key` equivocada | `200` · `<title>Invalid Key</title>` |
+
+Un cliente que mire `response.status` da el rechazo por bueno y revienta más
+tarde al parsear — **en otro sitio y con otro mensaje**, que es lo que hace
+perder la tarde buscando en el lugar equivocado.
+
+`geo/census.py` valida el **cuerpo**: si no empieza por `[`, es un rechazo, y el
+error dice cuál de los dos es porque el arreglo no es el mismo (falta
+configuración vs. la clave equivocada).
+
+### Y el log que miente
+
+La primera versión del diagnóstico enmascaraba la URL **reinyectando** `key=` en
+lo que imprimía, así que mostró una clave en la petición que no llevaba
+ninguna. Un log que miente sobre lo que se mandó es peor que no tener log: se
+descarta la hipótesis correcta con la evidencia a la vista.
+
+Se enmascaran los parámetros **reales**, nunca se construye la salida aparte.
+
+### El corolario del plan B que no existía
+
+«El API funciona sin clave hasta unas 500 consultas diarias por IP» es cierto
+para otros endpoints y **no para `acs5`**: sin clave responde `Missing Key`.
+Medido, no supuesto — y por eso el mensaje de `ClaveInvalida` lo dice, para que
+nadie vuelva a intentar ese camino.
+
+---
+
+## 5 · No supongas la forma del destino. Pregúntasela
 
 **Tres veces en dos días, el mismo patrón.**
 
@@ -134,7 +175,7 @@ implícito se habría perdido en silencio.
 
 ---
 
-## 5 · Una guarda sobre el tráfico equivocado termina desactivada
+## 6 · Una guarda sobre el tráfico equivocado termina desactivada
 
 Nadie quita una guarda por maldad. La quitan porque estorba.
 
@@ -148,7 +189,7 @@ viva dentro de seis meses.
 
 ---
 
-## 6 · Las tres guardias de PACS-H
+## 7 · Las tres guardias de PACS-H
 
 Sin denominador no hay porcentaje. El mix de programa no activa ni desactiva
 nada con menos de 10 operaciones con tipo identificado o menos del 50% de

@@ -34,6 +34,7 @@ SUITES = [
     ("identidad", "tests.test_identidad", "normalizacion, cascada, registro"),
     ("hmda", "tests.test_hmda", "fallout y mix, con el denominador correcto"),
     ("google_places", "tests.test_google_places", "reviews, anonimato, denominadores"),
+    ("census", "tests.test_census", "el rechazo con HTTP 200, la clave y los denominadores"),
 ]
 
 
