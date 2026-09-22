@@ -57,8 +57,55 @@ class CensusClient:
     # Public API
     # ------------------------------------------------------------------
 
+    def preflight(self) -> None:
+        """Comprueba que la API responda JSON ANTES de pedir 150 variables.
+
+        Por que existe, medido el 2026-09-22
+        ------------------------------------
+        La API del Census pasó a exigir clave para **toda** consulta de datos,
+        incluida una de una sola variable. Y no responde 401 ni 403: responde
+        **HTTP 200 con una pagina HTML titulada "Missing Key"**.
+
+        `_request` maneja el JSONDecodeError, lo registra y devuelve None. O sea
+        que no produce datos falsos -- pero una corrida entera sin clave
+        terminaria con **todas las columnas vacias y solo warnings en el log**,
+        que es exactamente el modo de fallo que el verificador de variables
+        existe para evitar: una columna vacia que nadie nota.
+
+        Un fallo que devuelve 200 y se degrada en silencio tiene que reventar
+        al principio, no llenar un parquet de nulos.
+        """
+        if not self.api_key:
+            raise CensusAPIError(
+                "Falta CENSUS_API_KEY.\n"
+                "\n"
+                "La API del Census exige clave para toda consulta de datos "
+                "desde 2026: una peticion sin clave devuelve HTTP 200 con una "
+                "pagina HTML que dice 'Missing Key', no un error.\n"
+                "\n"
+                "Se pide gratis y sale en el momento:\n"
+                "  https://api.census.gov/data/key_signup.html\n"
+                "\n"
+                "Va en .env como CENSUS_API_KEY. No en la linea de comandos."
+            )
+
+        sonda = self._request(self.base_url, {
+            "get": "NAME,B01003_001E",
+            "for": "county:001",
+            "in": "state:06",
+            "key": self.api_key,
+        })
+        if sonda is None:
+            raise CensusAPIError(
+                "La sonda a la API del Census no devolvio JSON con la clave "
+                "puesta. Revisa el log: si dice 'Invalid JSON', la clave no es "
+                "valida o fue revocada. No sigo: una corrida sin datos deja "
+                "todas las columnas vacias y eso no se nota hasta tarde."
+            )
+
     def fetch_all(self) -> pd.DataFrame:
         """Fetch all variable groups for the configured geographic level."""
+        self.preflight()
         groups = get_variable_groups_for_level(self.geo_level)
         all_codes = {}
         for group_vars in groups.values():
