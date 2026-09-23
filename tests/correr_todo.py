@@ -54,6 +54,8 @@ SUITES = [
      "la compuerta unica: excluido, pendiente_modelmatch u ok"),
     ("afirmar", "tests.test_afirmar",
      "que no se afirme nada que la evidencia no sostenga"),
+    ("reglas_viejas", "tests.test_reglas_viejas",
+     "una evaluacion de otra version no se presenta como vigente"),
 ]
 
 

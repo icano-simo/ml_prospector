@@ -165,31 +165,67 @@ def _insumos_ok():
                  "share": 100.0}]}}
 
 
-def test_guardar_texto_sin_evaluacion_id_rechaza():
+def _rechaza(**kw):
+    """Devuelve el mensaje del rechazo, o None si guardo."""
     from motor.verificar_texto import TextoRechazado
     from supabase.guardar_texto import guardar
 
+    base = dict(realtor_id="r1", tipo="narrativa", texto="Hola.",
+                insumos=_insumos_ok(), modelo="m", evaluacion_id="e1")
+    base.update(kw)
     try:
-        guardar(realtor_id="r1", tipo="narrativa", texto="Hola.",
-                insumos=_insumos_ok(), modelo="m", evaluacion_id="")
+        guardar(**base)
     except TextoRechazado as exc:
-        assert "evaluacion_id" in str(exc)
-        return
-    raise AssertionError("guardo un texto sin evaluacion_id")
+        return str(exc)
+    return None
+
+
+def test_guardar_texto_sin_evaluacion_id_rechaza():
+    msg = _rechaza(evaluacion_id="", extracto_vigente=_insumos_ok())
+    assert msg and "evaluacion_id" in msg
 
 
 def test_guardar_texto_con_insumos_que_no_son_el_extracto_rechaza():
-    from motor.verificar_texto import TextoRechazado
+    msg = _rechaza(extracto_vigente={"acto_de_habla": "PREGUNTA",
+                                     "otra": "cosa"})
+    assert msg and "NO son el extracto" in msg
+
+
+def test_un_perfil_FABRICADO_sin_extracto_no_alcanza():
+    """El caso que pidio la revision.
+
+    Los insumos dicen que sus originadores no son de la casa, asi que la
+    compuerta de contacto los deja pasar -- correctamente: sobre ESE material
+    la respuesta es `ok`. Lo que impide guardar es que no hay extracto contra
+    que comparar, y sin eso la verificacion aprueba cualquier material
+    inventado. Fabricar el perfil no compra nada.
+    """
+    msg = _rechaza()          # sin `extracto_vigente`
+    assert msg, "guardo un texto con insumos fabricados y sin extracto"
+    assert "extracto_vigente" in msg
+    # Y se comprueba que el perfil fabricado SI pasaba la compuerta, o esta
+    # prueba estaria pasando por la razon equivocada.
+    from motor.veredicto import puede_contactarse
+    assert puede_contactarse(
+        _insumos_ok()["perfil_unido"]).puede_escribirsele
+
+
+def test_un_extracto_vacio_tampoco_sirve():
+    """Un extracto vacio contra unos insumos vacios coincide, y no prueba nada."""
+    msg = _rechaza(insumos={}, extracto_vigente={})
+    assert msg
+    # Rechaza por los insumos vacios o por el extracto vacio: cualquiera de las
+    # dos esta bien, lo que no puede es guardar.
+    assert "insumos" in msg or "extracto" in msg
+
+
+def test_guardar_texto_ya_no_acepta_afirma():
+    """`afirma` se deriva siempre. Que ni siquiera se pueda pasar."""
+    import inspect
+
     from supabase.guardar_texto import guardar
 
-    try:
-        guardar(realtor_id="r1", tipo="narrativa", texto="Hola.",
-                insumos=_insumos_ok(), modelo="m", evaluacion_id="e1",
-                extracto_vigente={"acto_de_habla": "PREGUNTA", "otra": "cosa"})
-    except TextoRechazado as exc:
-        assert "NO son el extracto" in str(exc)
-        return
-    raise AssertionError("guardo un texto contra insumos que no son el extracto")
+    assert "afirma" not in inspect.signature(guardar).parameters
 
 
 def test_el_hash_de_insumos_no_depende_del_orden_de_las_claves():
@@ -203,19 +239,11 @@ def test_el_hash_de_insumos_no_depende_del_orden_de_las_claves():
 
 def test_guardar_texto_a_un_excluido_rechaza():
     """Verificar con cuidado un mensaje que no deberia existir no sirve."""
-    from motor.verificar_texto import TextoRechazado
-    from supabase.guardar_texto import guardar
-
     insumos = {"acto_de_habla": "PREGUNTA", "perfil_unido": {"orig_buyer": [
         {"nombre": "Grace Davis", "empresa": "Everett Financial, Inc.",
          "unidades": 1.0, "share": 100.0}]}}
-    try:
-        guardar(realtor_id="r1", tipo="narrativa", texto="Hola.",
-                insumos=insumos, modelo="m", evaluacion_id="e1")
-    except TextoRechazado as exc:
-        assert "no se le escribe" in str(exc)
-        return
-    raise AssertionError("guardo un texto para un excluido")
+    msg = _rechaza(insumos=insumos, extracto_vigente=insumos)
+    assert msg and "no se le escribe" in msg
 
 
 def _correr():

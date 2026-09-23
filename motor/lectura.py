@@ -214,8 +214,8 @@ def leer_mix_fha(contraste, nombre_agente: str) -> Lectura:
     cuerpo = (
         "%s trabaja con compradores que necesitan préstamos de gobierno mucho "
         "más que el resto de su zona. %s de sus operaciones son FHA, cuando en "
-        "%s solo lo son %s. Es un comprador que suele entrar con poco dinero "
-        "para el down payment."
+        "%s solo lo son %s. Es un comprador que suele entrar con menos down "
+        "payment."
         % (nombre_agente, suyo.capitalize(), donde, delmercado))
 
     # La plantilla depende de la DIRECCION. Antes habia una sola y decia «mucho
@@ -262,16 +262,19 @@ def leer_mix_fha(contraste, nombre_agente: str) -> Lectura:
         que_dice_del_borrower=cuerpo + " Es exactamente el cliente que sabemos "
                                        "cerrar.",
         bueno_o_malo=ES_NUESTRO_CLIENTE,
-        que_hacer=("Abrir por el perfil del comprador: decirle que trabajamos "
-                   "el FHA con score desde 580 y que le sostenemos el "
-                   "pre-approval antes de que escriba la oferta."),
+        # «score desde 580» sale el 2026-09-23: es MUNICION --lo que decimos que
+        # podemos hacer-- y la municion todavia no tiene version. Una cifra de
+        # producto sin version es la que sigue circulando en los mensajes seis
+        # meses despues de que el overlay cambio, y nadie se entera.
+        que_hacer=("Abrir por el perfil del comprador: decirle que sostenemos "
+                   "el pre-approval antes de que escriba la oferta."),
         evidencia="FHA del agente %s%% contra %s%% de %s · %s veces · base: %s"
                   % (agente, mercado, donde, contraste.veces,
                      contraste.base_agente_descripcion),
         afirma=True,
         para_el_realtor=(
             "%s de tus operaciones cierran con FHA, contra %s en %s. Es un "
-            "comprador que entra con poco para el down payment y al que le "
+            "comprador que suele entrar con menos down payment y al que le "
             "sostenemos el pre-approval antes de que escriba la oferta.\n\n"
             "¿Lo ves igual desde tu lado?"
             % (suyo.capitalize(), delmercado, donde)))

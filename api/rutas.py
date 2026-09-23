@@ -22,6 +22,7 @@ from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
 from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
 from captura.pertenencia import comprobar  # noqa: E402
+from motor.evaluar import VERSION_REGLAS  # noqa: E402
 from motor.veredicto import puede_contactarse  # noqa: E402
 from captura.trampas import es_de_la_casa, share_de_la_casa  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
@@ -1074,6 +1075,13 @@ def lectura(params: dict) -> tuple[int, dict]:
                        "texto": leer_perfil_del_comprador(
                            m["metricas"], censo, m["etiqueta"] or "la zona")}
 
+    # ── ¿ESTA EVALUACION LA SACO EL MOTOR DE HOY? ───────────────────────────
+    # `pacs.evaluaciones` es append-only y el catalogo cambia. Una evaluacion
+    # de una version anterior no es una evaluacion mala: es una evaluacion que
+    # todavia no se rehizo. Pero su dolor primario NO es el que el motor de hoy
+    # sacaria, y presentarlo como vigente es afirmar algo que ya no se sostiene.
+    reglas_viejas = bool(ev) and (ev.get("version_reglas") != VERSION_REGLAS)
+
     sin_dolor = None
     if not (ev or {}).get("dolor_primario"):
         c = copy_sin_dolor(realtor,
@@ -1169,7 +1177,15 @@ def lectura(params: dict) -> tuple[int, dict]:
         "narrativa": texto_narrativa,
         "cabecera": {
             "nivel": (ev or {}).get("nivel") or _nivel_desde(ev),
-            "dolor_primario": primario,
+            # El dolor primario NO se presenta como vigente si la evaluacion se
+            # calculo con otra version de reglas. Es literalmente lo que pasa
+            # hoy con las 4.187: se evaluaron con
+            # `2026.09.23-vocabulario-de-oficio` y el catalogo ya es
+            # `2026.09.23-sin-r7`, sin R7. Mostrar ese P-Q14 como el dolor de
+            # alguien seria mostrar una conclusion que el motor actual no saca.
+            "dolor_primario": primario if not reglas_viejas else None,
+            "dolor_primario_de_reglas_anteriores": primario if reglas_viejas
+                                                   else None,
             "acto_de_habla": next((h["acto"] for h in hipotesis
                                    if h["papel"] == "principal"), None),
             "gating": {"qualifier": (ev or {}).get("gating_qualifier"),
@@ -1181,6 +1197,11 @@ def lectura(params: dict) -> tuple[int, dict]:
         # aqui ya no decide nada.
         "excluido": (ev or {}).get("excluido"),
         "excluido_motivo": (ev or {}).get("excluido_motivo"),
+        "reglas_anteriores": ({
+            "aviso": "Evaluada con reglas anteriores, pendiente de re-evaluar",
+            "version_de_la_evaluacion": (ev or {}).get("version_reglas"),
+            "version_actual": VERSION_REGLAS,
+        } if reglas_viejas else None),
         # El veredicto completo tambien en la lectura: la pantalla necesita
         # distinguir «excluido» de «falta Model Match», que son dos avisos
         # distintos y dos trabajos distintos a continuacion.
@@ -1370,6 +1391,34 @@ def dossier(params: dict) -> tuple[int, dict]:
                 "es la secuencia."
                 if v.estado == "excluido" else
                 "Falta Model Match: capturar antes de dar veredicto."),
+        }
+
+    # La obsolescencia va DESPUES de la compuerta, y no al reves.
+    #
+    # `puede_contactarse` no mira el catalogo de qualifiers: lee el libro y el
+    # reparto de originadores de Model Match. Su veredicto vale igual con
+    # reglas viejas, y es permanente -- Armando Ochoa trabaja con Everett
+    # Financial se re-corra el motor o no. La obsolescencia, en cambio, es un
+    # estado temporal de NUESTROS datos.
+    #
+    # Con el orden al reves, Armando salia «pendiente de re-evaluar» y su
+    # exclusion quedaba tapada por un aviso que hoy tienen las 4.187 filas.
+    if base.get("reglas_anteriores"):
+        ra = base["reglas_anteriores"]
+        return 409, {
+            "error": ra["aviso"],
+            "reglas_anteriores": ra,
+            "lo_que_sabemos": {
+                "realtor": base.get("realtor"),
+                "cabecera": base.get("cabecera"),
+                "narrativa": base.get("narrativa"),
+                "mercados": base.get("mercados"),
+            },
+            "bloques": [],
+            "secuencia": {"toques": [], "recursos_pendientes": []},
+            "que_hacer": ("Volver a correr el motor sobre este realtor. Su "
+                          "diagnóstico anterior se conserva como histórico, "
+                          "pero no es el que el motor de hoy sacaría."),
         }
 
     nombre = base["realtor"]["nombre_mostrado"]

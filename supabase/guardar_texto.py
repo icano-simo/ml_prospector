@@ -1,8 +1,14 @@
-"""Guarda un texto generado por un modelo, SOLO si pasa las cinco guardas.
+"""Guarda un texto generado por un modelo, SOLO si pasa las seis guardas.
 
     from supabase.guardar_texto import guardar
-    guardar(realtor_id=..., tipo="narrativa", texto=..., insumos={...},
-            modelo="claude-opus-5", afirma=False)
+    guardar(realtor_id=..., evaluacion_id=..., tipo="narrativa", texto=...,
+            insumos=extracto, extracto_vigente=extracto,
+            modelo="claude-opus-5")
+
+`afirma` NO es parametro: se deriva del extracto. `insumos` y
+`extracto_vigente` son el mismo objeto cuando todo esta bien -- el que devolvio
+/api/extracto-- y son dos parametros justamente para que puedan no serlo y se
+note.
 
 Por que existe un modulo y no un INSERT a mano
 ----------------------------------------------
@@ -47,10 +53,14 @@ def hash_de_insumos(insumos) -> str:
                    default=str).encode("utf-8")).hexdigest()
 
 
+#: Para distinguir «no me pasaron el extracto» de «me pasaron None».
+_SIN_EXTRACTO = object()
+
+
 def guardar(*, realtor_id: str, tipo: str, texto: str, insumos: dict,
-            modelo: str, evaluacion_id: str, afirma: bool | None = None,
-            orden: int | None = None, extracto_vigente: dict | None = None,
-            conexion=None,
+            modelo: str, evaluacion_id: str,
+            extracto_vigente=_SIN_EXTRACTO,
+            orden: int | None = None, conexion=None,
             version_reglas: str = VERSION_REGLAS) -> dict:
     """Verifica y escribe. Levanta `TextoRechazado` si no pasa.
 
@@ -63,9 +73,23 @@ def guardar(*, realtor_id: str, tipo: str, texto: str, insumos: dict,
     un texto verificado contra unos insumos que nadie podia relacionar con
     ningun diagnostico.
 
-    `afirma` se DERIVA del extracto. Era `True` por omision, que es el valor
-    mas peligroso: quien no pensara en el parametro obtenia permiso para
-    afirmar.
+    `extracto_vigente` tambien es OBLIGATORIO. Se eligio exigirlo en vez de
+    leerlo aqui de `evaluacion_id` porque el extracto se ensambla en la cadena
+    `/api/lectura -> /api/dossier -> /api/extracto`, y leerlo desde este modulo
+    obligaria a que `supabase/` importara `api/` -- la dependencia al reves. El
+    que escribio el texto YA tiene el extracto en la mano: es el mismo objeto
+    con el que escribio, que es justamente el punto.
+
+    Y `insumos` sigue siendo un parametro aparte a proposito. Si se colapsaran
+    en uno no habria nada que comparar, y una verificacion sin dos lados es la
+    que aprueba siempre. `insumos` es lo que el que escribio dice haber usado;
+    `extracto_vigente` es lo que el sistema dice que es el material. Que
+    coincidan es la comprobacion.
+
+    `afirma` ya NO es parametro: se deriva del extracto, siempre. Era `True`
+    por omision, o sea que quien no pensara en el obtenia permiso para afirmar.
+    Las pruebas que necesiten forzarlo lo hacen contra
+    `verificar_texto_generado`, que es donde tiene sentido.
     """
     if tipo not in TIPOS:
         raise TextoRechazado("tipo %r no es uno de %s" % (tipo, TIPOS))
@@ -97,19 +121,31 @@ def guardar(*, realtor_id: str, tipo: str, texto: str, insumos: dict,
     # Los insumos tienen que ser EL extracto de esa evaluacion, no unos insumos
     # parecidos. Verificar un texto contra material que no es el que se le dio
     # es la guarda que compara contra otra cosa -- y esa siempre aprueba.
-    huella = hash_de_insumos(insumos)
-    if extracto_vigente is not None:
-        esperada = hash_de_insumos(extracto_vigente)
-        if huella != esperada:
-            raise TextoRechazado(
-                "los insumos NO son el extracto de la evaluacion %s.\n"
-                "  insumos recibidos: sha256 %s\n"
-                "  extracto vigente : sha256 %s\n"
-                "Verificar contra material distinto del que se uso para "
-                "escribir no comprueba nada."
-                % (evaluacion_id, huella[:16], esperada[:16]))
+    if extracto_vigente is _SIN_EXTRACTO:
+        raise TextoRechazado(
+            "falta `extracto_vigente`: sin el, `insumos` no se compara contra "
+            "nada y la verificacion aprueba cualquier material fabricado. Es "
+            "el extracto que devolvio /api/extracto para la evaluacion %s."
+            % evaluacion_id)
+    if not extracto_vigente:
+        raise TextoRechazado(
+            "`extracto_vigente` vino vacio para la evaluacion %s. Un extracto "
+            "vacio comparado contra unos insumos vacios coincide, y eso no "
+            "comprueba nada." % evaluacion_id)
 
-    v = verificar_texto_generado(texto, insumos, afirma=afirma)
+    huella = hash_de_insumos(insumos)
+    esperada = hash_de_insumos(extracto_vigente)
+    if huella != esperada:
+        raise TextoRechazado(
+            "los insumos NO son el extracto de la evaluacion %s.\n"
+            "  insumos recibidos: sha256 %s\n"
+            "  extracto vigente : sha256 %s\n"
+            "Verificar contra material distinto del que se uso para "
+            "escribir no comprueba nada."
+            % (evaluacion_id, huella[:16], esperada[:16]))
+
+    # `afirma` NO se pasa: se deriva del extracto dentro de la verificacion.
+    v = verificar_texto_generado(texto, insumos)
     if not v.ok:
         raise TextoRechazado(
             "el texto NO se guarda.\n%s\n\nveredicto: %s"

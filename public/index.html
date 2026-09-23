@@ -428,6 +428,22 @@ function vistaLectura(d){
       trabaja, no se puede saber si le estaríamos quitando su propia cartera a
       un colega.</p></div>` : '';
 
+  /* Evaluada con un catálogo que ya no existe. Su dolor primario NO se pinta
+     como vigente: lo sacó un motor distinto del de hoy. */
+  const ra = d.reglas_anteriores;
+  const aviso_reglas = ra ? `<div class="banner" style="border-color:var(--coral)">
+    <div class="seccion" style="color:var(--rose-700)">▲ ${esc(ra.aviso)}</div>
+    <table class="tabla" style="margin-top:8px">
+      <tr><td class="lbl">se evaluó con</td>
+          <td class="num">${esc(ra.version_de_la_evaluacion || '—')}</td></tr>
+      <tr><td class="lbl">el motor de hoy es</td>
+          <td class="num">${esc(ra.version_actual || '—')}</td></tr>
+    </table>
+    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-600)">
+      Su diagnóstico anterior se conserva abajo como histórico y no se presenta
+      como vigente. El <b>Dossier</b> y la <b>Secuencia</b> responden 409 hasta
+      que se vuelva a correr el motor.</p></div>` : '';
+
   const aviso_excluido = d.excluido ? `<div class="banner" style="border-color:var(--salmon)">
     <div class="seccion" style="color:var(--salmon)">⛔ No entra a ninguna cola de contacto</div>
     <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
@@ -450,7 +466,8 @@ function vistaLectura(d){
     Un perfil describe un momento, y mezclar dos no da un momento mejor.</div>` : '';
 
   /* 1 · quién es, en prosa. Es lo primero que un BD lee. */
-  const quien = aviso_excluido + aviso_pendiente + aviso_capturas + `<div class="tarjeta">
+  const quien = aviso_excluido + aviso_reglas + aviso_pendiente
+    + aviso_capturas + `<div class="tarjeta">
     <div class="seccion">Qué clase de realtor es</div>
     <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
       ${esc(d.narrativa || '')}</p></div>`;
@@ -463,7 +480,14 @@ function vistaLectura(d){
     <!-- NO dice «sin dolor primario». Un realtor sin activaciones no es alguien
          sin dolor: es alguien de quien no sabemos lo suficiente. La diferencia
          es quién queda mal en la frase, y es nuestra la falta de evidencia. -->
-    <span class="cifra" style="margin-left:12px;font-size:18px">${esc(c.dolor_primario || 'sin evidencia suficiente: no lo sabemos')}</span>
+    <!-- Con reglas anteriores el dolor viene en su propio campo y se pinta
+         MARCADO: ni como vigente, ni escondido. Esconderlo haría que alguien
+         lo buscara en la base y lo usara sin el aviso. -->
+    <span class="cifra" style="margin-left:12px;font-size:18px">${esc(
+      c.dolor_primario
+      || (c.dolor_primario_de_reglas_anteriores
+          ? c.dolor_primario_de_reglas_anteriores + ' (de reglas anteriores)'
+          : 'sin evidencia suficiente: no lo sabemos'))}</span>
     ${c.acto_de_habla ? `<span class="pista" style="margin-left:10px">acto de habla:
       <b style="color:var(--sky)">${esc(c.acto_de_habla)}</b></span>` : ''}
     ${c.gating && c.gating.qualifier ? `<div class="pista" style="margin-top:8px">
