@@ -556,10 +556,29 @@ def _tabla_originadores(txt: str) -> list[dict]:
 #:     `Ada County` tambien -- pero la intencion era otra y conviene que se vea.
 _RE_FILA_CONDADO_REAL = re.compile(
     r"^[ \t]*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ.\-' ]{1,40}?)\s+"
-    r"(?:County|Parish|Borough|city|City and County)\s*,\s*([A-Z]{2})"
+    r"(County|Parish|Borough|city|City and County)\s*,\s*([A-Z]{2})"
     r"[ \t]+\$[\d.,]+\s*[MKB]?[ \t]+(\d+)(?:[ \t]|$)",
     re.MULTILINE,
 )
+
+#: Los tipos que NO son condado. En cinco estados existe una ciudad
+#: independiente con el MISMO nombre que el condado que la rodea, y son FIPS
+#: distintos:
+#:
+#:   Baltimore city (24510) y Baltimore County (24005), MD
+#:   St. Louis city (29510) y St. Louis County (29189), MO
+#:   Richmond city (51760) y Richmond County (51159), VA
+#:   Fairfax city (51600) y Fairfax County (51059), VA
+#:   Roanoke city (51770) y Roanoke County (51161), VA
+#:
+#: Quitar el sufijo los convertia en el mismo mercado: dos filas del Overview
+#: con volumenes y unidades distintos colapsaban en «Baltimore», y la
+#: biblioteca de geografias promediaba dos sitios que no se parecen -- una
+#: ciudad de 570.000 habitantes y el condado suburbano de al lado.
+#:
+#: Es el mismo error de CA contra California, al reves: alli dos nombres del
+#: mismo sitio, aqui un nombre para dos sitios.
+TIPOS_QUE_NO_SON_CONDADO = ("city", "City and County")
 
 
 def _condados(txt: str) -> list[dict]:
@@ -569,12 +588,19 @@ def _condados(txt: str) -> list[dict]:
     Market Signals.
     """
     salida = []
-    for nombre, estado_fila, unidades in _RE_FILA_CONDADO_REAL.findall(txt or ""):
+    for nombre, tipo, estado_fila, unidades in _RE_FILA_CONDADO_REAL.findall(
+            txt or ""):
         n = nombre.strip()
         if n.lower() in ("total", "county", "counties", "units"):
             continue
-        salida.append({"nombre": n, "estado": estado_fila,
-                       "unidades": int(unidades)})
+        tipo = tipo.strip()
+        # `nombre` conserva el sufijo cuando NO es un condado, porque si no
+        # «Baltimore city» y «Baltimore County» son la misma etiqueta y son dos
+        # FIPS distintos. Para los condados se quita, que es como se nombran.
+        etiqueta = n if tipo == "County" else "%s %s" % (n, tipo)
+        salida.append({"nombre": etiqueta, "nombre_base": n, "tipo": tipo,
+                       "es_condado": tipo not in TIPOS_QUE_NO_SON_CONDADO,
+                       "estado": estado_fila, "unidades": int(unidades)})
     return salida
 
 

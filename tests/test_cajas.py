@@ -154,13 +154,71 @@ def test_parish_borough_y_city():
     txt = ("Orleans Parish, LA\t$1.0M\t3\t\n"
            "Juneau Borough, AK\t$2.0M\t4\t\n"
            "Baltimore city, MD\t$3.0M\t5\t\n")
-    assert [c["nombre"] for c in _condados(txt)] == [
+    filas = _condados(txt)
+    # `Parish` y `Borough` SÍ son el condado del estado, así que el nombre va
+    # pelado. `city` es otra cosa y conserva el sufijo: ver el test de los dos
+    # Baltimore.
+    assert [c["nombre"] for c in filas] == [
+        "Orleans Parish", "Juneau Borough", "Baltimore city"]
+    assert [c["nombre_base"] for c in filas] == [
         "Orleans", "Juneau", "Baltimore"]
+    assert [c["es_condado"] for c in filas] == [True, True, False]
 
 
 def test_acentos_y_enie():
     txt = "Doña Ana County, NM\t$1.5M\t2\t\n"
     assert [c["nombre"] for c in _condados(txt)] == ["Doña Ana"]
+
+
+#: Los cinco estados donde una ciudad independiente comparte nombre con el
+#: condado que la rodea. Son FIPS distintos.
+LOS_DOS_BALTIMORE = (
+    "Baltimore city, MD\t$1.0M\t3\t\n"
+    "Baltimore County, MD\t$2.0M\t5\t\n"
+    "St. Louis city, MO\t$1.1M\t2\t\n"
+    "St. Louis County, MO\t$2.1M\t4\t\n"
+    "Richmond city, VA\t$1.2M\t1\t\n"
+    "Richmond County, VA\t$2.2M\t6\t\n"
+    "Fairfax city, VA\t$1.3M\t2\t\n"
+    "Fairfax County, VA\t$2.3M\t7\t\n"
+    "Roanoke city, VA\t$1.4M\t1\t\n"
+    "Roanoke County, VA\t$2.4M\t3\t\n"
+)
+
+
+def test_una_ciudad_y_su_condado_no_son_el_mismo_mercado():
+    """Baltimore city (24510) y Baltimore County (24005) son FIPS distintos.
+
+    Quitar el sufijo los convertía en «Baltimore» a secas, así que dos filas
+    del Overview con volúmenes y unidades distintos colapsaban en un mercado y
+    la biblioteca promediaba una ciudad de 570.000 habitantes con el condado
+    suburbano de al lado.
+
+    Es el mismo error de CA contra California, al revés: allí dos nombres del
+    mismo sitio, aquí un nombre para dos sitios.
+    """
+    filas = _condados(LOS_DOS_BALTIMORE)
+    assert len(filas) == 10, len(filas)
+    nombres = [f["nombre"] for f in filas]
+    assert len(set(nombres)) == 10, sorted(nombres)
+    assert "Baltimore city" in nombres and "Baltimore" in nombres
+
+
+def test_cada_fila_dice_su_tipo_y_si_es_condado():
+    """El sufijo en el nombre resuelve la etiqueta; `tipo` resuelve el resto."""
+    porn = {f["nombre"]: f for f in _condados(LOS_DOS_BALTIMORE)}
+    assert porn["Baltimore city"]["tipo"] == "city"
+    assert porn["Baltimore city"]["es_condado"] is False
+    assert porn["Baltimore city"]["nombre_base"] == "Baltimore"
+    assert porn["Baltimore"]["tipo"] == "County"
+    assert porn["Baltimore"]["es_condado"] is True
+
+
+def test_las_unidades_no_se_mezclan_entre_la_ciudad_y_el_condado():
+    """Lo que de verdad costaba: 3 unidades de la ciudad y 5 del condado."""
+    porn = {f["nombre"]: f["unidades"] for f in _condados(LOS_DOS_BALTIMORE)}
+    assert porn["Baltimore city"] == 3
+    assert porn["Baltimore"] == 5
 
 
 def test_los_condados_de_siempre_siguen_saliendo():
