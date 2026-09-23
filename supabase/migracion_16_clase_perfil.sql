@@ -1,100 +1,140 @@
 -- ════════════════════════════════════════════════════════════════════════════
--- 16 · `clase_perfil`: la compuerta se persiste, no se recalcula
+-- 16 · `clase_perfil`: tabla propia, append-only, y la auditoria manda
 -- ════════════════════════════════════════════════════════════════════════════
 --
--- ⚠ NO APLICADA. Espera el OK de Isabella para el merge. Desde el 2026-09-23
---   las migraciones se aplican a produccion DESPUES del merge.
+-- ⚠ NO APLICADA. Espera el OK de Isabella. Desde el 2026-09-23 las migraciones
+--   se aplican a produccion DESPUES del merge.
 --
--- Que resuelve
--- ------------
--- `motor/desde_instagram.py` evaluaba Instagram sin compuerta de perfil: 36 de
--- los 39 perfiles no utilizables tenian un dolor primario vigente. La clase se
--- calcula en la INGESTA -- `ingest/instagram/clase_perfil.py` -- y el motor
--- solo la lee; recalcularla en cada consumidor es como dos capas empiezan a
--- discrepar sin que nada avise.
+-- REHECHA tras la auditoria de Cowork del 2026-09-23, que encontro dos cosas
+-- que la primera version prometia y no hacia:
 --
--- La auditoria manual MANDA sobre la automatica: `clase_origen = 'auditoria'`
--- gana, y queda registrado quien y cuando. Un clasificador que pisa lo que una
--- persona corrigio a mano hace que nadie vuelva a corregir nada.
-
-alter table pacs.ig_senales
-    add column if not exists clase_perfil text,
-    add column if not exists clase_motivo text,
-    add column if not exists clase_origen text
-        default 'auto' check (clase_origen in ('auto', 'auditoria')),
-    add column if not exists clase_auditada_por text,
-    add column if not exists clase_auditada_en timestamptz,
-    add column if not exists clase_revisar boolean default false,
-    add column if not exists version_lexico text;
-
-comment on column pacs.ig_senales.clase_perfil is
-'realtor_activo | realtor_mixto | poca_evidencia | otro_perfil (UTILIZABLES) ·
-sin_datos | persona_equivocada | re_fuera_eeuu | inactivo | personal_sin_re (NO
-utilizables). Ninguna señal de Instagram entra al motor sin una clase
-utilizable. `otro_perfil` entra solo como fuente de referidos.';
-
-comment on column pacs.ig_senales.clase_origen is
-'auto | auditoria. La auditoria manual manda sobre la automatica.';
-
-create index if not exists ig_senales_clase
-    on pacs.ig_senales (clase_perfil);
-
--- ── La carga parcial no puede apagar el lote ───────────────────────────────
--- Un scraping de 7 handles no puede dejar sin señales a los otros 291. Con el
--- modelo de lotes actual, apagar el lote anterior es exactamente eso: la carga
--- nueva trae 7 filas vigentes y las 291 restantes desaparecen de la vista.
+--   · el indice unico sobre (realtor_id, upload_batch_id) NO resolvia la carga
+--     parcial. Solo impedia duplicar un realtor DENTRO de un lote. Cargar un
+--     lote con 7 handles corregidos y apagar el anterior seguia borrando los
+--     291 restantes de la vista;
+--   · la clase auditada a mano vivia en la MISMA fila que las señales del
+--     scraping, asi que al volver a scrapear entraba una fila nueva con
+--     `origen='auto'` y la auditoria quedaba en la fila vieja, fuera de la
+--     vista. Pasa justo con los 7 handles corregidos.
 --
--- La llave unica por realtor habilita el upsert. **No se crea como constraint
--- de la tabla** porque `ig_senales` es append-only y una fila por lote es lo
--- que permite ver el historico; es un indice UNICO parcial sobre lo vigente.
-create unique index if not exists ig_senales_un_realtor_vigente
-    on pacs.ig_senales (realtor_id, upload_batch_id)
- where realtor_id is not null;
+-- El comentario de la version anterior prometia lo primero. Una promesa en un
+-- comentario que el codigo no cumple es peor que no tenerla: alguien la lee y
+-- deja de comprobarlo.
 
-do $$
-declare
-    faltan text[];
-begin
-    select array_agg(c) into faltan from unnest(array[
-        'clase_perfil','clase_motivo','clase_origen','clase_auditada_por',
-        'clase_auditada_en','clase_revisar','version_lexico']) c
-     where not exists (
-        select 1 from information_schema.columns
-         where table_schema='pacs' and table_name='ig_senales'
-           and column_name = c);
-    if faltan is not null then
-        raise exception 'faltan columnas: %', faltan;
-    end if;
-    raise notice 'clase_perfil en columna · % filas de ig_senales, % con clase',
-        (select count(*) from pacs.ig_senales),
-        (select count(clase_perfil) from pacs.ig_senales);
-end $$;
+-- ── 1 · La clase vive en su propia tabla, append-only ──────────────────────
+--
+-- Separarla de `ig_senales` es lo que permite que una auditoria manual
+-- sobreviva a un re-scraping: son dos hechos de origen distinto y ritmo
+-- distinto, y meterlos en la misma fila ata el mas duradero al mas volatil.
+create table if not exists pacs.ig_clase_perfil (
+    id              uuid primary key default gen_random_uuid(),
+    realtor_id      uuid not null references pacs.realtors(id),
+    handle          text,
+    clase           text not null,
+    motivo          text not null,
+    origen          text not null default 'auto',
+    revisar         boolean not null default false,
+    auditada_por    text,
+    decidida_en     timestamptz not null default now(),
+    version_lexico  text,
+    detalle         jsonb,
 
--- `select s.*` congela la lista de columnas al crear la vista: sin recrearla,
--- las siete nuevas no existirian para quien lea la vista. Es la regla de la
--- migracion 04 y ya se olvido dos veces.
+    -- Las 9 clases y ninguna mas. `clase_perfil` era texto libre, asi que un
+    -- typo --«realtor_activa»-- entraba como una clase nueva, y una clase que
+    -- nadie declaro cae del lado NO utilizable en el codigo pero nadie se
+    -- entera de que existe.
+    constraint ig_clase_valida check (clase in (
+        'realtor_activo', 'realtor_mixto', 'poca_evidencia', 'otro_perfil',
+        'sin_datos', 'persona_equivocada', 're_fuera_eeuu', 'inactivo',
+        'personal_sin_re')),
+    constraint ig_origen_valido check (origen in ('auto', 'auditoria')),
+    -- Una auditoria sin firma no se puede discutir con nadie.
+    constraint ig_auditoria_firmada check (
+        origen <> 'auditoria' or auditada_por is not null)
+);
+
+create index if not exists ig_clase_por_realtor
+    on pacs.ig_clase_perfil (realtor_id, decidida_en desc);
+create index if not exists ig_clase_por_clase
+    on pacs.ig_clase_perfil (clase);
+
+comment on table pacs.ig_clase_perfil is
+'Append-only. Una fila por decision de clase, automatica o auditada. La vista
+`v_ig_clase_actual` resuelve cual manda: la auditoria manual gana sobre la
+automatica SIEMPRE, y entre dos auditorias gana la mas nueva. Un re-scraping
+agrega una fila `auto` y NO pisa la auditoria.';
+
+-- ── 2 · La vista que resuelve la prioridad ─────────────────────────────────
+--
+-- `origen = 'auditoria'` primero, y despues por fecha. Con `distinct on` eso
+-- se lee en una sola pasada y el orden ES la regla: no hay un `case` que
+-- alguien pueda cambiar sin darse cuenta de que cambia la prioridad.
+create or replace view pacs.v_ig_clase_actual as
+select distinct on (realtor_id) *
+  from pacs.ig_clase_perfil
+ order by realtor_id,
+          (origen = 'auditoria') desc,   -- la auditoria manda
+          decidida_en desc;              -- y entre iguales, la mas nueva
+
+alter view pacs.v_ig_clase_actual set (security_invoker = on);
+
+-- ── 3 · La carga parcial NO puede apagar el lote ───────────────────────────
+--
+-- `v_ig_senales_current` devolvia todas las filas de los lotes vigentes. Un
+-- scraping de 7 handles que apagaba el lote anterior dejaba 7 filas y los 291
+-- perfiles restantes desaparecian.
+--
+-- Ahora devuelve **la fila mas reciente por realtor** entre los lotes vigentes,
+-- asi que un lote parcial se suma en vez de reemplazar: los 7 se actualizan y
+-- los 291 siguen ahi con su captura anterior. La carga parcial ya no necesita
+-- apagar nada -- y si alguien lo apaga igual, los 291 sobreviven mientras su
+-- lote siga vigente.
 create or replace view pacs.v_ig_senales_current as
-select s.*
+select distinct on (s.realtor_id) s.*
   from pacs.ig_senales s
   join pacs.upload_batch b on b.id = s.upload_batch_id
- where b.es_vigente;
+ where b.es_vigente
+ order by s.realtor_id, s.capturado_en desc, s.uploaded_at desc;
 
 alter view pacs.v_ig_senales_current set (security_invoker = on);
 
+-- ── RLS · igual que el resto ───────────────────────────────────────────────
+alter table pacs.ig_clase_perfil enable row level security;
+alter table pacs.ig_clase_perfil force row level security;
+
+drop policy if exists ig_clase_select on pacs.ig_clase_perfil;
+create policy ig_clase_select on pacs.ig_clase_perfil
+    for select to authenticated using (pacs.tiene_acceso());
+
+-- El GRANT, que la migracion 15 olvido en `textos_generados` y por eso su
+-- policy de SELECT quedo inservible: Postgres corta en el GRANT antes de mirar
+-- RLS. Aqui va desde el principio.
+grant select on pacs.ig_clase_perfil to authenticated;
+grant select on pacs.v_ig_clase_actual to authenticated;
+
+-- ── La verificacion ────────────────────────────────────────────────────────
 do $$
-declare faltan text[];
+declare
+    n_sen int; n_realtors int; n_policies int; n_grant int;
 begin
-    select array_agg(t.column_name order by t.column_name) into faltan
-      from information_schema.columns t
-     where t.table_schema='pacs' and t.table_name='ig_senales'
-       and not exists (
-           select 1 from information_schema.columns v
-            where v.table_schema='pacs' and v.table_name='v_ig_senales_current'
-              and v.column_name = t.column_name);
-    if faltan is not null then
-        raise exception 'v_ig_senales_current no tiene: %', faltan;
+    -- La vista de señales tiene que devolver UNA fila por realtor.
+    select count(*), count(distinct realtor_id) into n_sen, n_realtors
+      from pacs.v_ig_senales_current where realtor_id is not null;
+    if n_sen <> n_realtors then
+        raise exception 'v_ig_senales_current devuelve % filas para % realtors',
+            n_sen, n_realtors;
     end if;
-    raise notice 'vista al dia con las % columnas',
-        (select count(*) from information_schema.columns
-          where table_schema='pacs' and table_name='ig_senales');
+
+    select count(*) into n_policies from pg_policies
+     where schemaname='pacs' and tablename='ig_clase_perfil';
+    select count(*) into n_grant from information_schema.role_table_grants
+     where table_schema='pacs' and grantee='authenticated'
+       and table_name in ('ig_clase_perfil', 'v_ig_clase_actual')
+       and privilege_type = 'SELECT';
+    if n_grant < 2 then
+        raise exception 'faltan GRANT SELECT para authenticated (hay %)', n_grant;
+    end if;
+
+    raise notice 'ig_clase_perfil creada · % señales para % realtors · '
+                 '% policies · % grants', n_sen, n_realtors, n_policies, n_grant;
 end $$;

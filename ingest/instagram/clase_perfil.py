@@ -26,6 +26,8 @@ from datetime import date, datetime
 from captura.estados import ESTADOS, normalizar_estado
 from ingest.instagram.lexico import (
     CONFERENCISTA,
+    DOBLE_LICENCIA,
+    HASHTAG_CIUDAD,
     ES_EEUU_SIEMPRE,
     HASHTAG_REGIONAL,
     LISTADO_EXTRANJERO,
@@ -222,7 +224,7 @@ def _clase_de_otro_perfil(texto: str, bio: str) -> Clase | None:
     def _propio(patron):
         """El match, salvo que haya un @handle cerca: eso es de otra persona.
 
-        «our amazing loan officer @jenniferwyattloanofficer» y
+        «our amazing loan officer @la_loan_officer» y
         «@speakermatiasrios Empresario, conferencista internacional» son los dos
         casos medidos. Un arroba a menos de 40 caracteres significa que la frase
         le esta dando el credito a alguien mas.
@@ -232,6 +234,20 @@ def _clase_de_otro_perfil(texto: str, bio: str) -> Clase | None:
             return None
         cerca = todo[max(0, m.start() - 40):m.end() + 40]
         return None if "@" in cerca else m
+
+    # La doble licencia NO pasa por el guarda del `@`: los dos numeros en la
+    # misma firma son autoatribucion aunque el post etiquete a alguien.
+    m = DOBLE_LICENCIA.search(todo)
+    if m:
+        nmls = re.search(r"\bnmls\s*#?\s*(\d{4,})", m.group(0), re.I)
+        return Clase(
+            "otro_perfil",
+            "doble licencia en la firma (%s): tiene NMLS propio, regla 7"
+            % m.group(0).strip()[:60],
+            revisar=True,
+            detalle={"es_originador": True, "doble_licencia": True,
+                     "nmls": nmls.group(1) if nmls else None,
+                     "cita": m.group(0).strip()})
 
     m = _propio(ORIGINADOR)
     if m:
@@ -307,6 +323,19 @@ def clasificar(fila: dict, *, handles_repetidos: frozenset | set = frozenset()
             return Clase("persona_equivocada",
                          "#%s en un lead de %s" % (tag, estado_lead),
                          detalle={"hashtag": tag, "estado_lead": estado_lead})
+
+    # 3b · hashtag de ciudad fuera de su estado. NO excluye: avisa.
+    #
+    # Un realtor de Colorado puede publicar #miamirealestate por referidos, por
+    # una segunda casa o por un cliente que se muda. Convertir eso en exclusion
+    # seria el error de A2 otra vez. Lo que si vale es pedir que alguien mire
+    # el estado del lead.
+    avisos = []
+    for tag, estado_ok in HASHTAG_CIUDAD.items():
+        if re.search(r"#" + tag, texto, re.I) and codigo_lead != estado_ok:
+            avisos.append(
+                "publica #%s y el lead figura en %s: verificar el estado"
+                % (tag, estado_lead))
 
     # 4 · portugues
     n_pt = len(PORTUGUES.findall(texto))
@@ -395,13 +424,14 @@ def clasificar(fila: dict, *, handles_repetidos: frozenset | set = frozenset()
                "share_re": round(share_re, 3)}
     if opera_fuera:
         detalle["opera_tambien_fuera"] = True
-    if share_re < SHARE_RE_MIXTO:
-        return Clase("realtor_mixto",
-                     "%d de %d posts de real estate" % (n_re, len(posts)),
-                     detalle=detalle)
-    return Clase("realtor_activo",
+    if avisos:
+        detalle["avisos"] = avisos
+    clase = "realtor_mixto" if share_re < SHARE_RE_MIXTO else "realtor_activo"
+    return Clase(clase,
                  "%d de %d posts de real estate" % (n_re, len(posts)),
-                 detalle=detalle)
+                 # El aviso NO cambia la clase, pero si pone la fila en la
+                 # cola de revision: es una pregunta, no un veredicto.
+                 revisar=bool(avisos), detalle=detalle)
 
 
 def handles_repetidos_en(filas: list[dict]) -> frozenset:

@@ -182,7 +182,7 @@ FALSOS_OTRO_PERFIL = [
     ("el LO del open house", "We will have our preferred loan officer ready "
                              "to pre-qualify you"),
     ("credito a otro", "shout out to one of the best loan officers in the "
-                       "game, @jeen.yim, for helping make this happen"),
+                       "game, @un_loan_officer, for helping make this happen"),
     ("descripción de listado", "remains is cosmetic, making this a great "
                                "opportunity for a fix and flip or buy and hold"),
     ("comprando a uno", "We negotiated it down from the wholesaler's asking "
@@ -220,7 +220,7 @@ def test_los_verdaderos_otro_perfil_siguen_saliendo():
 
 
 def test_multiple_loan_strategies_SOLA_no_alcanza():
-    """Hallazgo de la auditoría: `@ezequiel_bolanos_`.
+    """Hallazgo de la auditoría: `perfil_R`, un realtor con varios lenders.
 
     Publica la frase y su post siguiente es un condo de $619K en Spring
     Valley. Un realtor que trabaja con varios lenders dice lo mismo que un
@@ -234,7 +234,7 @@ def test_multiple_loan_strategies_SOLA_no_alcanza():
 
 
 def test_el_hashtag_regional_compara_por_CODIGO_de_estado():
-    """Hallazgo de la auditoría: `@realtor_geo`, un realtor de Virginia.
+    """Hallazgo de la auditoría: `perfil_V`, un realtor de Virginia.
 
     `HASHTAG_REGIONAL` tenía «Virginia» y el lead trae «VA», así que un realtor
     del DMV publicando #dmvrealestate salía `persona_equivocada`. Es el mismo
@@ -250,6 +250,62 @@ def test_el_hashtag_regional_compara_por_CODIGO_de_estado():
     # Y en Texas sigue siendo persona equivocada.
     assert clasificar(_fila(estado="TX", captions=posts)).clase == \
         "persona_equivocada"
+
+
+def test_doble_licencia_en_la_firma_es_otro_perfil():
+    """Hallazgo de la auditoría: `perfil_D`.
+
+    Firma «Century 21 Affiliated DRE #01417038 | NMLS #2061139». Ninguna forma
+    de `ORIGINADOR` matchea porque no dice «loan officer» ni habla en primera
+    persona — pero una licencia inmobiliaria y un NMLS en la MISMA firma es
+    doble licencia, y la regla 7 la descarta.
+    """
+    posts = ["2026-09-01 | Just listed! Call me 📞 714-745-0896 Century 21 "
+             "Affiliated DRE #01417038 | NMLS #2061139 #OrangeCounty"]
+    posts += ["2026-09-%02d | New listing, open house" % (i + 2)
+              for i in range(9)]
+    c = clasificar(_fila(estado="California", captions=posts))
+    assert c.clase == "otro_perfil", c.a_dict()
+    assert c.detalle.get("es_originador") is True
+    assert c.detalle.get("doble_licencia") is True
+    assert c.detalle.get("nmls") == "2061139"
+    assert c.revisar is True
+
+
+def test_la_doble_licencia_no_la_anula_un_arroba_cerca():
+    """Nadie firma con la licencia de otro, así que el guarda del @ no aplica."""
+    posts = ["2026-09-01 | Gracias @una_colega ✨ DRE #01417038 | NMLS #2061139"]
+    posts += ["2026-09-%02d | New listing, open house" % (i + 2)
+              for i in range(9)]
+    assert clasificar(_fila(captions=posts)).clase == "otro_perfil"
+
+
+def test_una_licencia_sola_no_es_doble_licencia():
+    """El control: casi todo realtor firma con su DRE, y eso no lo descalifica."""
+    posts = ["2026-09-01 | Just listed! Century 21 Affiliated DRE #01417038"]
+    posts += ["2026-09-%02d | New listing, open house" % (i + 2)
+              for i in range(9)]
+    assert clasificar(_fila(captions=posts)).clase == "realtor_activo"
+
+
+def test_un_hashtag_de_otra_ciudad_avisa_pero_NO_excluye():
+    """Hallazgo 5 de la auditoría. Tres casos en el lote.
+
+    Un realtor de Colorado publica #miamirealestate por referidos, por una
+    segunda casa o por un cliente que se muda. Convertirlo en exclusión sería
+    el error de A2 otra vez: lo que la señal sostiene es una pregunta.
+    """
+    posts = ["2026-09-01 | Beautiful condo #miamirealestate"]
+    posts += ["2026-09-%02d | New listing, open house" % (i + 2)
+              for i in range(9)]
+    c = clasificar(_fila(estado="CO", captions=posts))
+    assert c.clase == "realtor_activo", c.a_dict()
+    assert c.revisar is True
+    assert any("verificar el estado" in a for a in c.detalle.get("avisos", []))
+    # Y en Florida no avisa nada.
+    c2 = clasificar(_fila(estado="FL", captions=posts))
+    assert c2.revisar is False
+    assert "avisos" not in c2.detalle
 
 
 def test_reproducible_contra_capturado_en():

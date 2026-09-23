@@ -102,13 +102,25 @@ PORTUGUES = re.compile(
 #: hashtag -> estados donde es legitimo, en CODIGO DE DOS LETRAS.
 #:
 #: Estaban con el nombre completo («Virginia»), y el lead trae el codigo
-#: («VA»), asi que `@realtor_geo` --un realtor de Virginia que publica
+#: («VA»), asi que `perfil_V` --un realtor de Virginia que publica
 #: `#dmvrealestate`-- salia `persona_equivocada`. Es el mismo error de CA
 #: contra California que ya costo la biblioteca de geografias: se compara
 #: SIEMPRE por el codigo, y quien tenga el nombre lo normaliza antes.
 HASHTAG_REGIONAL = {
     "dmvrealestate": {"VA", "MD", "DC"},
     "dmvrealtor": {"VA", "MD", "DC"},
+}
+
+#: Hashtags de una ciudad, con el estado donde son legitimos. **No excluyen**:
+#: un realtor de Colorado puede publicar #miamirealestate por mil razones --
+#: referidos, una segunda casa, un cliente que se muda. Pero tres casos en el
+#: lote son suficientes para pedir que alguien mire el estado del lead, que es
+#: lo unico que la señal sostiene.
+HASHTAG_CIUDAD = {
+    "miamirealestate": "FL", "miamirealtor": "FL",
+    "houstonrealestate": "TX", "austinrealestate": "TX",
+    "phoenixrealestate": "AZ", "vegasrealestate": "NV",
+    "atlantarealestate": "GA", "chicagorealestate": "IL",
 }
 
 #: Señales de que un listado esta FUERA de EE. UU. (correccion A2). No basta un
@@ -139,7 +151,7 @@ OTRA_ACTIVIDAD = re.compile(
 #:   «That's a win in my book 😅»                     -> conferencista
 #:   «hold my books 📚»                               -> conferencista
 #:   «our preferred loan officer ready to pre-qualify you»  -> originador
-#:   «shout out to one of the best loan officers, @jeen.yim»-> originador
+#:   «shout out to one of the best loan officers, @un_loan_officer»-> originador
 #:   «great opportunity for a fix and flip» (descripcion de listado)
 #:   «negotiated it down from the wholesaler's asking price»
 #:
@@ -158,11 +170,26 @@ ORIGINADOR = re.compile(
     r"|nmls\s*#?\s*\d{4,}\s*[|·\-–]?\s*(?:loan officer|mlo|mortgage)"
     r"|mi\s+nmls\b)", re.I)
 
+#: DOBLE LICENCIA COMO FIRMA. Una cuenta del lote firma «Century 21 Affiliated
+#: DRE #01417038 | NMLS #2061139». Ninguna forma de `ORIGINADOR` matchea: no
+#: dice «loan officer» ni habla en primera persona. Pero una licencia
+#: inmobiliaria y un NMLS en la MISMA firma es doble licencia, y la regla 7 la
+#: descarta.
+#:
+#: Va APARTE porque NO pasa por el guarda del `@`: una firma con los dos
+#: numeros es autoatribucion aunque el post etiquete a alguien. Nadie firma con
+#: la licencia de otro.
+DOBLE_LICENCIA = re.compile(
+    r"(\b(?:dre|lic(?:ense)?|cal ?dre)\s*#?\s*\d{5,}\s*[|·/–-]+\s*"
+    r"nmls\s*#?\s*\d{4,}"
+    r"|\bnmls\s*#?\s*\d{4,}\s*[|·/–-]+\s*(?:dre|lic(?:ense)?)\s*#?\s*\d{5,})",
+    re.I)
+
 #: «I have multiple loan strategies» NO alcanza sola.
 #:
 #: El caso golden la trae junto a una bio «Loan Officer | NMLS 123456», y asi
 #: es autoatribucion. Sola, la dice tambien un realtor que trabaja con varios
-#: lenders: `@ezequiel_bolanos_` la publica y su post siguiente es un condo de
+#: lenders: `perfil_R` la publica y su post siguiente es un condo de
 #: $619K en Spring Valley. Hace falta que ADEMAS haya titulo o NMLS propio, y
 #: eso es lo que `ORIGINADOR` ya exige.
 ORIGINADOR_DEBIL = re.compile(
