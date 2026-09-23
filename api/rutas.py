@@ -25,6 +25,7 @@ from ingest.instagram.clase_perfil import CLASES_UTILIZABLES  # noqa: E402
 from captura.cajas import (  # noqa: E402
     cajas_desde,
     condados_sin_market_insight,
+    marcar_del_overview,
     resumen_de_cajas,
 )
 from captura.pertenencia import comprobar  # noqa: E402
@@ -229,12 +230,30 @@ def realtors(params: dict) -> tuple[int, dict]:
     # Ademas leia la TABLA `capturas_modelmatch` --con los lotes de ensayo
     # dentro-- y cruzaba por `sf_lead_id`, que es nulo en 62 realtors. Ahora es
     # la vista vigente y `realtor_id`, que es la llave.
-    ids_filtro: set | None = None
+    # Un filtro es de DOS clases, y confundirlas costaba caro:
+    #
+    #   · positivo    «tiene X» -> el conjunto de ids es CHICO (3 con Model
+    #                 Match, 298 con Instagram). Va como `id=in.(...)`.
+    #   · complemento «NO tiene X» -> el conjunto es TODO menos los de arriba,
+    #                 o sea 4.246 ids. Va como `id=not.in.(...)` sobre el
+    #                 conjunto CHICO.
+    #
+    # La version anterior materializaba el complemento --pedia los 4.249
+    # realtors y restaba-- y despues cortaba en `TOPE_IDS = 400`. Dos
+    # consecuencias, y la segunda es peor que la primera:
+    #
+    #   1 · el total decia «400», que era el tamaño del recorte y no un dato;
+    #   2 · los ids se ordenan por UUID antes de cortar, asi que la lista NO
+    #       eran los primeros 400 por nombre sino 400 CUALESQUIERA. Una lista
+    #       ordenada alfabeticamente que en realidad es una muestra al azar es
+    #       indistinguible de una lista correcta: nada se ve raro.
+    ids_incluir: set | None = None
+    ids_excluir: set = set()
     truncado_por_ids = False
 
-    def _acotar(nuevos: set) -> None:
-        nonlocal ids_filtro
-        ids_filtro = nuevos if ids_filtro is None else (ids_filtro & nuevos)
+    def _incluir(nuevos: set) -> None:
+        nonlocal ids_incluir
+        ids_incluir = nuevos if ids_incluir is None else (ids_incluir & nuevos)
 
     if con_mm in ("si", "no"):
         _c, capturas, _ = leer(
@@ -243,10 +262,9 @@ def realtors(params: dict) -> tuple[int, dict]:
         con_captura = {c["realtor_id"] for c in (capturas or [])
                        if c.get("realtor_id")}
         if con_mm == "si":
-            _acotar(con_captura)
+            _incluir(con_captura)
         else:
-            _c, todos, _ = leer("realtors", "?select=id&limit=10000")
-            _acotar({r["id"] for r in (todos or [])} - con_captura)
+            ids_excluir |= con_captura
 
     # Instagram: utilizable / no aporta / sin raspar.
     ig_filtro = (params.get("ig") or "").strip()
@@ -258,12 +276,12 @@ def realtors(params: dict) -> tuple[int, dict]:
             (util if c.get("clase") in CLASES_UTILIZABLES
              else no_util).add(c["realtor_id"])
         if ig_filtro == "utilizable":
-            _acotar(util)
+            _incluir(util)
         elif ig_filtro == "no_aporta":
-            _acotar(no_util)
+            _incluir(no_util)
         else:
-            _c, todos, _ = leer("realtors", "?select=id&limit=10000")
-            _acotar({r["id"] for r in (todos or [])} - util - no_util)
+            # «sin raspar» es el complemento de «tiene clase», que son 298.
+            ids_excluir |= (util | no_util)
 
     # Veredicto de contacto.
     ver_filtro = (params.get("veredicto") or "").strip()
@@ -272,18 +290,21 @@ def realtors(params: dict) -> tuple[int, dict]:
             "v_evaluacion_actual",
             "?select=realtor_id&veredicto_contacto->>estado=eq.%s&limit=10000"
             % urllib.parse.quote(ver_filtro))
-        _acotar({e["realtor_id"] for e in (evs or []) if e.get("realtor_id")})
+        _incluir({e["realtor_id"] for e in (evs or []) if e.get("realtor_id")})
 
-    if ids_filtro is not None:
-        if not ids_filtro:
+    if ids_incluir is not None:
+        # Un positivo que se queda sin ids no es «no hay filtro»: es «ninguno
+        # cumple», y son cosas distintas.
+        efectivos = sorted(ids_incluir - ids_excluir)
+        if not efectivos:
             return 200, {"filas": [], "mostradas": 0, "total": "0",
                          "tope": TOPE, "truncado": False, "estados": ESTADOS}
-        # PostgREST acota el largo de la URL. Hoy los filtros devuelven 3 y
-        # 298 ids, muy por debajo; si algun dia pasa, se DICE que se truncó en
-        # vez de devolver una lista corta que parece completa.
-        ids = sorted(ids_filtro)
-        truncado_por_ids = len(ids) > TOPE_IDS
-        partes.append("id=in.(%s)" % ",".join(ids[:TOPE_IDS]))
+        truncado_por_ids = len(efectivos) > TOPE_IDS
+        partes.append("id=in.(%s)" % ",".join(efectivos[:TOPE_IDS]))
+    elif ids_excluir:
+        fuera = sorted(ids_excluir)
+        truncado_por_ids = len(fuera) > TOPE_IDS
+        partes.append("id=not.in.(%s)" % ",".join(fuera[:TOPE_IDS]))
 
     codigo, datos, cabeceras = leer("realtors", "?" + "&".join(partes),
                                     rango="0-%d" % (TOPE - 1))
@@ -499,6 +520,12 @@ def resumen_de_captura(filas: list[dict], perfil_unido: dict,
     }
 
 
+def _cajas_con_overview(cajas, tipos):
+    """El resumen, con las cajas que el Overview ya resolvió marcadas."""
+    marcar_del_overview(cajas, tipos)
+    return resumen_de_cajas(cajas)
+
+
 def leer_overview(d: dict) -> tuple[int, dict]:
     """El Overview -> el estado y los condados, para que aparezcan las cajas.
 
@@ -692,6 +719,8 @@ def guardar(d: dict) -> tuple[int, dict]:
     # Los avisos de las cajas se calcularon antes de abrir el lote, asi que
     # entran aca: un aviso que se calcula y no se muestra no existe.
     avisos: list[str] = list(avisos_de_cajas)
+    #: Cajas cuyo contenido no hizo falta pegar porque vino en el Overview.
+    cajas_del_overview: list[str] = []
     filas: list[dict] = []
 
     def _parsear(funcion, texto, etiqueta_error):
@@ -790,9 +819,9 @@ def guardar(d: dict) -> tuple[int, dict]:
             avisos.extend(detectar_inversion(p.get("tab_orig") or []))
         agregar("originators", originators, alcance="perfil",
                 extra={"perfil": p})
-    else:
-        avisos.append("sin bloque de Originators: no se puede detectar si "
-                      "trabaja con Everett Financial, que es la exclusion dura")
+    # El aviso de los originadores se decide DESPUES de unir el perfil, porque
+    # `orig_buyer` vive en el Overview y aca todavia no se sabe si vino.
+    sin_pestana_originators = not originators
     if d.get("lenders"):
         # SE PARSEA. Antes se guardaba el texto y nada mas, asi que `tpo_pct` y
         # `tabla_lenders` salian vacios aunque la pestaña estuviera pegada --
@@ -816,6 +845,34 @@ def guardar(d: dict) -> tuple[int, dict]:
     # `orig_buyer = []` con casilla y sin casilla son el mismo dato y dos
     # veredictos opuestos; la casilla es el unico sitio donde queda constancia
     # de que alguien miro.
+    # ── EL AVISO DE LOS ORIGINADORES, con el perfil ya unido ────────────────
+    #
+    # Decia «sin bloque de Originators: no se puede detectar si trabaja con
+    # Everett» sobre una captura que SI traia el reparto. `Buyer Side
+    # Relationships` vive en el OVERVIEW, no en la pestaña Originators.
+    #
+    # La primera captura real --4 originadores, 14 de 19 unidades, ninguno de
+    # la casa-- salio con veredicto `ok` y con ese aviso diciendo lo contrario
+    # al lado. Un aviso que contradice al veredicto es peor que no tenerlo:
+    # obliga a decidir a cual creerle, y la respuesta no esta en la pantalla.
+    reparto_overview = perfil_unido.get("orig_buyer") or []
+    if sin_pestana_originators and reparto_overview:
+        con_orig = sum(o.get("unidades") or 0 for o in reparto_overview)
+        total_compras = perfil_unido.get("buyer_units")
+        detalle = ""
+        if total_compras and con_orig and total_compras > con_orig:
+            detalle = (" · %g de %g compras sin originador identificado"
+                       % (total_compras - con_orig, total_compras))
+        avisos.append(
+            "Originators leída desde el Overview: %d originadores repartidos "
+            "por unidades%s" % (len(reparto_overview), detalle))
+        cajas_del_overview.append("originators")
+    elif sin_pestana_originators and not d.get("sin_originadores_declarado"):
+        avisos.append(
+            "sin reparto de originadores: no se puede saber si trabaja con "
+            "Everett Financial. Si Model Match no se los muestra a este "
+            "agente, marcá la casilla «Model Match no muestra originadores».")
+
     if d.get("sin_originadores_declarado"):
         perfil_unido["sin_originadores_declarado"] = True
         perfil_unido["declarado_por"] = "pantalla de captura"
@@ -989,7 +1046,38 @@ def guardar(d: dict) -> tuple[int, dict]:
                    str(det_c)[:200]))
             contactos, nuevos, ya_estaban = [], [], []
 
+    # ── VOLVER A EVALUAR, SOLO A ESTE REALTOR ───────────────────────────────
+    #
+    # Sin esto la captura no movia el diagnostico: entraba el perfil nuevo, se
+    # promovian los mercados, cambiaba el veredicto -- y `dolor_primario`
+    # seguia siendo el de la corrida anterior, calculado sin Model Match. La
+    # pantalla mostraba las dos cosas juntas y nada decia que no se
+    # correspondian.
+    #
+    # Va DESPUES de todo lo demas y en su propio try: el crudo ya esta
+    # guardado, y perder la captura por un error al recalcular seria cambiar un
+    # problema chico por uno caro.
+    reevaluacion = None
+    try:
+        from supabase.cargar import conectar
+        from supabase.reevaluar import reevaluar as _reevaluar
+        with conectar() as _con:
+            reevaluacion = _reevaluar(realtor_id, conexion=_con)
+        if reevaluacion.get("cambio"):
+            avisos.append(
+                "El diagnóstico se recalculó con esta captura: dolor %s → %s · "
+                "veredicto %s → %s"
+                % (reevaluacion["dolor_antes"] or "—",
+                   reevaluacion["dolor_ahora"] or "—",
+                   reevaluacion["veredicto_antes"] or "—",
+                   reevaluacion["veredicto_ahora"]))
+    except Exception as exc:  # noqa: BLE001
+        avisos.append(
+            "La captura se guardó, pero el diagnóstico NO se pudo recalcular: "
+            "%s. Sigue mostrando el anterior." % str(exc).split("\n")[0][:150])
+
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
+                 "reevaluacion": reevaluacion,
                  "condados": condados, "avisos": avisos, "volumenes": vols,
                  "estado": estado, "hash_volcado": huella,
                  "mercados_promovidos": promovidos,
@@ -998,7 +1086,8 @@ def guardar(d: dict) -> tuple[int, dict]:
                                                     realtor=ficha_del_realtor)),
                  # Una linea por caja: leido (N metricas), vacio declarado, o
                  # no se pudo leer. Es lo que se mira despues de guardar.
-                 "cajas": resumen_de_cajas(cajas) if cajas else None,
+                 "cajas": (_cajas_con_overview(cajas, cajas_del_overview)
+                           if cajas else None),
                  "sin_market_insight": sin_market_insight,
                  "contactos": [{"canal": c["canal"], "valor": c["valor"],
                                 "nuevo": c in nuevos} for c in contactos],

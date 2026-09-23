@@ -141,6 +141,7 @@ def _loan_channel(txt: str) -> dict:
 
 def _conforming(txt: str, unidades_del_mercado: float | None) -> dict:
     """TRAMPA 2 · conforming/jumbo tiene su PROPIO denominador.
+    (ver `tolerancia_de_redondeo` para la holgura de la comparacion)
 
     Medido: el mercado declara 1.096.337 unidades y el bloque conforming/jumbo
     declara 613,2K. El 17,0% de jumbo es sobre 613,2K, no sobre 1.096.337 --
@@ -156,9 +157,14 @@ def _conforming(txt: str, unidades_del_mercado: float | None) -> dict:
     if not z:
         return {}
 
-    o: dict = {"denominador_propio": mval(
-        _g(z, r"Total Units\s*([\d.,]+\s*[MKB]?)")),
-        "unidades_del_mercado": unidades_del_mercado}
+    crudo_den = _g(z, r"Total Units\s*([\d.,]+\s*[MKB]?)")
+    o: dict = {"denominador_propio": mval(crudo_den),
+               # Con que UNIDAD se mostro. Model Match escribe «2.6K», y el
+               # error del redondeo es ABSOLUTO --±50 para un decimal de K--,
+               # no relativo. Sin esto no se puede saber cuanta diferencia es
+               # redondeo y cuanta es un bloque cruzado.
+               "denominador_crudo": (crudo_den or "").strip() or None,
+               "unidades_del_mercado": unidades_del_mercado}
 
     for tramo in ("Conforming", "Jumbo"):
         m = re.search(r"^[ \t]*%s[ \t]*\r?\n[ \t]*([\d,]+)[ \t]*loans?[ \t]*"
@@ -171,10 +177,17 @@ def _conforming(txt: str, unidades_del_mercado: float | None) -> dict:
     suma = sum(o.get(k) or 0.0 for k in ("conforming_loans", "jumbo_loans"))
     den = o.get("denominador_propio")
     o["suma_de_tramos"] = suma or None
-    # El denominador viene redondeado ("613.2K"), asi que la comparacion
-    # tolera el redondeo -- pero no tolera que sea otro numero.
+    o["tolerancia"] = tolerancia_de_redondeo(o["denominador_crudo"])
+    # El denominador viene REDONDEADO («613.2K», «2.6K»), y el error de ese
+    # redondeo es absoluto, no relativo. La comparacion era `diferencia/den <
+    # 1%`, que sobre 2.600 da 26 -- y «2.636 contra 2.600» avisaba por 36 de
+    # diferencia cuando 2.636 redondea exactamente a 2.6K.
+    #
+    # Sobre un denominador chico el 1% relativo es mas estrecho que el propio
+    # redondeo de la fuente: la guarda avisaba de que la fuente se redondeo a
+    # si misma.
     o["cuadra"] = (None if not (suma and den)
-                   else abs(suma - den) / den < 0.01)
+                   else abs(suma - den) <= o["tolerancia"])
     # Y el suyo no puede ser mayor que el del mercado entero: si lo es, el
     # bloque se leyo cruzado con el de otra geografia. La misma comprobacion
     # esta en `MixConforming.verificar`, y esta redundancia es a proposito:
@@ -554,6 +567,36 @@ def _tabla_originadores(txt: str) -> list[dict]:
 #:   · **Nombres de una sola palabra.** El `{2,40}?` sobre la clase pedia al
 #:     menos 3 caracteres, asi que `Lee County` (Florida) pasaba raspando y
 #:     `Ada County` tambien -- pero la intencion era otra y conviene que se vea.
+def tolerancia_de_redondeo(crudo: str | None) -> float:
+    """Cuanta diferencia explica el REDONDEO de la fuente, en unidades.
+
+    Model Match muestra el denominador ya redondeado, y el error de ese
+    redondeo es ABSOLUTO: «2.6K» significa cualquier valor entre 2.550 y 2.650,
+    o sea ±50. Con una tolerancia relativa del 1% eso da ±26 sobre 2.600, y la
+    guarda avisaba por 36 de diferencia -- avisaba de que la fuente se redondeo
+    a si misma.
+
+        «2.6K»    -> un decimal de K  -> ±50
+        «613.2K»  -> un decimal de K  -> ±50
+        «2.6M»    -> un decimal de M  -> ±50.000
+        «1096337» -> sin redondear    -> ±0,5 (el redondeo a entero)
+
+    Devolver la MITAD del paso y no el paso entero: un valor mostrado como
+    «2.6K» dista como mucho medio escalon del real.
+    """
+    s = (crudo or "").strip().replace(",", "")
+    if not s:
+        return 0.5
+    m = re.match(r"^([\d.]+)\s*([MKB])?$", s, re.I)
+    if not m:
+        return 0.5
+    numero, sufijo = m.group(1), (m.group(2) or "").upper()
+    escala = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(sufijo, 1)
+    decimales = len(numero.split(".")[1]) if "." in numero else 0
+    paso = escala / (10 ** decimales)
+    return paso / 2.0
+
+
 _RE_FILA_CONDADO_REAL = re.compile(
     r"^[ \t]*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ.\-' ]{1,40}?)\s+"
     r"(County|Parish|Borough|city|City and County)\s*,\s*([A-Z]{2})"
