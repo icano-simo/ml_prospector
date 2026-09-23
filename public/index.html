@@ -175,12 +175,11 @@ const PESTANAS = [
   ['calculo','Cómo se calculó',true],
   ['mm','Model Match',true],
   ['mercados','Mercados',true],
-  ['ig','Instagram',false],
+  ['ig','Instagram',true],
   ['dossier','Dossier A–G',false],
   ['seq','Secuencia 60 días',false],
 ];
 const PORQUE_APAGADA = {
-  ig: 'el scraper corre aparte; la carga a la base todavía no',
   dossier: 'nadie verificó que existan los recursos que el copy promete',
   seq: 'no sale hasta que los recursos estén verificados',
 };
@@ -205,6 +204,69 @@ function pintarFicha(){
   if(TAB === 'mercados') vMercados();
   if(TAB === 'mm') vModelMatch();
   if(TAB === 'lectura' || TAB === 'calculo') vLectura(TAB);
+  if(TAB === 'ig') vInstagram();
+}
+
+/* ── pestaña Instagram · lo capturado, sin motor ──────────────────────────── */
+async function vInstagram(){
+  $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
+  try{
+    const d = await api('/api/instagram?realtor_id=' + encodeURIComponent(SEL.id));
+    if(!d.perfiles.length){
+      $('#cuerpo').innerHTML = `<div class="tarjeta">
+        <div class="seccion">Instagram</div>
+        <span class="badge sin-evaluar"><i>▣</i>sin raspado vigente</span>
+        <p class="sub" style="margin-top:8px">Este realtor no tiene señales en
+          <code>v_ig_senales_current</code>. Puede que el raspado no lo haya
+          alcanzado todavía, o que su lote esté apagado.</p></div>`;
+      return;
+    }
+    $('#cuerpo').innerHTML = d.perfiles.map(p => `
+      <div class="tarjeta">
+        <div class="seccion">Perfil capturado</div>
+        <h2>@${esc(p.handle || '—')}</h2>
+        <div style="margin:8px 0">
+          <span class="badge ${esc(p.estado_clase)}"><i>◉</i>${esc(p.estado_etiqueta)}</span>
+          ${p.handle_confianza ? `<span class="badge sin-evaluar"><i>?</i>handle ${esc(p.handle_confianza)}</span>` : ''}
+          ${p.paginacion_truncada ? '<span class="badge bloqueado"><i>▲</i>paginación truncada</span>' : ''}
+        </div>
+        ${p.estado_evidencia ? `<p class="sub">Evidencia del estado:
+          <code>${esc(p.estado_evidencia)}</code></p>` : ''}
+        <div class="grid2" style="margin-top:12px">
+          <div><span class="pista">publicaciones leídas</span><br>
+            <span class="kpi chico">${p.captions_n ?? '—'}</span></div>
+          <div><span class="pista">comentarios</span><br>
+            <span class="kpi chico">${p.comentarios_n ?? '—'}</span></div>
+          <div><span class="pista">capturado</span><br>
+            <span class="num">${esc((p.capturado_en||'').slice(0,10))}</span></div>
+        </div>
+      </div>
+      ${p.destacadas.length ? `<div class="tarjeta">
+        <div class="seccion">Señales</div>
+        <div class="tbl-scroll" style="margin-top:10px">
+          <table class="piv"><thead><tr>
+            <th class="lbl">Señal</th><th class="totcol">Valor</th>
+          </tr></thead><tbody>${p.destacadas.map(s => `
+            <tr class="metric"><td class="lbl">${esc(s.etiqueta)}</td>
+              <td class="totcol">${esc(s.valor)}</td></tr>`).join('')}
+          </tbody></table>
+        </div>
+        <p class="pista" style="margin-top:8px">El desajuste de idioma es
+          comentarios menos publicaciones, sobre piezas clasificables: el 26% de
+          los comentarios son sólo emoji y no tienen idioma.</p>
+      </div>` : ''}
+      <div class="tarjeta">
+        <div class="seccion">Todo lo derivado</div>
+        <p class="sub">Cada etiqueta lleva el texto que la produjo. Las citas
+          van sin autor: nadie se perfila individualmente.</p>
+        <ul class="lista" style="margin-top:10px">${
+          Object.entries(p.senales).map(([k,v]) =>
+            `<li><b>${esc(k)}</b><span class="num" style="margin-left:auto">${esc(String(v).slice(0,140))}</span></li>`
+          ).join('')}</ul>
+      </div>`).join('');
+  }catch(e){
+    $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
 }
 
 /* ══ LECTURA DEL PERFIL · y CÓMO SE CALCULÓ ════════════════════════════════

@@ -834,11 +834,95 @@ def lectura(params: dict) -> tuple[int, dict]:
     }
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Como se lee cada estado de perfil. Los nueve, y ninguno por descarte:
+#: `privado` solo con evidencia afirmativa. Creer que la ausencia de
+#: publicaciones era privacidad costo siete perfiles.
+ESTADOS_IG = {
+    "publico_leido": ("mql", "leído"),
+    "privado": ("sin-evaluar", "privado — con evidencia"),
+    "no_encontrado": ("sin-evaluar", "no encontrado"),
+    "bloqueado": ("excluido", "bloqueado"),
+    "handle_dudoso": ("bloqueado", "handle dudoso"),
+    "muro_de_sesion": ("bloqueado", "muro de sesión"),
+    "sin_grid": ("bloqueado", "sin grid"),
+    "degradado": ("bloqueado", "degradado"),
+    "vacio": ("sin-evaluar", "vacío"),
+}
+
+#: Las señales que se muestran primero, con su etiqueta legible.
+SENALES_DESTACADAS = (
+    ("desajuste_idioma", "desajuste de idioma"),
+    ("audiencia_dominante", "audiencia dominante"),
+    ("tema_dominante", "tema dominante"),
+    ("ratio_educa_vs_anuncia", "educa vs anuncia"),
+    ("engagement_rate", "engagement"),
+    ("dias_entre_posts_mediana", "días entre posts"),
+    ("hueco_max_dias", "hueco máximo"),
+    ("tipo_post_reel_pct", "% reels"),
+)
+
+
+def instagram(params: dict) -> tuple[int, dict]:
+    """Lo capturado de Instagram, tal como quedo. Sin motor.
+
+    Lee `v_ig_senales_current`: la vista deja fuera los lotes apagados, o sea
+    los raspados viejos. Instagram SI es fuente de reemplazo.
+    """
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+
+    cod, filas, _ = leer(
+        "v_ig_senales_current",
+        "?select=handle,estado_perfil,estado_evidencia,handle_confianza,"
+        "senales,captions_n,comentarios_n,paginacion_truncada,capturado_en,"
+        "desajuste_idioma&realtor_id=eq.%s&order=capturado_en.desc"
+        % urllib.parse.quote(realtor_id))
+    if cod >= 400:
+        return cod, {"error": "supabase", "detalle": filas}
+    if not filas:
+        return 200, {"perfiles": [], "total": 0}
+
+    salida = []
+    for f in filas:
+        s = f.get("senales") or {}
+        clase, etiqueta = ESTADOS_IG.get(f.get("estado_perfil"),
+                                         ("sin-evaluar", f.get("estado_perfil")))
+        destacadas = [{"clave": k, "etiqueta": e, "valor": s.get(k)}
+                      for k, e in SENALES_DESTACADAS if s.get(k) not in
+                      (None, "")]
+        # `desajuste_idioma` vive en columna propia, no en el jsonb.
+        if f.get("desajuste_idioma") is not None:
+            destacadas.insert(0, {"clave": "desajuste_idioma",
+                                  "etiqueta": "desajuste de idioma",
+                                  "valor": f["desajuste_idioma"]})
+        salida.append({
+            "handle": f.get("handle"),
+            "estado_perfil": f.get("estado_perfil"),
+            "estado_clase": clase,
+            "estado_etiqueta": etiqueta,
+            "estado_evidencia": f.get("estado_evidencia"),
+            "handle_confianza": f.get("handle_confianza"),
+            "captions_n": f.get("captions_n"),
+            "comentarios_n": f.get("comentarios_n"),
+            "paginacion_truncada": f.get("paginacion_truncada"),
+            "capturado_en": f.get("capturado_en"),
+            "destacadas": destacadas,
+            # El resto de las señales, para la tabla de abajo.
+            "senales": {k: v for k, v in sorted(s.items())
+                        if v not in (None, "")},
+        })
+    return 200, {"perfiles": salida, "total": len(salida)}
+
+
 #: ruta -> (funcion, metodo)
 RUTAS = {
     "/api/realtors": (realtors, "GET"),
     "/api/geografias": (geografias, "GET"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
+    "/api/instagram": (instagram, "GET"),
     "/api/guardar": (guardar, "POST"),
 }

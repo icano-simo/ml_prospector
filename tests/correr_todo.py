@@ -37,6 +37,7 @@ SUITES = [
     ("census", "tests.test_census", "el rechazo con HTTP 200, la clave y los denominadores"),
     ("contrastes", "tests.test_contrastes", "cuatro lecturas de un agente, y la guardia que manda"),
     ("lectura", "tests.test_lectura", "de numero a lectura, vocabulario y el caso sin dolor"),
+    ("cargar_ig", "tests.test_cargar_instagram", "la llave, la PII del agente y la coherencia CSV/crudo"),
     ("marca", "tests.test_marca", "la guia de diseño sobre los archivos servidos"),
 ]
 
