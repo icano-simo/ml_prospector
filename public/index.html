@@ -380,7 +380,149 @@ async function vLectura(cual){
 }
 let LECTURA = null;
 
+const NIVEL_BADGE = {
+  'MQL': ['mql','✓'], 'PRE-MQL': ['bloqueado','▲'],
+  'EXCLUIDO': ['excluido','⛔'], 'BLOQUEADO': ['excluido','⛔'],
+  'SIN EVALUAR': ['sin-evaluar','▣'],
+};
+const barras = n => '█'.repeat(n||0) + '·'.repeat(Math.max(0, 3-(n||0)));
+
 function vistaLectura(d){
+  const c = d.cabecera || {};
+  const conf = c.confianza || {};
+  const [cn, ci] = NIVEL_BADGE[c.nivel] || ['sin-evaluar','▣'];
+
+  /* 1 · quién es, en prosa. Es lo primero que un BD lee. */
+  const quien = `<div class="tarjeta">
+    <div class="seccion">Qué clase de realtor es</div>
+    <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
+      ${esc(d.narrativa || '')}</p></div>`;
+
+  /* 2 · su nivel y su confianza. */
+  const cab = `<div class="banner">
+    <div class="seccion">Diagnóstico</div>
+    <span class="badge ${cn}" style="font-size:13px;padding:6px 12px">
+      <i>${ci}</i>${esc(c.nivel || '—')}</span>
+    <span class="cifra" style="margin-left:12px;font-size:18px">${esc(c.dolor_primario || 'sin dolor primario')}</span>
+    ${c.acto_de_habla ? `<span class="pista" style="margin-left:10px">acto de habla:
+      <b style="color:var(--sky)">${esc(c.acto_de_habla)}</b></span>` : ''}
+    ${c.gating && c.gating.qualifier ? `<div class="pista" style="margin-top:8px">
+      compuerta: ${esc(c.gating.qualifier)} en fuerza
+      <span class="num">${c.gating.intensidad ?? '—'}</span>/3</div>` : ''}
+  </div>
+  <div class="tarjeta">
+    <div class="seccion">Confianza del diagnóstico · ${esc(conf.nivel || '—')}</div>
+    <p class="sub">No es un porcentaje: es qué términos están y cuáles no.</p>
+    <ul class="lista" style="margin-top:10px">${(conf.terminos||[]).map(t => `
+      <li><span class="badge ${t.presente ? 'mql' : 'sin-evaluar'}">
+        <i>${t.presente ? '✓' : '·'}</i>${esc(t.nombre)}</span>
+        <span class="pista">${esc(t.detalle)}</span></li>`).join('')}
+    </ul></div>`;
+
+  /* 3 · las hipótesis, con enunciado, fuerza y de dónde salieron. */
+  const hip = (d.hipotesis||[]).length ? `<div class="tarjeta">
+    <div class="seccion">Hipótesis de dolor</div>
+    <p class="sub">El enunciado viene de la matriz PACS-H. Que le aplique a
+      esta persona es una hipótesis: la regla que la activó está en cada fila.</p>
+    ${d.hipotesis.map(h => `
+      <div style="border-left:3px solid ${h.papel==='principal'?'var(--coral)':'var(--slate-200)'};
+        padding:10px 0 10px 12px;margin-top:12px">
+        <div>
+          <b style="color:var(--navy)">${esc(h.qualifier)}</b>
+          <span class="badge ${h.papel==='principal'?'excluido':'sin-evaluar'}"
+            style="margin-left:6px"><i>◉</i>${esc(h.papel)}</span>
+          <span class="num" style="margin-left:6px">${h.intensidad ?? '—'}/3</span>
+          <span class="num" style="letter-spacing:2px;color:var(--coral)">${barras(h.intensidad)}</span>
+          <span class="badge sin-evaluar" style="margin-left:6px"><i>E</i>${esc(h.grado||'')}</span>
+        </div>
+        <p style="margin:8px 0 0;font-size:13px;line-height:1.6;color:var(--slate-800)">
+          ${esc(h.enunciado || '(este qualifier no está en el banco de la matriz)')}</p>
+        <p class="pista" style="margin:6px 0 0">Se activó porque:
+          ${esc(h.regla||'—')} <code>${esc(h.regla_id||'')}</code> · ${esc(h.origen||'')}</p>
+        ${h.angulo ? `<p style="margin:8px 0 0;font-size:13px">
+          <b style="color:var(--navy)">Ángulo:</b> ${esc(h.angulo)}</p>` : ''}
+        ${h.municion ? `<p style="margin:4px 0 0;font-size:13px">
+          <b style="color:var(--navy)">Munición:</b> ${esc(h.municion)}</p>` : ''}
+        ${h.escala ? `<p class="pista" style="margin:6px 0 0">Escala: ${esc(h.escala)}</p>` : ''}
+      </div>`).join('')}</div>` : '';
+
+  /* 5 · el contraste, SOLO contra el condado dominante. */
+  const contr = (d.lecturas||[]).map(l => {
+    const [clase, icono] = VEREDICTO_BADGE[l.bueno_o_malo] || ['sin-evaluar','▣'];
+    return `<div class="tarjeta">
+      <div class="seccion">${esc(l.titulo)}${l.papel!=='canal'?` · ${esc(l.papel)}`:''}</div>
+      <span class="badge ${clase}"><i>${icono}</i>${esc(l.bueno_o_malo)}</span>
+      ${l.afirma ? '' : '<span class="badge sin-evaluar"><i>?</i>no afirma: pregunta</span>'}
+      ${l.veces ? `<span class="num" style="margin-left:8px;font-size:16px;font-weight:800;color:var(--navy)">${String(l.veces).replace('.',',')}×</span>` : ''}
+      <p style="margin:10px 0 0;font-size:13px;line-height:1.6;color:var(--slate-800)">
+        ${esc(l.que_dice_del_borrower)}</p>
+      <div class="seccion" style="margin-top:12px">Qué hacer</div>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:var(--navy);font-weight:600">
+        ${esc(l.que_hacer)}</p></div>`;
+  }).join('');
+
+  const nota_sec = (d.lecturas_secundarias||[]).length
+    ? `<div class="avi">Los otros ${d.lecturas_secundarias.length} contrastes
+       — ${esc(d.lecturas_secundarias.map(l=>l.geografia).join(', '))} —
+       dicen lo mismo con otro mercado y están en <b>Cómo se calculó</b>.
+       En la lectura solo va su condado dominante.</div>`
+    : '';
+
+  /* 7 · si podemos originarle. */
+  const cov = d.cobertura || {};
+  const originar = `<div class="tarjeta">
+    <div class="seccion">¿Podemos originarle?</div>
+    ${cov.activos == null
+      ? `<span class="badge bloqueado"><i>▲</i>no lo sabemos</span>
+         <p class="sub" style="margin-top:8px">${esc(cov.razon||'')}</p>`
+      : cov.activos === 0
+        ? `<span class="badge excluido"><i>⛔</i>no tenemos licencia en
+           ${esc(d.realtor.estado_nombre||'')}</span>
+           <p class="sub" style="margin-top:8px">Califica comercialmente y hoy
+             no podemos originarle. Activarlo sería gastar credibilidad en una
+             promesa que no podemos cumplir.</p>`
+        : `<span class="badge mql"><i>✓</i>sí</span>
+           <span class="kpi chico" style="margin-left:8px">${cov.activos}</span>
+           <span class="pista">loan officers con licencia</span>`}
+  </div>`;
+
+  return quien + cab + hip + contr + nota_sec + vistaZona(d) + originar +
+    (d.sin_dolor ? vistaSinDolor(d) : '');
+}
+
+function vistaZona(d){
+  if(!d.perfil_de_la_zona) return '';
+  return `<div class="tarjeta">
+    <div class="seccion">A quién le vende · ${esc(d.perfil_de_la_zona.donde || '')}</div>
+    <p style="margin:6px 0 0;font-size:13px;line-height:1.65">
+      ${esc(d.perfil_de_la_zona.texto)}</p>
+    <p class="sub" style="margin-top:10px">Describe a los compradores de la
+      zona, no al realtor.${d.tiene_census ? '' : ' Sin Census del condado todavía.'}</p>
+  </div>`;
+}
+
+function vistaSinDolor(d){
+  return `
+    <div class="banner">
+      <div class="seccion">El caso más frecuente del lote</div>
+      <div style="font-size:15px;font-weight:700;line-height:1.45">${esc(d.sin_dolor.titular)}</div>
+      <div class="pista" style="margin-top:10px">${esc(d.sin_dolor.cuerpo)}</div>
+    </div>
+    <div class="tarjeta">
+      <div class="seccion">Por dónde abrir</div>
+      <h2>${esc(d.sin_dolor.apertura)}</h2>
+      <p class="sub">Es la pregunta del lender, y va igual en todas: cierra la
+        categoría vacía en el 100% de las filas.</p>
+      <div style="margin-top:10px">
+        <span class="badge bloqueado"><i>▲</i>cola de ${esc(d.sin_dolor.cola)}</span>
+        <span class="badge sin-evaluar"><i>▣</i>rama: ${esc(d.sin_dolor.rama)}</span>
+      </div>
+      <div class="seccion" style="margin-top:14px">Lo que falta conseguir</div>
+      <ul class="lista">${d.sin_dolor.falta.map(f => `<li>${esc(f)}</li>`).join('')}</ul>
+    </div>`;
+}
+
+function vistaLecturaVieja(d){
   /* El caso más frecuente va PRIMERO y como titular, no como nota al pie. */
   const sd = d.sin_dolor ? `
     <div class="banner">
@@ -465,9 +607,15 @@ function vistaCalculo(d){
     <div class="tarjeta">
       <div class="seccion">La cadena de evidencia de cada lectura</div>
       <p class="sub">Una lectura sin su evidencia es una opinión.</p>
-      <ul class="lista" style="margin-top:10px">${(d.lecturas||[]).map(l =>
-        `<li><b>${esc(l.titulo)}</b><br><code>${esc(l.evidencia)}</code></li>`
+      <ul class="lista" style="margin-top:10px">${
+        [...(d.lecturas||[]), ...(d.lecturas_secundarias||[])].map(l =>
+        `<li><b>${esc(l.titulo)}</b>
+          <span class="badge sin-evaluar">${esc(l.papel||'')}</span>
+          <br><code>${esc(l.evidencia)}</code></li>`
       ).join('') || '<li class="pista">sin contrastes calculados</li>'}</ul>
+      <p class="pista" style="margin-top:8px">Aquí están los cuatro. En la
+        lectura va solo el condado dominante: cuatro tarjetas con el mismo
+        texto y otro mercado es ruido.</p>
     </div>
     <div class="tarjeta">
       <div class="seccion">Lo que NO se pudo evaluar</div>

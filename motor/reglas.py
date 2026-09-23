@@ -188,7 +188,7 @@ REGLAS: tuple[Regla, ...] = (
     ),
     Regla(
         id="P-Q01-2", qualifier="P-Q01", familia="P", intensidad=2, grado="E1",
-        texto="su bio menciona un programa de gobierno o ayuda de enganche",
+        texto="su bio menciona un programa de gobierno o down payment assistance",
         campos=("ev2_fha_gob", "ev2_dpa_enganche"),
         condicion=lambda r: _o(_b(r, "ev2_fha_gob"), _b(r, "ev2_dpa_enganche")),
         gancho="P-082",
@@ -252,13 +252,13 @@ REGLAS: tuple[Regla, ...] = (
     # ── P-Q07 · Capital de entrada ──────────────────────────────────────────
     Regla(
         id="P-Q07-1", qualifier="P-Q07", familia="P", intensidad=3, grado="E0",
-        texto="su bio menciona down payment, DPA o enganche",
+        texto="su bio menciona down payment o DPA",
         campos=("ev2_dpa_enganche",),
         condicion=lambda r: _b(r, "ev2_dpa_enganche"),
     ),
     Regla(
         id="P-Q07-2", qualifier="P-Q07", familia="P", intensidad=2, grado="E1",
-        texto="el enganche es el cuello de botella típico de ese perfil",
+        texto="el down payment es el cuello de botella típico de ese perfil",
         campos=("ev2_primera_casa",),
         condicion=lambda r: _b(r, "ev2_primera_casa"),
         discrepancia=(
@@ -295,7 +295,7 @@ REGLAS: tuple[Regla, ...] = (
     # ── P-Q12 · Precalificación ─────────────────────────────────────────────
     Regla(
         id="P-Q12-1", qualifier="P-Q12", familia="P", intensidad=3, grado="E0",
-        texto="su bio menciona pre-aprobación o precalificación",
+        texto="su bio menciona pre-approval",
         campos=("ev2_precalificacion",),
         condicion=lambda r: _b(r, "ev2_precalificacion"),
     ),

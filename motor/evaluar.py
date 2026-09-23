@@ -30,7 +30,11 @@ from pacs.guardas import (
 #: Version del catalogo de reglas. Cambia cuando cambian las reglas, y queda
 #: guardada en cada evaluacion: sin esto, dentro de tres meses no se sabe con
 #: que reglas se produjo un diagnostico viejo.
-VERSION_REGLAS = "2026.09.22-propias-portadas-del-prototipo"
+#: Sube cuando cambia CUALQUIER cosa que el lector vea, no solo la lógica: el
+#: `texto` de una regla es lo que el BD lee en la ficha, así que corregirlo es
+#: un cambio declarado. Esta subida arregla cinco textos que usaban vocabulario
+#: que no se usa en el sector -- `enganche`, `pre-aprobación`, `precalificación`.
+VERSION_REGLAS = "2026.09.23-vocabulario-de-oficio"
 
 
 def huella_del_catalogo() -> str:

@@ -713,6 +713,7 @@ def lectura(params: dict) -> tuple[int, dict]:
         leer_mix_fha,
         leer_perfil_del_comprador,
     )
+    from motor.narrativa import narrativa
     from motor.sin_dolor import copy_sin_dolor
 
     realtor_id = (params.get("realtor_id") or "").strip()
@@ -769,15 +770,55 @@ def lectura(params: dict) -> tuple[int, dict]:
         if cc:
             censo = (cc[0].get("variables") or {}).get("_derivadas")
 
-    lecturas = []
+    # ── EL CONDADO DOMINANTE, Y SOLO ESE ────────────────────────────────────
+    # Cuatro tarjetas de `mix de programa` con el mismo texto palabra por
+    # palabra es ruido: lo unico que cambia es el mercado, y Alameda con UNA
+    # unidad no sirve para decidir nada. Solo su condado dominante entra en la
+    # lectura; el estado queda como referencia secundaria y el resto se va a
+    # `Como se calculo`, que es donde se revisa el calculo.
+    dominante_fips = realtor.get("condado_fips")
+    nombre_dominante = None
+    if dominante_fips:
+        _c, nc, _ = leer("census_condados",
+                         "?select=nombre&condado_fips=eq.%s"
+                         % urllib.parse.quote(dominante_fips))
+        if nc:
+            nombre_dominante = (nc[0].get("nombre") or "").split(" County")[0]
+
+    def _es(m, quien):
+        return quien and (m.get("etiqueta") or "").lower() == quien.lower()
+
+    lecturas, lecturas_secundarias = [], []
     mix = unido.get("loan_mix_buyer") or {}
     for c in mix_de_programa(mix, mercados, tipo="FHA"):
         lec = leer_mix_fha(c, nombre)
-        lecturas.append({"titulo": "Mix de programa · %s" % c.geografia,
-                         "que_dice_del_borrower": lec.que_dice_del_borrower,
-                         "bueno_o_malo": lec.bueno_o_malo,
-                         "que_hacer": lec.que_hacer,
-                         "evidencia": lec.evidencia, "afirma": lec.afirma})
+        fila = {"titulo": "Mix de programa · %s" % c.geografia,
+                "geografia": c.geografia, "nivel": c.nivel,
+                "que_dice_del_borrower": lec.que_dice_del_borrower,
+                "bueno_o_malo": lec.bueno_o_malo,
+                "que_hacer": lec.que_hacer,
+                "evidencia": lec.evidencia, "afirma": lec.afirma,
+                "veces": c.veces, "valor_agente": c.valor_agente,
+                "valor_mercado": c.valor_mercado}
+        if nombre_dominante and _es({"etiqueta": c.geografia},
+                                    nombre_dominante):
+            fila["papel"] = "dominante"
+            lecturas.append(fila)
+        elif c.nivel == "estado":
+            fila["papel"] = "referencia"
+            lecturas_secundarias.insert(0, fila)
+        else:
+            fila["papel"] = "otro condado"
+            lecturas_secundarias.append(fila)
+
+    # Sin condado dominante resuelto, el estado hace de dominante -- y se dice.
+    if not lecturas and lecturas_secundarias:
+        ref = next((f for f in lecturas_secundarias
+                    if f["papel"] == "referencia"), None)
+        if ref:
+            ref["papel"] = "dominante por defecto"
+            lecturas.append(ref)
+            lecturas_secundarias.remove(ref)
 
     canal = next((m for m in mercados if (m["metricas"] or {}).get(
         "loan_channel")), None)
@@ -787,6 +828,10 @@ def lectura(params: dict) -> tuple[int, dict]:
             nombre, canal["etiqueta"] or "su mercado",
             canal["metricas"].get("fallout"))
         lecturas.append({"titulo": "Canal · %s" % canal["etiqueta"],
+                         "geografia": canal["etiqueta"],
+                         "nivel": canal["nivel"], "papel": "canal",
+                         "veces": None, "valor_agente": unido.get("tpo_pct"),
+                         "valor_mercado": None,
                          "que_dice_del_borrower": lec.que_dice_del_borrower,
                          "bueno_o_malo": lec.bueno_o_malo,
                          "que_hacer": lec.que_hacer,
@@ -796,20 +841,16 @@ def lectura(params: dict) -> tuple[int, dict]:
     # Armando eso es Solano (5 unidades) y no Alameda (1): describir la zona
     # donde casi no opera es describir a otra gente.
     perfil_zona = None
+    mercado_dominante = {}
     if mercados:
-        dominante = None
-        if censo is not None and realtor.get("condado_fips"):
-            _c, nc, _ = leer("census_condados",
-                             "?select=nombre&condado_fips=eq.%s"
-                             % urllib.parse.quote(realtor["condado_fips"]))
-            if nc:
-                corto = (nc[0].get("nombre") or "").split(" County")[0]
-                dominante = next(
-                    (x for x in mercados
-                     if (x["etiqueta"] or "").lower() == corto.lower()), None)
+        dominante = next((x for x in mercados
+                          if nombre_dominante
+                          and (x["etiqueta"] or "").lower()
+                          == nombre_dominante.lower()), None)
         m = (dominante
              or next((x for x in mercados if x["nivel"] == "condado"),
                      mercados[0]))
+        mercado_dominante = m["metricas"] or {}
         perfil_zona = {"donde": m["etiqueta"],
                        "texto": leer_perfil_del_comprador(
                            m["metricas"], censo, m["etiqueta"] or "la zona")}
@@ -822,16 +863,124 @@ def lectura(params: dict) -> tuple[int, dict]:
                      "apertura": c.apertura, "cola": c.cola, "rama": c.rama,
                      "falta": list(c.falta)}
 
+    # ── LOS QUALIFIERS, CON SU ENUNCIADO ────────────────────────────────────
+    # `P-Q14` solo no le dice nada a nadie. Cada uno trae el enunciado literal
+    # de la matriz, su fuerza sobre 3, el grado de evidencia, la regla que lo
+    # activo y su fuente -- mas el angulo y la municion, que son lo que el BD
+    # necesita para saber QUE ofrecerle.
+    from motor.qualifiers import ficha as ficha_q
+
+    activaciones = ((ev or {}).get("resultado") or {}).get("activaciones") or []
+    if not activaciones and ev:
+        _c, res, _ = leer(
+            "v_evaluacion_actual",
+            "?select=resultado&realtor_id=eq.%s"
+            % urllib.parse.quote(realtor_id))
+        activaciones = ((res or [{}])[0].get("resultado") or {}).get(
+            "activaciones") or []
+
+    primario = (ev or {}).get("dolor_primario")
+    secundarios = set((ev or {}).get("dolores_secundarios") or [])
+    vistos, hipotesis = set(), []
+    for a in activaciones:
+        q = a.get("qualifier")
+        if not q or q in vistos or a.get("familia") != "P":
+            continue
+        vistos.add(q)
+        f = ficha_q(q)
+        hipotesis.append({
+            "qualifier": q,
+            "papel": ("principal" if q == primario
+                      else "secundario" if q in secundarios else "detectado"),
+            "enunciado": f.get("enunciado"),
+            "intensidad": a.get("intensidad"),
+            "grado": a.get("grado"),
+            "acto": a.get("acto"),
+            "regla": a.get("texto"),
+            "regla_id": a.get("regla_id"),
+            "origen": a.get("origen"),
+            "escala": f.get("escala_de_intensidad"),
+            "evidencia_minima": f.get("evidencia_minima"),
+            "angulo": f.get("angulo_que_activa"),
+            "municion": f.get("municion_PR_GC"),
+            "ruta_de_copy": f.get("ruta_de_copy"),
+            "sin_ficha": not f,
+        })
+    hipotesis.sort(key=lambda h: (h["papel"] != "principal",
+                                  h["papel"] != "secundario",
+                                  -(h["intensidad"] or 0)))
+
+    # ¿Podemos originarle? Es lo que puede hacer irrelevante todo lo demas: un
+    # realtor que califica en un estado donde no tenemos licencia no se
+    # contacta, porque activarlo seria gastar credibilidad en una promesa que
+    # no podemos cumplir.
+    #
+    # `pacs.lo_licencias` esta VACIA hoy. La respuesta correcta es "no lo
+    # sabemos", no "no tenemos": son cosas distintas y solo una de las dos es
+    # una razon para no escribirle.
+    cobertura = {"activos": None, "quienes": [], "razon": ""}
+    if realtor.get("estado"):
+        cod_c, los, _ = leer(
+            "lo_licencias",
+            "?select=employee_key,vigente&estado=eq.%s&vigente=is.true"
+            "&limit=500" % urllib.parse.quote(realtor["estado"]))
+        if cod_c < 400:
+            claves = {l.get("employee_key") for l in (los or [])
+                      if l.get("employee_key") is not None}
+            _c2, total, _ = leer("lo_licencias", "?select=id&limit=1")
+            if not total:
+                cobertura["razon"] = (
+                    "pacs.lo_licencias está vacía: la carga de licencias "
+                    "todavía no corrió, así que no se puede decir si podemos "
+                    "originar en ese estado")
+            else:
+                cobertura["activos"] = len(claves)
+        else:
+            cobertura["razon"] = "no se pudo consultar lo_licencias"
+
+    texto_narrativa = narrativa(
+        realtor, estado_nombre=ESTADOS.get(realtor.get("estado")),
+        perfil_mm=unido, mercado=mercado_dominante,
+        donde=nombre_dominante or (perfil_zona or {}).get("donde"),
+        cobertura=cobertura)
+
     return 200, {
         "realtor": {**realtor, "nombre_mostrado": nombre,
                     "estado_nombre": ESTADOS.get(realtor.get("estado"))},
+        "narrativa": texto_narrativa,
+        "cabecera": {
+            "nivel": (ev or {}).get("nivel") or _nivel_desde(ev),
+            "dolor_primario": primario,
+            "acto_de_habla": next((h["acto"] for h in hipotesis
+                                   if h["papel"] == "principal"), None),
+            "gating": {"qualifier": (ev or {}).get("gating_qualifier"),
+                       "intensidad": (ev or {}).get("gating_intensidad")},
+            "confianza": (ev or {}).get("confianza"),
+        },
+        "hipotesis": hipotesis,
         "evaluacion": ev,
         "lecturas": lecturas,
+        "lecturas_secundarias": lecturas_secundarias,
+        "condado_dominante": nombre_dominante,
+        "cobertura": cobertura,
         "perfil_de_la_zona": perfil_zona,
         "sin_dolor": sin_dolor,
         "mercados": len(mercados),
         "tiene_census": censo is not None,
     }
+
+
+#: Los cuatro niveles. Se derivan de lo que el motor ya guardo, porque la
+#: evaluacion no trae un campo `nivel` -- y ponerlo a mano en dos sitios es
+#: como se desincronizan.
+def _nivel_desde(ev: dict | None) -> str:
+    if not ev:
+        return "SIN EVALUAR"
+    if not ev.get("gating_qualifier"):
+        return "BLOQUEADO"
+    if not ev.get("dolor_primario"):
+        return "PRE-MQL"
+    return "MQL"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
