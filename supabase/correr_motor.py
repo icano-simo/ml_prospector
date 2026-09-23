@@ -19,8 +19,15 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 
 from motor.confianza import evaluar_confianza  # noqa: E402
+from motor.desde_instagram import (  # noqa: E402
+    bio_legible,
+    categorias_acreditadas,
+    combinar_con_el_libro,
+    senales_de,
+)
 from motor.entrada import limpiar_entrada  # noqa: E402
 from motor.evaluar import evaluar  # noqa: E402
+from motor.exclusion import clasificar  # noqa: E402
 from supabase.cargar import conectar  # noqa: E402
 
 LIBRO = os.path.join(RAIZ, "Data_inputIA",
@@ -52,7 +59,17 @@ BOOLEANOS = {c for c in MAPA.values()
 BOOLEANOS.add("ev_bio_legible")
 
 #: Lo que falta hoy y que la evaluacion tiene que declarar, no omitir.
-FALTAN_HOY = ("contrastes_de_mercado", "senales_instagram", "modelmatch")
+#: Lo que el motor TODAVIA no mira. `senales_instagram` salio de esta lista el
+#: 2026-09-23, cuando se cargaron los 298 perfiles y se conecto
+#: `motor.desde_instagram`. Mientras estuvo aqui, cargar Instagram a la base no
+#: movia ni un numero -- el motor no lo leia.
+FALTAN_HOY = ("contrastes_de_mercado", "modelmatch")
+
+#: Las dos columnas del libro que deciden si una persona es contactable. NO
+#: entran al registro que evalua el motor -- no son evidencia, son una decision
+#: ya tomada aguas arriba. Viajan aparte, a su propia columna de la evaluacion.
+COL_NIVEL = "pacs: nivel_de_calificacion"
+COL_MOTIVO = "pacs: motivo_si_descartado"
 
 
 def registro_de(fila, pd):
@@ -71,6 +88,15 @@ def main() -> int:
 
     df = pd.read_excel(LIBRO, sheet_name="Realtors PACS")
 
+    # Sin la columna de nivel el motor NO puede saber a quien no contactar.
+    # Seguir sin ella es volver al estado en que Lisa Munoz salia con dolor
+    # primario y confianza MEDIA, lista para una cola de envio. Se para aca.
+    faltan = [c for c in (COL_NIVEL, COL_MOTIVO) if c not in df.columns]
+    if faltan:
+        print("el libro no trae %s: sin eso no hay exclusion que aplicar"
+              % faltan)
+        return 1
+
     with conectar() as conn:
         with conn.cursor() as cur:
             cur.execute("select lower(email_principal), id from pacs.realtors "
@@ -79,11 +105,37 @@ def main() -> int:
             cur.execute("select count(*) from pacs.realtors")
             total_realtors = cur.fetchone()[0]
 
+            # Las señales de Instagram, por realtor. De la VISTA, no de la
+            # tabla: los raspados viejos estan apagados.
+            cur.execute("""
+                select realtor_id::text, estado_perfil, captions_n,
+                       comentarios_n, senales
+                  from pacs.v_ig_senales_current
+                 where realtor_id is not null
+            """)
+            ig = {r[0]: {"estado_perfil": r[1], "captions_n": r[2],
+                         "comentarios_n": r[3], "senales": r[4]}
+                  for r in cur.fetchall()}
+
     print("realtors: %d · con email para cruzar: %d" % (total_realtors, len(por_email)))
+    print("con señales de Instagram: %d" % len(ig))
+
+    # Quien tiene captura de Model Match viva: es un termino de la confianza.
+    with conectar() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                select distinct parseado->>'realtor_id'
+                  from pacs.v_capturas_modelmatch_current
+                 where parseado->>'realtor_id' is not null
+            """)
+            con_modelmatch = {r[0] for r in cur.fetchall()}
+    print("con captura de Model Match: %d" % len(con_modelmatch))
 
     filas = []
     sin_cruce = 0
+    con_instagram = 0
     sacados_alguna_vez: set[str] = set()
+    excluidos: dict[str, int] = {}
     for _, r in df.iterrows():
         em = r.get("Email")
         em = str(em).strip().lower() if not pd.isna(em) else None
@@ -94,12 +146,39 @@ def main() -> int:
 
         reg, sacados = registro_de(r, pd)
         sacados_alguna_vez.update(sacados)
+
+        # ── LA EXCLUSION ────────────────────────────────────────────────────
+        # Se lee del libro, no se deduce de los qualifiers. Y NO entra a `reg`:
+        # no es evidencia que el motor deba pesar, es una decision ya tomada
+        # que gobierna la salida. La evaluacion se calcula igual -- el raspado
+        # y el diagnostico no estorban -- pero la fila sale marcada.
+        excluido = clasificar(r.get(COL_NIVEL))
+        motivo = r.get(COL_MOTIVO)
+        motivo = (None if motivo is None or pd.isna(motivo)
+                  else str(motivo).strip() or None)
+        if excluido:
+            excluidos[excluido] = excluidos.get(excluido, 0) + 1
+
+        # ── INSTAGRAM ────────────────────────────────────────────────────────
+        # El libro no se pisa: Instagram confirma o agrega, nunca borra. Son
+        # dos lecturas de momentos distintos, y un True del libro que hoy no se
+        # ve no es un False.
+        fila_ig = ig.get(rid)
+        cats, bio_ig = set(), None
+        if fila_ig:
+            reg = combinar_con_el_libro(reg, senales_de(fila_ig))
+            cats = categorias_acreditadas(fila_ig)
+            bio_ig = bio_legible(fila_ig)
+            con_instagram += 1
+
         ev = evaluar(reg, realtor_id=rid)
         conf = evaluar_confianza(
             ev,
-            categorias_acreditadas=set(),
-            bio_legible=reg.get("ev_bio_legible"),
-            modelmatch_capturado=False,
+            categorias_acreditadas=cats,
+            # `None` cuando no se pudo mirar: no se llena por descarte.
+            bio_legible=(bio_ig if bio_ig is not None
+                         else reg.get("ev_bio_legible")),
+            modelmatch_capturado=rid in con_modelmatch,
         )
         d = json.loads(ev.a_json())
         filas.append({
@@ -117,6 +196,8 @@ def main() -> int:
             "campos_ausentes": list(ev.campos_ausentes) + list(FALTAN_HOY),
             "confianza": conf.a_dict(),
             "entrada": reg,
+            "excluido": excluido,
+            "excluido_motivo": motivo if excluido else None,
         })
 
     print("evaluaciones a escribir: %d · filas del libro sin cruce: %d"
@@ -127,8 +208,9 @@ def main() -> int:
     from supabase.cargar import cargar
     res = cargar("evaluaciones", filas, fuente="libro_v3",
                  archivo="motor " + filas[0]["version_reglas"],
-                 nota="sin contrastes: pacs.mercados vacia. Sin Instagram ni "
-                      "Model Match. Declarado en campos_ausentes de cada fila.")
+                 nota="con señales de Instagram (%d perfiles) y exclusion del "
+                      "libro aplicada. Sin contrastes de mercado. Declarado en "
+                      "campos_ausentes de cada fila." % con_instagram)
     print(res)
 
     # Se lee de la VISTA, no de la tabla. `evaluaciones` es append-only, asi que
@@ -154,6 +236,14 @@ def main() -> int:
                         "       count(distinct huella_reglas) "
                         "  from pacs.v_evaluacion_actual")
             n_ver, n_huella = cur.fetchone()
+            cur.execute("select excluido, count(*), "
+                        "       count(*) filter (where dolor_primario is not null) "
+                        "  from pacs.v_evaluacion_actual "
+                        " where excluido is not null group by 1 order by 2 desc")
+            exc = cur.fetchall()
+            cur.execute("select count(*) from pacs.v_evaluacion_actual "
+                        " where excluido is null")
+            contactables = cur.fetchone()[0]
 
     print("")
     print("=" * 66)
@@ -173,6 +263,14 @@ def main() -> int:
     print("  confianza:")
     for niv, c in niveles:
         print("      %-8s %5d" % (niv, c))
+    print("")
+    print("  excluidos por metodologia (NO entran a ninguna cola):")
+    for motivo, c, con_dolor in exc:
+        # `con_dolor` no es un problema: el diagnostico se calcula igual. Es el
+        # numero que antes los metia a la cola, y ahora solo queda de registro.
+        print("      %-28s %5d   (con dolor primario: %d)"
+              % (motivo, c, con_dolor))
+    print("      %-28s %5d" % ("contactables", contactables))
     return 0
 
 

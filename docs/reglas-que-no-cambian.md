@@ -222,7 +222,57 @@ viva dentro de seis meses.
 
 ---
 
-## 8 · Las tres guardias de PACS-H
+## 8 · Un dato que existe y nadie lee se comporta igual que uno que no existe
+
+Hermano del §3, y peor de detectar. Allá una guarda corría y no encontraba nada
+que mirar. Acá **no hay guarda**: hay una columna, con el dato correcto, que
+ningún camino de código abre. Nada falla, nada queda vacío, ningún conteo se ve
+raro. El sistema se comporta exactamente como si la columna no estuviera — pero
+se *siente* cubierto, porque el dato está ahí y se puede señalar.
+
+**El caso.** El libro trae `pacs: nivel_de_calificacion` con 135 `DESCARTADO`,
+25 `BLOQUEADO POR COBERTURA` y 1 `RECLASIFICADO POR MMI`. `correr_motor.py`
+nunca leyó esa columna. Resultado, medido el 2026-09-23: **158 personas
+excluidas por metodología recibieron evaluación normal, y 122 de ellas salieron
+con dolor primario** — Lisa Munoz con P-Q10 y confianza MEDIA, lista para
+cualquier cola de contacto. El diagnóstico era correcto; lo que faltaba era la
+decisión, ya tomada, de no contactarla.
+
+Lo que lo hizo visible no fue una prueba: fue preguntar por dos nombres
+concretos. **Un agregado nunca lo habría mostrado** — 158 sobre 4.187 no mueve
+ningún porcentaje que alguien estuviera mirando.
+
+### Las tres reglas que salen de ahí
+
+**La exclusión se lee, no se deduce.** Un descarte por cobertura, por NMLS
+propio o por estar fuera del ICP es una decisión de otra etapa. Si el motor la
+recalculara, el día que cambie un qualifier volvería a contactar a alguien que
+ya se decidió no contactar — y el motor habría «funcionado».
+
+**Corta donde se produce la acción, no donde se muestra.** `/api/lectura`
+devuelve la evaluación completa de un excluido: su diagnóstico no estorba, y
+esconderlo haría que alguien lo capturara otra vez sin entender por qué no
+aparece. Lo que responde **409** es `/api/dossier`, que ES la secuencia de 7
+toques, y `/api/extracto`, que es el material para escribirle. Devolver el
+dossier confiando en que la pantalla no lo mande es la misma omisión un piso
+más arriba.
+
+**Un valor nuevo no puede caer del lado permisivo.** `motor/exclusion.py`
+declara las dos listas —`NO_CONTACTABLES` y `CONTACTABLES`— y **levanta
+`NivelDesconocido`** ante cualquier nivel que no esté en ninguna. El error
+original fue una omisión silenciosa; que la siguiente grite es lo único que
+evita repetirlo. Por lo mismo `RECLASIFICADO POR MMI` se compara **por prefijo**:
+el valor real llega con coletilla (`· fuera de ICP`), y una igualdad exacta
+contra él devolvería «contactable» sin avisar — que es el §3 otra vez, dentro
+de la guarda escrita para evitarlo.
+
+Un nivel **vacío no es una exclusión**: es una fila sin diagnosticar, y eso lo
+gobierna la confianza. Confundirlos dejaría fuera a los 3.332 PRE-MQL por no
+haber llegado a mirarlos.
+
+---
+
+## 9 · Las tres guardias de PACS-H
 
 Sin denominador no hay porcentaje. El mix de programa no activa ni desactiva
 nada con menos de 10 operaciones con tipo identificado o menos del 50% de

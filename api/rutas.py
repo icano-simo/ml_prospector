@@ -219,6 +219,20 @@ def realtors(params: dict) -> tuple[int, dict]:
         filas = [f for f in filas
                  if (f.get("sf_lead_id") in con_captura) == (con_mm == "si")]
 
+    # Los excluidos van MARCADOS en la lista, no ocultos. Esconderlos haria
+    # que alguien los volviera a buscar, los capturara de nuevo y no entendiera
+    # por que no aparecen; y una lista que miente por omision es la que hizo
+    # falta que Lisa Munoz saliera como MQL para que se notara.
+    # Son 158 sobre 4.187: una sola lectura y un `in` sobre un set.
+    _c, exc, _ = leer("v_evaluacion_actual",
+                      "?select=realtor_id,excluido,excluido_motivo"
+                      "&excluido=not.is.null&limit=2000")
+    por_id = {e["realtor_id"]: e for e in (exc or []) if e.get("realtor_id")}
+    for f in filas:
+        e = por_id.get(f.get("id"))
+        f["excluido"] = e.get("excluido") if e else None
+        f["excluido_motivo"] = e.get("excluido_motivo") if e else None
+
     rango = cabeceras.get("Content-Range", "")
     total = rango.split("/")[-1] if "/" in rango else str(len(filas))
     # El nombre completo del estado viaja como MAPA, no como columna. En las
@@ -884,7 +898,7 @@ def lectura(params: dict) -> tuple[int, dict]:
         "v_evaluacion_actual",
         "?select=dolor_primario,dolores_secundarios,moduladores,apertura,"
         "gating_qualifier,gating_intensidad,confianza,campos_ausentes,"
-        "no_evaluadas,version_reglas,evaluado_en"
+        "no_evaluadas,version_reglas,evaluado_en,excluido,excluido_motivo"
         "&realtor_id=eq.%s" % urllib.parse.quote(realtor_id))
     ev = (evs or [None])[0]
 
@@ -1105,6 +1119,11 @@ def lectura(params: dict) -> tuple[int, dict]:
                        "intensidad": (ev or {}).get("gating_intensidad")},
             "confianza": (ev or {}).get("confianza"),
         },
+        # La exclusion va SUELTA y no dentro de la cabecera: es lo primero que
+        # la pantalla tiene que poder mirar, sin recorrer un diagnostico que
+        # aqui ya no decide nada.
+        "excluido": (ev or {}).get("excluido"),
+        "excluido_motivo": (ev or {}).get("excluido_motivo"),
         "hipotesis": hipotesis,
         "evaluacion": ev,
         "lecturas": lecturas,
@@ -1128,6 +1147,10 @@ def lectura(params: dict) -> tuple[int, dict]:
 def _nivel_desde(ev: dict | None) -> str:
     if not ev:
         return "SIN EVALUAR"
+    # Va PRIMERO. Lisa Munoz tiene P-Q10 y gating: por los cuatro niveles de
+    # abajo sale MQL, que es exactamente como una excluida termina en una cola.
+    if ev.get("excluido"):
+        return "EXCLUIDO"
     if not ev.get("gating_qualifier"):
         return "BLOQUEADO"
     if not ev.get("dolor_primario"):
@@ -1234,6 +1257,22 @@ def dossier(params: dict) -> tuple[int, dict]:
     cod, base = lectura(params)
     if cod >= 400:
         return cod, base
+
+    # ── LA EXCLUSION CORTA AQUI ─────────────────────────────────────────────
+    # El dossier no es una lectura: es la secuencia de 7 toques, o sea la cola
+    # de contacto misma. Un excluido tiene lectura -- su diagnostico sigue
+    # visible en /api/lectura -- pero no tiene secuencia. Devolver el dossier y
+    # confiar en que la pantalla no lo mande es la misma omision de antes, un
+    # piso mas arriba.
+    if base.get("excluido"):
+        return 409, {
+            "error": "excluido por metodología: %s" % base["excluido"],
+            "motivo": base.get("excluido_motivo"),
+            "excluido": base["excluido"],
+            "que_hacer": ("Su lectura sigue disponible en /api/lectura. Lo que "
+                          "no existe es la secuencia: no entra a ninguna cola "
+                          "de contacto mientras el libro lo tenga así."),
+        }
 
     nombre = base["realtor"]["nombre_mostrado"]
     ev = base.get("evaluacion") or {}

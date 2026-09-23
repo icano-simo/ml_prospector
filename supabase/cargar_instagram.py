@@ -70,10 +70,30 @@ ESTADOS_VALIDOS = {
 CON_TEXTO_DE_TERCEROS = ("comentarios_texto", "citas_por_etiqueta",
                          "preguntas_recibidas")
 
-#: Columnas que son, por definicion, del AGENTE en su propio muro.
-DEL_AGENTE = ("captions_texto", "comentarios_del_agente", "email")
+#: Columnas del CSV que son, por definicion, del AGENTE en su propio muro.
+DEL_AGENTE = ("captions_texto", "comentarios_del_agente", "email",
+              "destacadas_titulos")
 
-_RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
+#: Y lo que el agente escribio que NO esta en el CSV. La BIO es el texto mas
+#: suyo que hay -- es donde pone su telefono a proposito, para que lo llamen--
+#: y no tiene columna. Sin mirarla, la guarda daba 17 contactos "de
+#: procedencia desconocida" que eran todos suyos:
+#:
+#:   "-SWFL Realtor -Hustle Bees Realty -Hablo Español 📲(863) 234-8132
+#:    📩Jadiel@hustlebeesrealty.com"
+#:
+#: Una guarda que compara contra un conjunto incompleto de "lo suyo" convierte
+#: en sospechoso justo lo que el publico para que lo contacten.
+DEL_AGENTE_EN_EL_CRUDO = ("bio", "nombre_visible", "categoria_declarada")
+
+#: El dominio NO puede terminar en punto. Sin el `[a-z]` final, el regex se
+#: tragaba los puntos suspensivos con que se trunca una cita:
+#:
+#:   'John.Sanchez.Re@gmail.com...'  !=  'John.Sanchez.Re@gmail.com'
+#:
+#: y el email del propio agente quedaba "de procedencia desconocida" por tres
+#: caracteres de puntuacion.
+_RE_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)*\.[A-Za-z]{2,}")
 _RE_TELEFONO = re.compile(r"(?<!\d)(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4})(?!\d)")
 
 
@@ -104,7 +124,20 @@ def leer_csv(ruta: str = CSV) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def verificar_sin_pii_de_terceros(filas: list[dict]) -> dict:
+def texto_del_agente(fila: dict, crudo: dict | None = None) -> str:
+    """Todo lo que escribio EL agente: las columnas del CSV mas su bio.
+
+    La bio no tiene columna y es donde el realtor pone su telefono para que lo
+    llamen. Sin ella, la guarda marca como ajeno lo mas suyo que hay.
+    """
+    partes = [(fila.get(c) or "") for c in DEL_AGENTE]
+    perfil = (crudo or {}).get("perfil") or {}
+    partes += [str(perfil.get(c) or "") for c in DEL_AGENTE_EN_EL_CRUDO]
+    return " ".join(partes)
+
+
+def verificar_sin_pii_de_terceros(filas: list[dict],
+                                  crudos: dict | None = None) -> dict:
     """Ningun email ni telefono de un TERCERO entra en la base.
 
     La primera version marcaba cualquier contacto en `citas_por_etiqueta` y
@@ -123,7 +156,8 @@ def verificar_sin_pii_de_terceros(filas: list[dict]) -> dict:
     """
     de_terceros, del_agente = [], []
     for i, f in enumerate(filas):
-        suyo = " ".join((f.get(c) or "") for c in DEL_AGENTE)
+        crudo = (crudos or {}).get((f.get("email") or "").strip().lower())
+        suyo = texto_del_agente(f, crudo)
         ajeno = f.get("comentarios_texto") or ""
         for col in CON_TEXTO_DE_TERCEROS:
             texto = f.get(col) or ""
@@ -204,8 +238,13 @@ def main(aplicar: bool) -> int:
         print("CSV vacio")
         return 1
 
+    # Los crudos van ANTES de la guarda: la bio vive ahi y es lo que distingue
+    # el telefono del agente del de un tercero.
+    crudos = cargar_crudos()
+    print("crudos en ig_raw/: %d" % len(crudos))
+
     # La guarda de PII corre ANTES de tocar la base.
-    hallado = verificar_sin_pii_de_terceros(filas)
+    hallado = verificar_sin_pii_de_terceros(filas, crudos)
     propios = hallado["del_agente"]
     print("guarda de PII: %d filas revisadas en %d columnas de texto · sin "
           "datos de terceros" % (len(filas), len(CON_TEXTO_DE_TERCEROS)))
@@ -219,9 +258,6 @@ def main(aplicar: bool) -> int:
         print("   son de negocio, no una fuga: el realtor publica su teléfono "
               "en su propio caption. Valdría la pena llevarlos a "
               "pacs.contactos con fuente instagram.")
-
-    crudos = cargar_crudos()
-    print("crudos en ig_raw/: %d" % len(crudos))
 
     malos = {f.get("estado_perfil") for f in filas} - ESTADOS_VALIDOS
     if malos:
@@ -239,13 +275,30 @@ def main(aplicar: bool) -> int:
     # privacidad, y traia como `privado` a siete perfiles que el crudo
     # re-diagnosticado llama `sin_grid` y `publico_leido`. Son exactamente los
     # siete falsos positivos que ya habiamos corregido.
+    #: `handle_dudoso` NO es una discrepancia: es un juicio que el CSV puede
+    #: hacer y el crudo NO.
+    #:
+    #: El crudo dice que paso al leer la pagina. El CSV dice ademas de QUIEN es
+    #: esa pagina. Tulio Pena tiene en el libro el handle
+    #: `katie_ready_co_springs_realtor`, cuyo perfil se llama "Katie Ready -
+    #: Colorado Springs Real Estate Agent": la pagina se leyo perfecto
+    #: (`publico_leido`, 12 posts) y no es suya. El derivado lo marca
+    #: `handle_dudoso` con confianza baja y deja las señales en blanco, que es
+    #: exactamente lo correcto -- atribuirle a Tulio el contenido de Katie
+    #: seria el peor error posible de esta fuente.
+    #:
+    #: Tratarlo como "CSV viejo" bloquearia la carga entera por un acierto.
     desacuerdos = []
     for f in filas:
         email = (f.get("email") or "").strip().lower()
         c = crudos.get(email)
-        if c and c.get("estado_perfil") != f.get("estado_perfil"):
-            desacuerdos.append((f.get("handle"), f.get("estado_perfil"),
-                                c.get("estado_perfil")))
+        if not c or c.get("estado_perfil") == f.get("estado_perfil"):
+            continue
+        if (f.get("estado_perfil") == "handle_dudoso"
+                and f.get("handle_confianza") == "baja"):
+            continue
+        desacuerdos.append((f.get("handle"), f.get("estado_perfil"),
+                            c.get("estado_perfil")))
     if desacuerdos:
         print("")
         print("ABORTADO: el CSV y el crudo discrepan en %d perfiles."
