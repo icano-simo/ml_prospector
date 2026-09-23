@@ -285,7 +285,7 @@ function vistaDossier(d){
       <div class="seccion">Dossier A–G · ${esc(d.realtor.nombre_mostrado)}</div>
       <span class="badge ${cn}" style="font-size:13px;padding:6px 12px">
         <i>${ci}</i>${esc(c.nivel || '—')}</span>
-      <span class="cifra" style="margin-left:12px;font-size:18px">${esc(d.dolor_primario || 'sin dolor primario')}</span>
+      <span class="cifra" style="margin-left:12px;font-size:18px">${esc(d.dolor_primario || 'sin evidencia suficiente: no lo sabemos')}</span>
       <span class="pista" style="margin-left:10px">${esc(d.realtor.estado_nombre || '')}
         · ${d.mercados} mercados</span>
     </div>
@@ -446,7 +446,10 @@ function vistaLectura(d){
     <div class="seccion">Diagnóstico</div>
     <span class="badge ${cn}" style="font-size:13px;padding:6px 12px">
       <i>${ci}</i>${esc(c.nivel || '—')}</span>
-    <span class="cifra" style="margin-left:12px;font-size:18px">${esc(c.dolor_primario || 'sin dolor primario')}</span>
+    <!-- NO dice «sin dolor primario». Un realtor sin activaciones no es alguien
+         sin dolor: es alguien de quien no sabemos lo suficiente. La diferencia
+         es quién queda mal en la frase, y es nuestra la falta de evidencia. -->
+    <span class="cifra" style="margin-left:12px;font-size:18px">${esc(c.dolor_primario || 'sin evidencia suficiente: no lo sabemos')}</span>
     ${c.acto_de_habla ? `<span class="pista" style="margin-left:10px">acto de habla:
       <b style="color:var(--sky)">${esc(c.acto_de_habla)}</b></span>` : ''}
     ${c.gating && c.gating.qualifier ? `<div class="pista" style="margin-top:8px">

@@ -1359,7 +1359,8 @@ def dossier(params: dict) -> tuple[int, dict]:
                          "el corpus" % dolor)
     else:
         gancho = GANCHO_GENERICO
-        fuente_gancho = ("genérico: sin dolor primario no hay ficha que abrir. "
+        fuente_gancho = ("genérico: sin evidencia suficiente no hay ficha que "
+                         "abrir — no lo sabemos todavía. "
                          "La apertura real es la pregunta del bloque G.")
 
     # Las lecturas como objetos, para que el toque 4 pueda mirar `afirma`.

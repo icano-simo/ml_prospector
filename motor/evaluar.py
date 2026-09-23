@@ -34,7 +34,7 @@ from pacs.guardas import (
 #: `texto` de una regla es lo que el BD lee en la ficha, así que corregirlo es
 #: un cambio declarado. Esta subida arregla cinco textos que usaban vocabulario
 #: que no se usa en el sector -- `enganche`, `pre-aprobación`, `precalificación`.
-VERSION_REGLAS = "2026.09.23-vocabulario-de-oficio"
+VERSION_REGLAS = "2026.09.23-sin-r7"
 
 
 def huella_del_catalogo() -> str:

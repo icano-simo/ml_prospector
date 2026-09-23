@@ -49,7 +49,17 @@ MAPA = {
     "ev: hits lujo/inversion": "ev_hits_lujo_inversion",
     "ev: caracteres espanol": "ev_caracteres_espanol",
     "R4 Comunidad / FHB": "R4_comunidad_fhb", "R5 Espanol": "R5_espanol",
-    "R7 Identidad hispana": "R7_identidad_hispana",
+    # `R7 Identidad hispana` NO se mapea desde el 2026-09-23. Se calculaba desde
+    # el apellido y el nombre de pila -- base censal de apellidos con >=75% de
+    # portadores hispanos, mas heuristica patronimica -ez/-es/-az/-iz/-oz-- y el
+    # libro la define como «probabilidad de que el realtor pertenezca a la
+    # comunidad latina». Es inferencia de origen: ECOA Regulation B.
+    #
+    # `R6 Broker latino` tampoco se mapea, y nunca se mapeo. Suma 2 puntos «si
+    # el nombre contiene un apellido hispano», asi que habria que sacarla --
+    # pero no hay nada que sacar: jamas llego al motor.
+    #
+    # Ver docs/r7-identidad-hispana.md.
     "E6 Asequibilidad": "E6_asequibilidad",
     "E3 Urgencia sept (no pond.)": "E3_urgencia_sept",
     "Unidades/ano": "unidades_ano", "IG seguidores": "ig_seguidores",

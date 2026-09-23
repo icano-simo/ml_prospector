@@ -130,17 +130,93 @@ campos cuya **procedencia** es una base prohibida, con independencia de cómo se
 llamen. Un campo se declara ahí una vez, por lo que se sabe de su origen, y deja
 de depender de que alguien lo haya nombrado con honestidad.
 
-## Lo que queda por decidir (no es de Claude Code)
+## La decisión: R7 sale del motor
 
-La decisión de negocio registrada dice: *«R7 se mantiene por ahora. Si resulta
-que usa apellido, etnia u origen, sale del motor (riesgo ECOA / Reg B).»*
+Tomada por Isabella Cano el 2026-09-23. **No es una excepción fechada.**
 
-Resulta que sí. La decisión está tomada por su propio texto, pero el alcance —
-201 realtors que se quedan sin diagnóstico y 358 que cambian de dolor primario —
-no se puede ejecutar sin que alguien lo mire. Queda para Isabella.
+| Regla | Qué se hizo | Por qué |
+|---|---|---|
+| `P-Q14-3` | **Eliminada** | Se activaba solo con `R7 >= 8`. Sin R7 no queda condición: su propio enunciado admitía que no había evidencia de idioma. |
+| `P-Q13-2` | **Eliminada** | R7 no era una rama de un OR sino un **conjunto de un AND**. Quitarlo no la depura: la ensancha de **144 a 523** activaciones. |
+| `P-Q01-4` | Editada | R7 era la otra rama del OR: queda `R5 >= 6`. Más estrecha, 987 → 329. Enunciado corregido: decía «afinidad latina», que era lo que R7 pretendía medir. |
+| `P-Q13-1` | Editada | Igual, OR interior. Queda `ev2_comunidad Y R5 >= 6`. Más estrecha, 50 → 18. |
 
-Nota aparte, del mismo hallazgo: **R6 `Broker latino` también usa apellido** —
-*«2 si el nombre contiene un apellido hispano»*. Es el apellido de una empresa,
-no de una persona, así que no es el mismo problema; pero si R7 sale, R6 merece
-la misma pregunta, porque el patrón que describe («oficina fundada por un agente
-latino») vuelve a ser inferencia de origen sobre un individuo.
+El criterio que decidió entre editar y borrar: **si quitar R7 deja la regla más
+estrecha, se edita; si la deja más ancha, se borra.** Una regla que al sacarle el
+campo prohibido se activa sobre 3,6 veces más gente no es la misma regla con
+menos ruido — es otra regla, que nadie escribió ni validó.
+
+36 reglas sobre los mismos **19 qualifiers**: ninguno se quedó sin regla, que es
+lo que habría dejado un dolor imposible de activar con su ficha y su gancho
+colgando. `VERSION_REGLAS` pasó a `2026.09.23-sin-r7`.
+
+`R7 Identidad hispana` también salió del `MAPA` de
+[correr_motor.py](../supabase/correr_motor.py): estaba en `entrada` de las 4.187
+evaluaciones aunque ninguna regla la usara, y un campo prohibido que no se lee
+sigue siendo un campo prohibido almacenado.
+
+### El impacto, medido en solo lectura
+
+Releyendo las 4.187 `entrada` ya guardadas y reevaluándolas en memoria, sin
+escribir una fila:
+
+| dolor principal | antes | después | delta |
+|---|---|---|---|
+| **(no lo sabemos)** | 1.679 | 2.025 | **+346** |
+| P-Q01 | 585 | 21 | **−564** |
+| P-Q06 | 752 | 934 | +182 |
+| P-Q11 | 296 | 346 | +50 |
+| P-Q13 | 20 | 1 | −19 |
+| P-Q21 | 25 | 30 | +5 |
+| P-Q09 · P-Q14 · P-Q07 · P-Q17 · P-Q10 · P-Q19 | — | — | sin cambio |
+
+Sin **ninguna** activación: 872 (20,8%) → 1.082 (25,8%). De los 210 que pierden
+todas, **201 son contactables**. Cambian de dolor principal 583 (13,9%).
+
+Esas 201 personas salen como **«sin evidencia suficiente: no lo sabemos»**, no
+como «sin dolor»: no se les miró y no había nada — se les asignaba un dolor por
+cómo se llaman.
+
+## R6 · no había nada que sacar
+
+**R6 nunca estuvo en el motor.** No figura en el `MAPA` de `correr_motor.py`, así
+que jamás llegó a una regla. Su componente de apellido existe —*«2 si el nombre
+contiene un apellido hispano»*, sobre 10 puntos— pero es inerte para el
+prospector.
+
+No propongo recalcularla sin el apellido: no haría falta para nada que hoy exista.
+Si alguna vez se quiere usar R6, la parte defendible es la otra —*«2,2 por cada
+palabra en español en el nombre del brokerage, hasta 3»*, que mide cómo se
+presenta una empresa, no de quién es—, y se recalcularía desde la columna
+`Brokerage`, que sí tenemos. Queda anotado, no hecho.
+
+## La auditoría de las otras 28 columnas
+
+Revisadas las 29 columnas que `correr_motor.MAPA` lleva al motor, cada una contra
+su fila en `Metodologia`. **Una sola alarma: R7.** Las demás:
+
+- **`ev2: …` (19 columnas)** — `Diccionario PACS`: *«Señales re-derivadas del
+  texto crudo de la bio por este motor»*. Texto que la persona escribió.
+- **`ev: bio legible`, `ev: hits lujo/inversion`, `ev: caracteres espanol`** —
+  columnas del modelo v2, también sobre la bio.
+- **`R4 Comunidad / FHB`** — bio de Instagram re-analizada con léxico propio.
+- **`R5 Espanol`** — bio re-analizada: marcadores en español, palabras sueltas,
+  caracteres diagnósticos. Mide **el idioma de lo que publica**, que es conducta.
+- **`E6 Asequibilidad`** — ACS 2024 + NAHREP 2025, ratios precio/ingreso.
+- **`E3 Urgencia sept`** — inverso exacto de E2.
+- **`Unidades/ano`, `IG seguidores`** — `Procedencia y limites`: *«Lote original
+  de 4.249 realtors (Instagram + fuente licenciada)»*.
+
+La distinción que importa y que se ve al ponerlas en fila: **R5 y R7 suenan
+parecido y solo una es inferencia sobre el origen.** R5 mide lo que la persona
+escribe; R7 medía de qué apellido es.
+
+Todas quedan registradas en `CAMPOS_DE_PROCEDENCIA_PROHIBIDA` por omisión — el
+registro lista lo prohibido, y esta auditoría es la constancia de que las otras
+28 se miraron una por una.
+
+Un apunte del propio libro, hoja `Calidad de datos`, que confirma el problema
+desde adentro: *«Los apellidos son probabilísticos · 2354 filas con apellido
+hispano · La base del Census clasifica apellidos por frecuencia étnica, **no
+personas**. Habrá falsos positivos (matrimonio, adopción) y falsos negativos
+(latinos de apellido no hispano).»*

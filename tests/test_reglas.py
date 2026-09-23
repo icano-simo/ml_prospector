@@ -55,15 +55,13 @@ DISPARA: dict[str, dict] = {
     "P-Q01-1": {"ev2_itin": True, "ev2_self_employed": False},
     "P-Q01-2": {"ev2_fha_gob": True, "ev2_dpa_enganche": False},
     "P-Q01-3": {"R5_espanol": 8, "R4_comunidad_fhb": 7},
-    "P-Q01-4": {"R5_espanol": 6, "R7_identidad_hispana": 0},
+    "P-Q01-4": {"R5_espanol": 6},
 
     "P-Q14-1": {"ev2_espanol_decl": True, "ev_caracteres_espanol": 1},
     "P-Q14-2": {"R5_espanol": 6},
-    "P-Q14-3": {"R7_identidad_hispana": 8},
+    # P-Q14-3 y P-Q13-2 se eliminaron el 2026-09-23 con R7.
 
-    "P-Q13-1": {"ev2_comunidad": True, "R5_espanol": 6,
-                "R7_identidad_hispana": 0},
-    "P-Q13-2": {"ev2_fe_familia": True, "R7_identidad_hispana": 8},
+    "P-Q13-1": {"ev2_comunidad": True, "R5_espanol": 6},
 
     "P-Q07-1": {"ev2_dpa_enganche": True},
     "P-Q07-2": {"ev2_primera_casa": True},
@@ -119,15 +117,12 @@ NO_DISPARA: dict[str, dict] = {
     "P-Q01-1": {"ev2_itin": False, "ev2_self_employed": False},
     "P-Q01-2": {"ev2_fha_gob": False, "ev2_dpa_enganche": False},
     "P-Q01-3": {"R5_espanol": 7, "R4_comunidad_fhb": 7},
-    "P-Q01-4": {"R5_espanol": 5, "R7_identidad_hispana": 7},
+    "P-Q01-4": {"R5_espanol": 5},
 
     "P-Q14-1": {"ev2_espanol_decl": True, "ev_caracteres_espanol": 0},
     "P-Q14-2": {"R5_espanol": 5},
-    "P-Q14-3": {"R7_identidad_hispana": 7},
 
-    "P-Q13-1": {"ev2_comunidad": True, "R5_espanol": 5,
-                "R7_identidad_hispana": 7},
-    "P-Q13-2": {"ev2_fe_familia": True, "R7_identidad_hispana": 7},
+    "P-Q13-1": {"ev2_comunidad": True, "R5_espanol": 5},
 
     "P-Q07-1": {"ev2_dpa_enganche": False},
     "P-Q07-2": {"ev2_primera_casa": False},
@@ -199,6 +194,38 @@ def test_el_catalogo_es_auditable():
     verificar_catalogo()
 
 
+def test_ninguna_regla_lee_un_campo_de_procedencia_prohibida():
+    """La decision del 2026-09-23, fijada donde no se puede deshacer sin verla.
+
+    `verificar_catalogo()` ya lo cubre a traves de la guarda, pero esta prueba
+    mira los `campos` declarados directamente. Si alguien vuelve a meter R7 y a
+    la vez le agrega una excepcion a la guarda, esto sigue fallando -- que es
+    justo el escenario que la nota de negocio descarto: «no es una excepcion
+    fechada».
+    """
+    from pacs.guardas import CAMPOS_DE_PROCEDENCIA_PROHIBIDA
+
+    culpables = [(r.id, c) for r in REGLAS for c in r.campos
+                 if c.lower() in CAMPOS_DE_PROCEDENCIA_PROHIBIDA]
+    assert not culpables, culpables
+
+
+def test_r7_no_llega_desde_el_libro():
+    """La regla no basta: si el MAPA la trae, viaja a `entrada` y se guarda.
+
+    R7 estaba en las 4.187 evaluaciones dentro de `entrada` aunque ninguna
+    regla la usara. Un campo prohibido que no se lee sigue siendo un campo
+    prohibido almacenado.
+    """
+    from supabase.correr_motor import MAPA
+
+    assert "R7 Identidad hispana" not in MAPA
+    assert "R7_identidad_hispana" not in set(MAPA.values())
+    # R6 nunca estuvo, y tiene el mismo problema: suma 2 por apellido hispano
+    # en el nombre del brokerage.
+    assert not [c for c in MAPA if str(c).startswith("R6")]
+
+
 def test_toda_regla_tiene_su_dato_de_prueba():
     """Si se agrega una regla sin su fila, esto falla. Es el candado."""
     ids = {r.id for r in REGLAS}
@@ -210,14 +237,24 @@ def test_toda_regla_tiene_su_dato_de_prueba():
     assert not sobran, "datos de reglas que ya no existen: %s" % sorted(sobran)
 
 
-def test_son_38_reglas_sobre_19_qualifiers():
+def test_son_36_reglas_sobre_19_qualifiers():
     """El conteo exacto. Si cambia, que se vea en el diff.
 
-    38 y no 37 desde que P-Q11 se partio en dos: la produccion que manda es la
+    Fueron 38 desde que P-Q11 se partio en dos: la produccion que manda es la
     anualizada de Model Match (P-Q11-2) y la del libro solo aplica cuando no
     hay Model Match (P-Q11-3), con su texto diciendolo.
+
+    36 desde el 2026-09-23, cuando R7 salio del motor: P-Q14-3 se activaba solo
+    por el apellido, y P-Q13-2 se ensanchaba de 144 a 523 activaciones al
+    quitarle R7, que era lo unico que la acotaba. Las dos se eliminaron.
+
+    **Siguen siendo 19 qualifiers**: P-Q14 conserva P-Q14-1 y P-Q14-2, y P-Q13
+    conserva P-Q13-1. Ningun qualifier se quedo sin regla, que es lo que habria
+    dejado un dolor imposible de activar con su ficha y su gancho colgando.
     """
-    assert len(REGLAS) == 38, len(REGLAS)
+    assert len(REGLAS) == 36, len(REGLAS)
+    assert len({r.qualifier for r in REGLAS}) == 19, sorted(
+        {r.qualifier for r in REGLAS})
     assert len(por_qualifier()) == 19, sorted(por_qualifier())
 
 
