@@ -44,6 +44,21 @@ TOPE = 300
 FUENTE_CONTACTOS = "Model Match"
 
 
+#: Claves de servicio del perfil: no son dato extraido.
+_DE_SERVICIO = ("capturado_en", "fallos", "wallet_share_base")
+
+
+def _campos_de_perfil(perfil: dict | None) -> int:
+    """Cuantos campos con dato trae un perfil parseado.
+
+    Es el denominador de la guarda de secciones sin extraer: texto guardado y
+    cero campos es un fallo, y sin contar no se puede decir que hubo cero.
+    """
+    return sum(1 for k, v in (perfil or {}).items()
+               if k not in _DE_SERVICIO
+               and v not in (None, "", [], {}, False))
+
+
 def capturas_que_mandan(realtor_id: str) -> tuple[list, dict]:
     """Las filas de la captura MAS RECIENTE, y cuantas quedaron atras.
 
@@ -581,7 +596,14 @@ def guardar(d: dict) -> tuple[int, dict]:
         avisos.append("sin bloque de Originators: no se puede detectar si "
                       "trabaja con Everett Financial, que es la exclusion dura")
     if d.get("lenders"):
-        agregar("lenders", d["lenders"], alcance="perfil")
+        # SE PARSEA. Antes se guardaba el texto y nada mas, asi que `tpo_pct` y
+        # `tabla_lenders` salian vacios aunque la pestaña estuviera pegada --
+        # el parser los saca perfectos de ese mismo texto, solo que nadie lo
+        # llamaba. Es lo que la guarda de abajo existe para que no vuelva a
+        # pasar en silencio.
+        pl, _fallo = _parsear(parsear_perfil, d["lenders"], "Lenders")
+        agregar("lenders", d["lenders"], alcance="perfil",
+                extra={"perfil": pl})
 
     # ── lo que estaba en el texto y no llego al dict ─────────────────────────
     # Un `[]` dice dos cosas a la vez: "este agente no trabaja con nadie" y "el
@@ -597,6 +619,26 @@ def guardar(d: dict) -> tuple[int, dict]:
             "vacio. Es %s. El crudo esta guardado: se arregla el parser y se "
             "re-deriva sin volver a capturar."
             % (f.get("seccion"), f.get("campo"), f.get("por_que_importa")))
+
+    # ── UNA SECCION CON TEXTO QUE NO PRODUCE NINGUN CAMPO ───────────────────
+    # Es la guarda que faltaba. El bloque de Lenders se guardaba con 358
+    # caracteres y cero campos, y nada avisaba: `fallos_de_seccion` no corria
+    # porque la seccion ni se parseaba, asi que la guarda de secciones vacias
+    # no tenia nada sobre lo que fallar.
+    #
+    # Texto guardado y cero campos extraidos es un fallo, siempre. O el parser
+    # no supo, o nadie lo llamo -- y las dos cosas hay que verlas.
+    for f in filas:
+        p = f["parseado"]
+        if p.get("seccion") == "market_signals":
+            continue
+        n_campos = _campos_de_perfil(p.get("perfil"))
+        if len(f["texto_crudo"]) > 100 and n_campos == 0:
+            avisos.append(
+                "SECCION SIN EXTRAER · `%s` se guardó con %d caracteres y no "
+                "produjo ningún campo. O el parser no supo leerla, o no se "
+                "llamó sobre ella. El crudo está guardado y se re-deriva."
+                % (p.get("seccion"), len(f["texto_crudo"])))
 
     # Y la base del reparto, MEDIDA contra sus propias filas.
     for campo, base in (perfil_unido.get("wallet_share_base") or {}).items():
@@ -689,24 +731,41 @@ def guardar(d: dict) -> tuple[int, dict]:
     # fallan, el volcado ya esta guardado y se pueden re-derivar de el. Al
     # reves no: la prueba de Model Match vence el 1 de octubre.
     contactos = _contactos_de(perfil_unido, realtor_id, lote, ahora)
+    nuevos, ya_estaban = [], []
     if contactos:
-        cod_c, det_c, _ = escribir("contactos", contactos, devolver=False,
-                                   sin_duplicar=True)
+        # Cuales YA estaban, para poder decir cuantos son nuevos en vez de
+        # informar tres cuando dos ya existian.
+        _cy, previos, _ = leer(
+            "contactos",
+            "?select=canal,valor&realtor_id=eq.%s&fuente=eq.%s"
+            % (urllib.parse.quote(realtor_id),
+               urllib.parse.quote(FUENTE_CONTACTOS)))
+        vistos = {(p.get("canal"), p.get("valor")) for p in (previos or [])}
+        nuevos = [c for c in contactos if (c["canal"], c["valor"]) not in vistos]
+        ya_estaban = [c for c in contactos if (c["canal"], c["valor"]) in vistos]
+
+        # `on_conflict` nombra el unique: sin el, `ignore-duplicates` no
+        # aplica y un repetido tira los tres.
+        cod_c, det_c, _ = escribir(
+            "contactos", contactos, devolver=False, sin_duplicar=True,
+            en_conflicto="realtor_id,canal,valor,fuente")
         if cod_c >= 400:
             avisos.append(
                 "el crudo se guardo, pero los %d datos de contacto (%s) no "
                 "entraron en pacs.contactos: %s"
                 % (len(contactos), ", ".join(c["canal"] for c in contactos),
                    str(det_c)[:200]))
-            contactos = []
+            contactos, nuevos, ya_estaban = [], [], []
 
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
                  "condados": condados, "avisos": avisos, "volumenes": vols,
                  "estado": estado, "hash_volcado": huella,
                  "mercados_promovidos": promovidos,
                  "resumen": resumen_de_captura(filas, perfil_unido),
-                 "contactos": [{"canal": c["canal"], "valor": c["valor"]}
-                               for c in contactos]}
+                 "contactos": [{"canal": c["canal"], "valor": c["valor"],
+                                "nuevo": c in nuevos} for c in contactos],
+                 "contactos_nuevos": len(nuevos),
+                 "contactos_ya_estaban": len(ya_estaban)}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

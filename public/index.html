@@ -923,14 +923,17 @@ async function guardar(){
     });
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');
     const cond = (d.condados||[]).join(' · ');
-    const cont = (d.contactos||[]).map(c => c.canal + ': ' + c.valor).join(' · ');
+    const cont = (d.contactos||[]).map(c =>
+      c.canal + ': ' + c.valor + (c.nuevo ? '' : ' (ya estaba)')).join(' · ');
     $('#msgs').innerHTML = `<div class="ok">
       <b><span class="num">${d.bloques}</span> bloques guardados</b> ·
       <span class="num">${d.mercados_promovidos ?? 0}</span> promovidos a la
       biblioteca · ${esc(d.estado || '')} ·
       lote <code>${esc(d.upload_batch_id)}</code>
       ${cond ? '<br>condados: ' + esc(cond) : ''}
-      ${cont ? '<br>contactos: ' + esc(cont) : ''}</div>${avisos}`;
+      ${cont ? `<br>contactos: <span class="num">${d.contactos_nuevos ?? 0}</span>
+        nuevos, <span class="num">${d.contactos_ya_estaban ?? 0}</span> ya estaban
+        · ${esc(cont)}` : ''}</div>${avisos}`;
     /* La confirmación va DEBAJO de la caja y no se borra: es lo que se mira
        antes de pasar al realtor siguiente. */
     $('#confirmacion').innerHTML = pintarResumen(d.resumen);

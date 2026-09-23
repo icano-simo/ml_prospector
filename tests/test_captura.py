@@ -1482,6 +1482,105 @@ def test_sin_capturas_devuelve_vacio_sin_reventar():
     assert vivas == [] and cuantas["lotes"] == 0
 
 
+# ══ LA SECCION DE LENDERS SE PARSEA ══════════════════════════════════════════
+#
+# Se guardaba con 358 caracteres y CERO campos: el texto entraba y nadie
+# llamaba al parser sobre el. `tpo_pct` y `tabla_lenders` salian vacios aunque
+# la pestaña estuviera pegada, y el parser los saca perfectos de ese texto.
+
+BLOQUE_LENDERS_REAL = """\
+Total Lenders
+3
+Top 5 Concentration
+100.0%
+TPO %
+66.7%
+Avg Loan Size
+$361K
+Lending Companies
+Lenders this agent has worked with and their transaction history
+
+All
+all
+Search by lender name...
+United Wholesale Mortgage\t$540K\t1\t$540K\t49.9%
+Kings Mortgage Services Inc\t$520K\t1\t$520K\t48.0%
+Everett Financial Inc\t$23K\t1\t$23K\t2.1%
+Rows per page
+"""
+
+
+def test_el_bloque_de_lenders_produce_TPO_y_tabla():
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil(BLOQUE_LENDERS_REAL)
+    assert p["tpo_pct"] == 66.7
+    assert len(p["tabla_lenders"]) == 3
+    assert p["cabecera_lenders"]["total_lenders"] == 3
+
+
+def test_una_seccion_con_texto_y_cero_campos_es_un_fallo():
+    """Texto guardado y cero campos extraídos es un fallo, siempre: o el
+    parser no supo, o nadie lo llamó — y las dos cosas hay que verlas."""
+    from api.rutas import _campos_de_perfil
+
+    assert _campos_de_perfil({}) == 0
+    assert _campos_de_perfil(None) == 0
+    # Los tres de servicio no cuentan como campo con dato.
+    assert _campos_de_perfil({"capturado_en": "x", "fallos": [],
+                              "wallet_share_base": {}}) == 0
+    from captura.parser_mm import parsear_perfil
+
+    assert _campos_de_perfil(parsear_perfil(BLOQUE_LENDERS_REAL)) >= 3
+
+
+# ══ EL DUPLICADO DE CONTACTOS NO PUEDE TIRAR LOS OTROS ═══════════════════════
+
+def test_ignore_duplicates_necesita_on_conflict():
+    """`resolution=ignore-duplicates` SOLO aplica con `on_conflict`, que nombra
+    las columnas del unique. Sin él, PostgREST devuelve el 23505 igual — y los
+    tres contactos se pierden porque uno chocó."""
+    import api._comun as comun
+
+    enviados = {}
+
+    def falso(metodo, ruta, *, cuerpo=None, cabeceras=None):
+        enviados.update({"ruta": ruta, "cabeceras": cabeceras})
+        return 201, None, {}
+
+    original = comun._pedir
+    comun._pedir = falso
+    try:
+        comun.escribir("contactos", [{"x": 1}], devolver=False,
+                       sin_duplicar=True,
+                       en_conflicto="realtor_id,canal,valor,fuente")
+    finally:
+        comun._pedir = original
+
+    assert "on_conflict=realtor_id,canal,valor,fuente" in enviados["ruta"]
+    assert "ignore-duplicates" in enviados["cabeceras"]["Prefer"]
+
+
+def test_sin_sin_duplicar_no_se_manda_on_conflict():
+    """La guarda tiene que poder no aplicarse: el resto de las tablas no
+    acumulan con unique y un on_conflict de más cambiaría su semántica."""
+    import api._comun as comun
+
+    enviados = {}
+
+    def falso(metodo, ruta, *, cuerpo=None, cabeceras=None):
+        enviados.update({"ruta": ruta})
+        return 201, None, {}
+
+    original = comun._pedir
+    comun._pedir = falso
+    try:
+        comun.escribir("capturas_modelmatch", [{"x": 1}], devolver=False)
+    finally:
+        comun._pedir = original
+    assert "on_conflict" not in enviados["ruta"]
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
