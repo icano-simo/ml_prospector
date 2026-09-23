@@ -829,6 +829,12 @@ function vMercados(){
         <span class="pista">Ctrl+A, Ctrl+C en cada pestaña, una debajo de otra</span></label>
       <textarea id="volcado" style="min-height:320px"
         placeholder="Pegá acá el perfil entero, en orden."></textarea>
+      <label>Ventana de Model Match
+        <span class="pista">el <b>Set Date Range</b> del perfil, en meses. No
+          viaja en el texto pegado: vive en un desplegable, igual que Set
+          Location. Sin ella no se puede anualizar la producción.</span></label>
+      <input type="number" id="ventana" min="1" max="60" value="14"
+        style="max-width:120px">
       <div id="extra"></div>
       <div style="margin-top:12px">
         <button class="btn" id="btnGuardar">Guardar</button>
@@ -866,6 +872,7 @@ async function guardar(){
         realtor_id: SEL.id, sf_lead_id: SEL.sf_lead_id, estado: SEL.estado,
         mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
         volcado: volcado, forzar: FORZAR,
+        ventana_meses: ($('#ventana') ? $('#ventana').value : null),
       })
     });
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');

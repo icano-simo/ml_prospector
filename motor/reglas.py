@@ -127,6 +127,17 @@ def _ge(r: dict, campo: str, umbral: float) -> bool | None:
     return None if v is None else v >= umbral
 
 
+def _tiene(r: dict, campo: str) -> bool:
+    """¿Hay dato en este campo? Devuelve bool, NO tri-estado, a proposito.
+
+    Es la unica lectura que puede decir `False` sobre una ausencia, porque su
+    pregunta ES la ausencia. Se usa para las reglas que eligen entre dos
+    fuentes -- "usa la del libro solo si no hay Model Match"-- donde `None`
+    dejaria la regla sin evaluar justamente cuando el respaldo aplica.
+    """
+    return _n(r, campo) is not None
+
+
 def _le(r: dict, campo: str, umbral: float) -> bool | None:
     v = _n(r, campo)
     return None if v is None else v <= umbral
@@ -398,11 +409,24 @@ REGLAS: tuple[Regla, ...] = (
         campos=("ev2_volumen_declarado_bio",),
         condicion=lambda r: _ge(r, "ev2_volumen_declarado_bio", 50),
     ),
+    # La produccion que MANDA es la anualizada de Model Match: solo lado
+    # comprador, `buy_units / ventana * 12`. El `unidades_ano` del libro es de
+    # principios de año y no distingue lado, asi que solo se usa cuando no hay
+    # Model Match -- y entonces el grado baja, porque es peor evidencia.
     Regla(
         id="P-Q11-2", qualifier="P-Q11", familia="P", intensidad=1, grado="E3",
         texto="base que se enfría sin sistema de retención",
-        campos=("unidades_ano",),
-        condicion=lambda r: _ge(r, "unidades_ano", 20),
+        campos=("mm_buyside_anualizado",),
+        condicion=lambda r: _ge(r, "mm_buyside_anualizado", 20),
+    ),
+    Regla(
+        id="P-Q11-3", qualifier="P-Q11", familia="P", intensidad=1, grado="E3",
+        texto="volumen del libro alto, sin producción de Model Match que lo confirme",
+        campos=("unidades_ano", "mm_buyside_anualizado"),
+        condicion=lambda r: _y(
+            _ge(r, "unidades_ano", 20),
+            _no(_tiene(r, "mm_buyside_anualizado")),
+        ),
     ),
 
     # ── P-Q21 · Co-marketing y RESPA ────────────────────────────────────────

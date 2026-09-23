@@ -356,6 +356,25 @@ def guardar(d: dict) -> tuple[int, dict]:
             "al lado del otro." % estado_crudo),
             "conocidos": sorted(ESTADOS)}
 
+    # LA VENTANA DE MODEL MATCH · el mismo problema que `Set Location`.
+    #
+    # `Set Date Range:` sale en el texto SIN valor, porque vive en un select y
+    # Ctrl+A no lo copia. Sin ella no se puede anualizar la produccion, y la
+    # produccion anualizada del lado comprador es la que manda para la
+    # compuerta -- nueve unidades en catorce meses son 7,7 al año, no nueve.
+    #
+    # Se declara una vez por captura: el rango es del perfil entero.
+    ventana = d.get("ventana_meses")
+    try:
+        ventana = int(ventana) if ventana not in (None, "") else None
+    except (TypeError, ValueError):
+        ventana = None
+    if ventana is not None and not (1 <= ventana <= 60):
+        return 400, {"error": (
+            "La ventana de Model Match es %r meses. Va entre 1 y 60: es el "
+            "`Set Date Range` del perfil, que no viaja en el texto pegado "
+            "porque vive en un desplegable." % ventana)}
+
     # UNA SOLA CAJA · el volcado trae sus propios cortes. Siete pegados por
     # realtor son siete oportunidades de poner algo en la caja equivocada, y
     # sobre 25 capturas son 175.
@@ -463,6 +482,18 @@ def guardar(d: dict) -> tuple[int, dict]:
         })
 
     perfil, _ = _parsear(parsear_perfil, overview, "el Overview")
+    # La ventana declarada gana sobre la del texto, que casi nunca esta.
+    if isinstance(perfil, dict) and ventana:
+        perfil["ventana_meses"] = ventana
+        perfil["ventana_declarada"] = True
+        if perfil.get("buyer_units"):
+            perfil["buyside_anualizado"] = round(
+                perfil["buyer_units"] / ventana * 12.0, 1)
+    elif isinstance(perfil, dict) and not perfil.get("ventana_meses"):
+        avisos.append(
+            "sin ventana de Model Match: `Set Date Range` no viaja en el texto "
+            "pegado. Sin ella no se puede anualizar la producción, que es el "
+            "número que manda para la compuerta.")
     agregar("overview", overview, alcance="perfil", extra={"perfil": perfil})
 
     for b in bloques:

@@ -769,6 +769,24 @@ def parsear_perfil(crudo: str) -> dict:
 
     o["condados"] = _condados(txt)
 
+    # ── LA PRODUCCION QUE MANDA · solo lado comprador, anualizada ───────────
+    # `Last 14 Months` es la ventana de Model Match. Nueve unidades compradoras
+    # en catorce meses son 7,7 al año, NO nueve y NO las 16 del libro.
+    #
+    # Va en su propio campo: `unidades_ano` es del lote y no se sobrescribe --
+    # son dos mediciones distintas de cosas parecidas, con distinta ventana y
+    # distinta fecha, y la diferencia entre ellas es informacion.
+    ventana = None
+    if o.get("rango_fechas"):
+        try:
+            ventana = int(o["rango_fechas"])
+        except (TypeError, ValueError):
+            ventana = None
+    o["ventana_meses"] = ventana
+    o["buyside_anualizado"] = (
+        round(o["buyer_units"] / ventana * 12.0, 1)
+        if (o.get("buyer_units") and ventana) else None)
+
     # La mitad de agente del contraste FHA, con su denominador al lado.
     o["loan_mix_buyer"] = _loan_mix_buyer(txt, o.get("buyer_units")) or None
 

@@ -19,15 +19,50 @@ from __future__ import annotations
 from motor.lectura import _hablado, verificar_vocabulario
 
 
-def _volumen_en_palabras(unidades: float | None) -> str | None:
-    if unidades is None:
-        return None
-    n = "{:,.0f}".format(unidades).replace(",", ".")
-    if unidades >= 24:
-        return "cierra %s operaciones al año, que es volumen de agente de tiempo completo" % n
-    if unidades >= 8:
-        return "cierra %s operaciones al año" % n
-    return "cierra %s operaciones al año, poco para vivir solo de esto" % n
+def _produccion(realtor: dict, mm: dict) -> str:
+    """Las cifras de produccion, cada una con SU ventana y SU fuente.
+
+    El parrafo anterior decia «cierra 16 operaciones al año» y, dos comas mas
+    tarde, «enteramente del lado comprador (3 de 3)». Un BD podia entender que
+    de sus 16 solo 3 son del lado comprador, **y no es lo que dice el dato**:
+
+      16   del libro, que es de principios de año
+      9    de Model Match, lado comprador, sobre 14 meses
+      3    de esas 9, las que tienen tipo de prestamo identificado
+
+    Son tres numeros de tres ventanas distintas. Sin decir cual es cual, el
+    lector arma la relacion que le parece -- y la que parece obvia es falsa.
+
+    Y la produccion que MANDA es la anualizada de Model Match: buy_units sobre
+    la ventana por doce. Nueve en catorce meses son 7,7 al año, no 16. La del
+    libro se conserva y se dice, pero no es la que decide.
+    """
+    partes = []
+    libro = realtor.get("unidades_ano")
+    if libro is not None:
+        partes.append("según el libro cierra unas %s operaciones al año"
+                      % "{:,.0f}".format(libro).replace(",", "."))
+
+    buy = mm.get("buyer_units")
+    ventana = mm.get("ventana_meses")
+    anual = mm.get("buyside_anualizado")
+    if buy and ventana:
+        frase = ("en los últimos %d meses Model Match le registra %s del lado "
+                 "comprador" % (ventana, "{:,.0f}".format(buy).replace(",", ".")))
+        mix = (mm.get("loan_mix_buyer") or {}).get("unidades_identificadas")
+        if mix:
+            frase += (", de las cuales %s tienen tipo de préstamo identificado"
+                      % "{:,.0f}".format(mix).replace(",", "."))
+        partes.append(frase)
+        if anual:
+            partes.append("que anualizado da %s al año, y es el número que "
+                          "manda" % ("%g" % anual).replace(".", ","))
+    elif buy:
+        partes.append("Model Match le registra %s del lado comprador, sin "
+                      "ventana declarada, así que no se puede anualizar"
+                      % "{:,.0f}".format(buy).replace(",", "."))
+
+    return "; ".join(partes) if partes else ""
 
 
 def narrativa(realtor: dict, *, estado_nombre: str | None = None,
@@ -47,31 +82,26 @@ def narrativa(realtor: dict, *, estado_nombre: str | None = None,
     else:
         partes.append("%s opera en %s" % (nombre, estado))
 
-    vol = _volumen_en_palabras(realtor.get("unidades_ano"))
-    if vol:
-        partes.append(vol)
+    texto = partes[0] + ". "
+
+    prod = _produccion(realtor, mm)
+    if prod:
+        texto += prod[0].upper() + prod[1:] + ". "
 
     # El lado comprador es lo que decide si nos sirve: un agente de listados no
-    # nos trae borrower.
+    # nos trae borrower. `sf_buy/sf_sell` son de la cabecera de Model Match y
+    # su ventana es la misma que la de arriba, asi que se dice una sola vez.
     sf_buy, sf_sell = mm.get("sf_buy"), mm.get("sf_sell")
-    if sf_buy is not None and sf_sell is not None:
-        if sf_sell == 0 and sf_buy:
-            partes.append("y lo que vemos de su actividad es enteramente del "
-                          "lado comprador (%d de %d)" % (sf_buy, sf_buy))
-        elif sf_buy > sf_sell:
-            partes.append("y trabaja más el lado comprador que el vendedor "
-                          "(%d contra %d)" % (sf_buy, sf_sell))
+    if sf_buy is not None and sf_sell is not None and (sf_buy or sf_sell):
+        if sf_sell == 0:
+            texto += "Su actividad reciente es toda del lado comprador. "
         elif sf_sell > sf_buy:
-            partes.append("y trabaja más listados que compradores (%d contra "
-                          "%d), que es el lado que menos borrower nos trae"
-                          % (sf_sell, sf_buy))
+            texto += ("Trabaja más listados que compradores (%d contra %d), "
+                      "que es el lado que menos borrower nos trae. "
+                      % (sf_sell, sf_buy))
     elif mm.get("side_focus"):
-        partes.append("y Model Match lo clasifica como %s"
-                      % str(mm["side_focus"]).lower())
-
-    texto = ", ".join(partes[:1]) + (". " if len(partes) == 1 else ", ")
-    if len(partes) > 1:
-        texto = partes[0] + ", " + ", ".join(partes[1:]) + ". "
+        texto += "Model Match lo clasifica como %s. " % str(
+            mm["side_focus"]).lower()
 
     # El mercado donde opera, en una frase.
     m = mercado or {}

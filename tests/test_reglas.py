@@ -89,7 +89,10 @@ DISPARA: dict[str, dict] = {
                 "ev2_video_contenido": False, "ev2_educacion": False},
 
     "P-Q11-1": {"ev2_volumen_declarado_bio": 50},
-    "P-Q11-2": {"unidades_ano": 20},
+    # La produccion que manda: 24 compradoras en 14 meses = 20,6 al año.
+    "P-Q11-2": {"mm_buyside_anualizado": 20.6},
+    # Y el respaldo: volumen del libro alto SIN Model Match que lo confirme.
+    "P-Q11-3": {"unidades_ano": 20, "mm_buyside_anualizado": None},
 
     "P-Q21-1": {"ev2_equipo": True, "ig_seguidores": 3000},
 
@@ -150,7 +153,10 @@ NO_DISPARA: dict[str, dict] = {
                 "ev2_video_contenido": False, "ev2_educacion": False},
 
     "P-Q11-1": {"ev2_volumen_declarado_bio": 49},
-    "P-Q11-2": {"unidades_ano": 19},
+    "P-Q11-2": {"mm_buyside_anualizado": 19.9},
+    # Con Model Match presente, la del libro NO aplica aunque sea alta: es
+    # justo la sustitucion que la regla existe para hacer.
+    "P-Q11-3": {"unidades_ano": 40, "mm_buyside_anualizado": 7.7},
 
     "P-Q21-1": {"ev2_equipo": True, "ig_seguidores": 2999},
 
@@ -204,9 +210,14 @@ def test_toda_regla_tiene_su_dato_de_prueba():
     assert not sobran, "datos de reglas que ya no existen: %s" % sorted(sobran)
 
 
-def test_son_37_reglas_sobre_19_qualifiers():
-    """El conteo exacto de lo portado. Si cambia, que se vea en el diff."""
-    assert len(REGLAS) == 37, len(REGLAS)
+def test_son_38_reglas_sobre_19_qualifiers():
+    """El conteo exacto. Si cambia, que se vea en el diff.
+
+    38 y no 37 desde que P-Q11 se partio en dos: la produccion que manda es la
+    anualizada de Model Match (P-Q11-2) y la del libro solo aplica cuando no
+    hay Model Match (P-Q11-3), con su texto diciendolo.
+    """
+    assert len(REGLAS) == 38, len(REGLAS)
     assert len(por_qualifier()) == 19, sorted(por_qualifier())
 
 
@@ -594,6 +605,13 @@ CONCLUYEN_DESDE_AUSENCIA = {
     "J-Q01-3": ("simetrica de J-Q01-1, misma bio"),
     "P-Q10-2": ("EXIGE estado_perfil = publico_leido. Es la unica cuya "
                 "ausencia viene de otra fuente que la que la habilita"),
+    "P-Q11-3": ("la ausencia ES la pregunta: elige la fuente, no diagnostica "
+                "desde el vacio. `mm_buyside_anualizado` sale de Model Match y "
+                "`unidades_ano` del libro -- son fuentes distintas, y por eso "
+                "la regla dice en su TEXTO que el volumen no esta confirmado. "
+                "Usa `_tiene`, que devuelve bool y no tri-estado, porque un "
+                "None dejaria la regla sin evaluar justo cuando el respaldo "
+                "aplica"),
 }
 
 
