@@ -917,6 +917,97 @@ def instagram(params: dict) -> tuple[int, dict]:
     return 200, {"perfiles": salida, "total": len(salida)}
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+
+def dossier(params: dict) -> tuple[int, dict]:
+    """El dossier y la secuencia de 7 toques, sin una sola promesa de material.
+
+    Reusa `/api/lectura`: el dossier ES la lectura ordenada para leerse de un
+    tiron, y calcularla dos veces las dejaria discrepar.
+    """
+    from motor.contrastes import mix_de_programa
+    from motor.lectura import leer_mix_fha
+    from motor.recursos import CATALOGO
+    from motor.secuencia import armar_secuencia
+
+    cod, base = lectura(params)
+    if cod >= 400:
+        return cod, base
+
+    nombre = base["realtor"]["nombre_mostrado"]
+    ev = base.get("evaluacion") or {}
+    zona = base.get("perfil_de_la_zona") or {}
+    donde = zona.get("donde") or base["realtor"].get("estado") or "su zona"
+
+    # El gancho del corpus, literal. Sin ficha enrutada todavia, se usa el
+    # generico de oficio -- y se DICE que falta el enrutado, en vez de elegir
+    # uno al azar y que parezca calibrado.
+    gancho, fuente_gancho = GANCHO_GENERICO, "genérico: falta enrutar el qualifier a su ficha"
+
+    # Las lecturas como objetos, para que el toque 4 pueda mirar `afirma`.
+    lecturas = []
+    if base.get("mercados"):
+        _c, crudas, _ = leer(
+            "v_capturas_modelmatch_current",
+            "?select=parseado,geografia_etiqueta,geografia_nivel,estado"
+            "&parseado->>realtor_id=eq.%s"
+            % urllib.parse.quote(params.get("realtor_id", "")))
+        perfiles, mercados = [], []
+        for f in crudas or []:
+            p = f.get("parseado") or {}
+            if p.get("perfil"):
+                perfiles.append(p["perfil"])
+            if p.get("metricas"):
+                mercados.append({
+                    "nivel": f.get("geografia_nivel"),
+                    "estado": f.get("estado"),
+                    "etiqueta": f.get("geografia_etiqueta"),
+                    "metricas": p["metricas"]})
+        unido = unir_perfiles(perfiles)
+        for c in mix_de_programa(unido.get("loan_mix_buyer") or {}, mercados,
+                                 tipo="FHA"):
+            lecturas.append(leer_mix_fha(c, nombre))
+        mercado_de_zona = next(
+            (m["metricas"] for m in mercados
+             if (m["etiqueta"] or "").lower() == (donde or "").lower()), {})
+    else:
+        mercado_de_zona = {}
+
+    apertura = (base.get("sin_dolor") or {}).get("apertura") or (
+        "¿Con qué lender estás cerrando hoy, y qué es lo que más se te "
+        "complica con ellos — el pre-approval, los tiempos o el closing?")
+
+    seq = armar_secuencia(nombre=nombre, gancho=gancho,
+                          mercado=mercado_de_zona, donde=donde,
+                          perfil_zona=zona.get("texto"), lecturas=lecturas,
+                          apertura_sin_dolor=apertura)
+
+    return 200, {
+        **base,
+        "gancho": {"texto": gancho, "fuente": fuente_gancho},
+        "secuencia": {
+            "toques": [{"numero": t.numero, "dia": t.dia, "canal": t.canal,
+                        "cuerpo": t.cuerpo,
+                        "fuente_del_valor": t.fuente_del_valor,
+                        "recursos": list(t.recursos)} for t in seq.toques],
+            "notas": seq.notas,
+            "promete_material": seq.promete_material,
+        },
+        "recursos_pendientes": [
+            {"clave": r.clave, "descripcion": r.descripcion,
+             "verificado": r.verificado}
+            for r in CATALOGO.values()],
+        "dolor_primario": ev.get("dolor_primario"),
+    }
+
+
+#: Mientras el enrutado qualifier -> ficha no exista, el gancho es este y se
+#: dice que es generico. Elegir una de las 205 fichas al azar daria un mensaje
+#: que PARECE calibrado y no lo esta.
+GANCHO_GENERICO = ("Una curiosidad de oficio: ¿qué es lo que más se te "
+                   "atasca hoy con los lenders con los que cierras?")
+
+
 #: ruta -> (funcion, metodo)
 RUTAS = {
     "/api/realtors": (realtors, "GET"),
@@ -924,5 +1015,6 @@ RUTAS = {
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
     "/api/instagram": (instagram, "GET"),
+    "/api/dossier": (dossier, "GET"),
     "/api/guardar": (guardar, "POST"),
 }

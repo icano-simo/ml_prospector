@@ -176,13 +176,10 @@ const PESTANAS = [
   ['mm','Model Match',true],
   ['mercados','Mercados',true],
   ['ig','Instagram',true],
-  ['dossier','Dossier A–G',false],
-  ['seq','Secuencia 60 días',false],
+  ['dossier','Dossier A–G',true],
+  ['seq','Secuencia 60 días',true],
 ];
-const PORQUE_APAGADA = {
-  dossier: 'nadie verificó que existan los recursos que el copy promete',
-  seq: 'no sale hasta que los recursos estén verificados',
-};
+const PORQUE_APAGADA = {};
 
 function pintarFicha(){
   if(!SEL){ $('#detalle').innerHTML = '<div class="vacio">Elegí un realtor.</div>'; return }
@@ -205,6 +202,96 @@ function pintarFicha(){
   if(TAB === 'mm') vModelMatch();
   if(TAB === 'lectura' || TAB === 'calculo') vLectura(TAB);
   if(TAB === 'ig') vInstagram();
+  if(TAB === 'dossier' || TAB === 'seq') vDossier(TAB);
+}
+
+/* ══ DOSSIER Y SECUENCIA ═══════════════════════════════════════════════════
+ * Salen sin esperar a que se verifiquen los recursos, porque se quitaron las
+ * promesas de material: el valor va DENTRO del mensaje.
+ */
+async function vDossier(cual){
+  $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
+  try{
+    const d = await api('/api/dossier?realtor_id=' + encodeURIComponent(SEL.id));
+    $('#cuerpo').innerHTML = cual === 'seq' ? vistaSecuencia(d) : vistaDossier(d);
+  }catch(e){
+    $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+function pendientes(d){
+  const rs = d.recursos_pendientes || [];
+  const sin = rs.filter(r => !r.verificado);
+  return `<div class="tarjeta">
+    <div class="seccion">Recursos · pendientes de verificar</div>
+    <span class="badge ${sin.length ? 'bloqueado' : 'mql'}">
+      <i>${sin.length ? '▲' : '✓'}</i>${sin.length} de ${rs.length} sin confirmar</span>
+    <p class="sub" style="margin-top:8px">Ninguno se promete en el copy. Cuando
+      alguien confirme cuáles existen, vuelven como <b>refuerzo</b>, no como
+      promesa.</p>
+    <ul class="lista" style="margin-top:10px">${rs.map(r => `
+      <li><b>${esc(r.clave)}</b>
+        <span class="pista">${esc(r.descripcion)}</span>
+        <span class="badge ${r.verificado ? 'mql' : 'sin-evaluar'}"
+          style="margin-left:auto"><i>${r.verificado ? '✓' : '·'}</i>${
+          r.verificado ? 'verificado' : 'sin verificar'}</span></li>`).join('')}
+    </ul></div>`;
+}
+
+function vistaDossier(d){
+  const ev = d.evaluacion || {};
+  const lec = (d.lecturas || []).filter(l => l.afirma);
+  return `
+    <div class="banner">
+      <div class="seccion">Dossier · ${esc(d.realtor.nombre_mostrado)}</div>
+      <span class="cifra">${esc(d.dolor_primario || 'sin dolor primario')}</span>
+      <span class="pista" style="margin-left:10px">${esc(d.realtor.estado_nombre || '')}
+        · ${d.mercados} mercados capturados</span>
+    </div>
+    ${d.sin_dolor ? `<div class="tarjeta">
+      <div class="seccion">A · Qué sabemos</div>
+      <p style="margin:6px 0 0;font-size:13px;line-height:1.6">${esc(d.sin_dolor.cuerpo)}</p>
+    </div>` : ''}
+    ${d.perfil_de_la_zona ? `<div class="tarjeta">
+      <div class="seccion">B · A quién le vende</div>
+      <p style="margin:6px 0 0;font-size:13px;line-height:1.65">
+        ${esc(d.perfil_de_la_zona.texto)}</p></div>` : ''}
+    <div class="tarjeta">
+      <div class="seccion">C · Lo que afirma el motor</div>
+      ${lec.length ? lec.map(l => `
+        <p style="margin:6px 0;font-size:13px;line-height:1.6">
+          ${esc(l.que_dice_del_borrower)}</p>`).join('')
+        : `<span class="badge sin-evaluar"><i>▣</i>ningún contraste activa</span>
+           <p class="sub" style="margin-top:8px">Los contrastes se calculan
+             igual y están en <b>Cómo se calculó</b>, con el motivo por el que
+             no activan.</p>`}
+    </div>
+    <div class="tarjeta">
+      <div class="seccion">D · Por dónde abrir</div>
+      <h2>${esc(d.gancho.texto)}</h2>
+      <p class="sub">${esc(d.gancho.fuente)}</p>
+    </div>
+    ${pendientes(d)}`;
+}
+
+function vistaSecuencia(d){
+  const s = d.secuencia;
+  return `
+    <div class="banner">
+      <div class="seccion">Secuencia de 60 días</div>
+      <span class="cifra ${s.promete_material ? '' : 'bien'}">${s.toques.length} toques</span>
+      <span class="pista" style="margin-left:10px">${
+        s.promete_material ? 'PROMETE MATERIAL' : 'sin una sola promesa de material'}</span>
+    </div>
+    ${s.toques.map(t => `
+      <div class="tarjeta">
+        <div class="seccion">Toque ${t.numero} · día ${t.dia} · ${esc(t.canal)}</div>
+        <p style="margin:8px 0;font-size:13px;line-height:1.7;white-space:pre-wrap;color:var(--slate-800)">${esc(t.cuerpo)}</p>
+        ${t.fuente_del_valor ? `<p class="sub" style="margin:0">
+          <b>Valor:</b> ${esc(t.fuente_del_valor)}</p>` : ''}
+      </div>`).join('')}
+    ${s.notas.map(n => `<div class="avi">${esc(n)}</div>`).join('')}
+    ${pendientes(d)}`;
 }
 
 /* ── pestaña Instagram · lo capturado, sin motor ──────────────────────────── */

@@ -44,8 +44,11 @@ class Recurso:
 #: real hoy: 2026-09-22, ninguno confirmado.
 CATALOGO: dict[str, Recurso] = {
     r.clave: r for r in (
+        # `enganche` no se usa en el sector en EE.UU. -- es la misma regla de
+        # vocabulario que gobierna el copy, y una descripcion de catalogo que
+        # la incumple se acaba copiando a un mensaje.
         Recurso("mapa_dpa_condado",
-                "mapa de programas de ayuda de enganche del condado"),
+                "mapa de programas de down payment assistance del condado"),
         Recurso("desglose_documentacion",
                 "qué documentación acepta cada programa"),
         Recurso("tiempos_de_cierre",
