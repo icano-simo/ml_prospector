@@ -1233,8 +1233,106 @@ GANCHO_GENERICO = ("Una curiosidad de oficio: ¿qué es lo que más se te "
                    "atasca hoy con los lenders con los que cierras?")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+
+def extracto(params: dict) -> tuple[int, dict]:
+    """El material EXACTO con el que se escribe. Y es lo que va a `insumos`.
+
+    Reusa `/api/dossier`, que reusa `/api/lectura`: un solo camino de calculo.
+    Si el extracto se calculara aparte, la verificacion compararia el texto
+    contra algo distinto de lo que se leyo -- y una guarda que compara contra
+    otra cosa aprueba.
+    """
+    from motor.extracto import armar_extracto
+
+    cod, base = dossier(params)
+    if cod >= 400:
+        return cod, base
+
+    realtor_id = (params.get("realtor_id") or "").strip()
+
+    # Los conjuntos CERRADOS contra los que se puede comprobar que el texto no
+    # nombro algo ajeno. Viajan DENTRO del extracto, para que la verificacion
+    # no dependa de volver a consultar la base.
+    _c, condados, _ = leer("census_condados", "?select=nombre&limit=3000")
+    nombres_condado = sorted({(c.get("nombre") or "").split(" County")[0]
+                              for c in (condados or [])
+                              if c.get("nombre")})
+    _c, lenders, _ = leer("lenders", "?select=nombre,nombre_comercial&limit=500")
+    _c, origs, _ = leer("originadores", "?select=nombre,empresa_texto&limit=2000")
+    nombres_lender = sorted({v for f in ((lenders or []) + (origs or []))
+                             for v in f.values() if v})
+
+    # Instagram, cuando este cargado: lo que EL escribio es lo unico que un
+    # realtor reconoce como suyo.
+    cod_ig, ig = instagram({"realtor_id": realtor_id})
+    publicaciones = []
+    if cod_ig == 200:
+        for p in ig.get("perfiles", []):
+            s = p.get("senales") or {}
+            publicaciones.append({
+                "handle": p.get("handle"),
+                "estado_perfil": p.get("estado_perfil"),
+                "publicaciones_leidas": p.get("captions_n"),
+                "comentarios": p.get("comentarios_n"),
+                "que_publica": s.get("tema_dominante"),
+                "a_quien_le_habla": s.get("audiencia_dominante"),
+                "que_le_preguntan": s.get("preguntas_recibidas"),
+                "idioma_publica_es": s.get("idioma_publica_es"),
+                "idioma_publica_en": s.get("idioma_publica_en"),
+                "idioma_comentarios_es": s.get("idioma_comentarios_es"),
+                "idioma_comentarios_en": s.get("idioma_comentarios_en"),
+                "desajuste_idioma": p.get("desajuste_idioma"),
+                "citas": s.get("citas_por_etiqueta"),
+            })
+
+    ext = armar_extracto(
+        realtor=base["realtor"], narrativa=base.get("narrativa") or "",
+        cabecera=base.get("cabecera") or {},
+        hipotesis=base.get("hipotesis") or [],
+        lecturas=base.get("lecturas") or [],
+        perfil_zona=base.get("perfil_de_la_zona"),
+        condado_dominante=base.get("condado_dominante"),
+        gancho=base.get("gancho") or {},
+        cobertura=base.get("cobertura") or {},
+        evaluacion=base.get("evaluacion"),
+        instagram=publicaciones,
+        vocabulario={"condados": nombres_condado, "lenders": nombres_lender})
+
+    # Los originadores del perfil, para que la guarda de lenders sepa cuales SI
+    # son suyos. Sin esto, `Everett Financial` -- que ES su originador-- se
+    # rechazaria como entidad ajena: un falso positivo que hace inservible la
+    # guarda justo en el caso que mas importa, la exclusion.
+    _c, crudas_o, _ = leer(
+        "v_capturas_modelmatch_current",
+        "?select=parseado&parseado->>realtor_id=eq.%s"
+        % urllib.parse.quote(realtor_id))
+    perfiles_o = [(f.get("parseado") or {}).get("perfil") for f in (crudas_o or [])]
+    unido_o = unir_perfiles([p for p in perfiles_o if isinstance(p, dict)])
+    suyos, vistos_o = [], set()
+    for o in (unido_o.get("orig_buyer") or []) + (unido_o.get("tab_orig") or []):
+        for k in ("nombre", "empresa"):
+            v = o.get(k)
+            if v and v not in vistos_o:
+                vistos_o.add(v)
+        suyos.append({"nombre": o.get("nombre"), "empresa": o.get("empresa"),
+                      "unidades": o.get("unidades"), "share": o.get("share")})
+    ext["originadores"] = suyos
+    ext["lenders_del_agente"] = sorted(vistos_o)
+
+    return 200, {
+        "extracto": ext,
+        "como_usarlo": (
+            "Esto es lo que va tal cual a `insumos` cuando guardes el texto. "
+            "Toda cifra y toda entidad del texto tiene que estar aquí: "
+            "`supabase/guardar_texto.py` lo comprueba antes de insertar."),
+        "sin_instagram": not publicaciones,
+    }
+
+
 #: ruta -> (funcion, metodo)
 RUTAS = {
+    "/api/extracto": (extracto, "GET"),
     "/api/realtors": (realtors, "GET"),
     "/api/geografias": (geografias, "GET"),
     "/api/capturas": (capturas, "GET"),

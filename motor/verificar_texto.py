@@ -25,6 +25,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from motor.extracto import PROGRAMAS, vocabulario_del_extracto
 from motor.lectura import DESVIO_MAXIMO_PP, verificar_vocabulario
 from motor.nunca import verificar_nunca
 from motor.secuencia import verificar_sin_folleto, verificar_sin_promesas
@@ -240,6 +241,18 @@ def verificar_texto_generado(texto: str, insumos, *,
     else:
         guardas["acto_de_habla"] = {"ok": True, "detalle": "el contraste activa"}
 
+    # ── Las entidades ───────────────────────────────────────────────────────
+    e = verificar_entidades(texto, insumos if isinstance(insumos, dict) else {})
+    guardas["entidades"] = {"ok": e.ok, "revisadas": e.cifras_comprobadas,
+                            "intrusas": e.cifras_sobrantes}
+    if e.cifras_comprobadas == 0:
+        guardas["entidades"]["aviso"] = (
+            "el extracto no trae `_vocabulario`: esta guarda no comprobó "
+            "nada. Sin conjuntos cerrados no hay contra qué comparar.")
+    if not e.ok:
+        return Veredicto(ok=False, guardas=guardas, motivo=e.motivo,
+                         cifras_sobrantes=e.cifras_sobrantes)
+
     v = verificar_cifras(texto, insumos)
     guardas["cifras"] = {"ok": v.ok, "comprobadas": v.cifras_comprobadas,
                          "sobrantes": v.cifras_sobrantes}
@@ -249,6 +262,88 @@ def verificar_texto_generado(texto: str, insumos, *,
             "mismo que haber pasado.")
     v.guardas = guardas
     return v
+
+
+# ── Las entidades · no solo las cifras ──────────────────────────────────────
+#
+# Un condado que no es el suyo, un programa que no esta en su municion o un
+# lender que no aparece en sus originadores son invenciones igual que una
+# cifra, y no las atrapa la guarda numerica.
+
+#: Sufijos societarios que no distinguen una compañía de otra.
+_RE_SUFIJO = re.compile(
+    r"[\s,]*\b(inc|llc|l\.l\.c|corp|co|company|ltd|sa|s\.a)\b\.?$",
+    re.IGNORECASE)
+
+
+def _normalizar_entidad(v: str) -> str:
+    """`Everett Financial, Inc.` y `Everett Financial` son la misma casa.
+
+    Sin esto, el originador del agente se leía como entidad ajena y la guarda
+    rechazaba justo el nombre que importa -- el de la exclusión dura.
+    """
+    s = (v or "").strip().strip(".,;:")
+    anterior = None
+    while anterior != s:
+        anterior = s
+        s = _RE_SUFIJO.sub("", s).strip().strip(".,;:")
+    return " ".join(s.lower().split())
+
+
+def _nombra(texto: str, entidad: str) -> bool:
+    """¿El texto nombra esta entidad, como palabra completa?
+
+    Con limites de palabra para que `VA` no coincida dentro de `vale` ni `HE`
+    dentro de `hecho` -- el falso positivo mas obvio de una lista de siglas.
+    """
+    return bool(re.search(r"(?<!\w)%s(?!\w)" % re.escape(entidad), texto or "",
+                          re.IGNORECASE))
+
+
+def verificar_entidades(texto: str, extracto: dict) -> Veredicto:
+    """Nada que el texto nombre puede faltar del extracto.
+
+    Lo comprueba contra tres conjuntos CERRADOS que vienen en
+    `extracto['_vocabulario']`: los condados que existen, los programas que el
+    copy puede nombrar y los lenders que el sistema conoce.
+
+    LO QUE ESTA GUARDA NO PUEDE ATRAPAR, y conviene que este escrito: un lender
+    que el sistema nunca vio. Si el modelo escribe el nombre de una compañia
+    que no esta en `pacs.lenders` ni en `pacs.originadores`, aca pasa. La
+    unica defensa contra eso es que el extracto traiga sus originadores y que
+    quien lea compare -- no hay conjunto cerrado de "todos los lenders".
+    """
+    vocab = (extracto or {}).get("_vocabulario") or {}
+    if not vocab:
+        # Sin conjuntos cerrados no hay contra que comparar. Rechazar aca
+        # seria un falso positivo sobre un extracto incompleto, y una guarda
+        # que para trafico correcto termina desactivada.
+        return Veredicto(ok=True, cifras_comprobadas=0, motivo="")
+
+    permitido = vocabulario_del_extracto(extracto or {})
+    intrusos: list[dict] = []
+    revisadas = 0
+
+    for clase, universo in (("condado", vocab.get("condados") or []),
+                            ("programa", vocab.get("programas") or PROGRAMAS),
+                            ("lender", vocab.get("lenders") or [])):
+        ok = {_normalizar_entidad(str(x))
+              for x in permitido.get(clase + "s", [])}
+        for entidad in universo:
+            revisadas += 1
+            if _normalizar_entidad(str(entidad)) in ok:
+                continue
+            if _nombra(texto, str(entidad)):
+                intrusos.append({"clase": clase, "entidad": entidad})
+
+    return Veredicto(
+        ok=not intrusos, cifras_comprobadas=revisadas,
+        cifras_sobrantes=[i["entidad"] for i in intrusos],
+        motivo=("" if not intrusos else
+                "el texto nombra %s que no están en el extracto: %s. Si no "
+                "salió del dato, se inventó."
+                % (", ".join(sorted({i["clase"] for i in intrusos})),
+                   ", ".join(i["entidad"] for i in intrusos))))
 
 
 #: Formas que AFIRMAN. Cuando el contraste no activa, el texto pregunta.

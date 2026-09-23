@@ -205,10 +205,107 @@ def test_preguntar_pasa_aunque_el_contraste_no_active():
     assert v.ok, v.motivo
 
 
-def test_las_cinco_guardas_dejan_su_veredicto():
+def test_las_seis_guardas_dejan_su_veredicto():
+    """Seis desde que las entidades se comprueban además de las cifras."""
     v = verificar_texto_generado("Su FHA es 66,7%.", INSUMOS)
     assert set(v.guardas) == {"nunca", "vocabulario", "promesas_de_material",
-                              "folleto", "acto_de_habla", "cifras"}
+                              "folleto", "acto_de_habla", "entidades",
+                              "cifras"}
+
+
+# ══ LAS ENTIDADES · no solo las cifras ══════════════════════════════════════
+
+EXTRACTO = {
+    "identidad": {"condado_dominante": "Solano", "estado": "CA"},
+    "contraste": {"geografia": "Solano"},
+    "perfil_del_comprador": {"donde": "Solano"},
+    "qualifier_principal": {
+        "municion": "LO bilingue de la casa; materiales en español",
+        "angulo": 'A18 "Tu comunidad en su idioma"'},
+    "narrativa": "uno y medio de cada diez préstamos son FHA",
+    "originadores": [{"nombre": "Chris Ruiz", "empresa": "Everett Financial, Inc."}],
+    "lenders_del_agente": ["Everett Financial, Inc.", "Chris Ruiz"],
+    "_vocabulario": {
+        "condados": ["Solano", "Alameda", "Contra Costa", "Travis"],
+        "lenders": ["Everett Financial", "Supreme Lending"],
+    },
+}
+
+
+def test_un_condado_que_no_es_el_suyo_se_rechaza():
+    from motor.verificar_texto import verificar_entidades
+
+    v = verificar_entidades("En Alameda se cae uno de cada tres.", EXTRACTO)
+    assert not v.ok
+    assert "Alameda" in v.cifras_sobrantes
+    assert "se inventó" in v.motivo
+
+
+def test_su_propio_condado_pasa():
+    from motor.verificar_texto import verificar_entidades
+
+    assert verificar_entidades("En Solano el fallout es alto.", EXTRACTO).ok
+
+
+def test_un_programa_que_no_esta_en_su_municion_se_rechaza():
+    from motor.verificar_texto import verificar_entidades
+
+    v = verificar_entidades("Le conseguimos un DSCR.", EXTRACTO)
+    assert not v.ok and "DSCR" in v.cifras_sobrantes
+
+
+def test_el_programa_que_SI_esta_en_su_mix_pasa():
+    from motor.verificar_texto import verificar_entidades
+
+    assert verificar_entidades("Trabajamos FHA con score desde 580.",
+                               EXTRACTO).ok
+
+
+def test_SU_lender_pasa_aunque_el_sufijo_societario_no_coincida():
+    """`Everett Financial, Inc.` y `Everett Financial` son la misma casa. Sin
+    normalizar, la guarda rechazaba justo el nombre que importa -- el de la
+    exclusión dura."""
+    from motor.verificar_texto import _normalizar_entidad, verificar_entidades
+
+    assert _normalizar_entidad("Everett Financial, Inc.") == "everett financial"
+    assert verificar_entidades("Dos de sus originadores son de Everett "
+                               "Financial.", EXTRACTO).ok
+
+
+def test_un_lender_conocido_que_NO_es_suyo_se_rechaza():
+    from motor.verificar_texto import verificar_entidades
+
+    v = verificar_entidades("Trabaja con Supreme Lending.", EXTRACTO)
+    assert not v.ok and "Supreme Lending" in v.cifras_sobrantes
+
+
+def test_el_limite_de_la_guarda_esta_declarado():
+    """Un lender que el sistema nunca vio PASA. No hay conjunto cerrado de
+    `todos los lenders`, y una guarda que parece completa y no lo es se
+    confía. Está escrito en el docstring, y esta prueba lo fija."""
+    from motor.verificar_texto import verificar_entidades
+
+    assert verificar_entidades("Trabaja con Rocket Mortgage.", EXTRACTO).ok
+    assert "nunca vio" in verificar_entidades.__doc__
+
+
+def test_sin_vocabulario_la_guarda_lo_DICE_en_vez_de_rechazar():
+    """Rechazar sobre un extracto incompleto es un falso positivo, y una
+    guarda que para tráfico correcto termina desactivada. Lo que hace es
+    declarar que no comprobó nada."""
+    v = verificar_texto_generado("En Alameda pasa algo.", {"x": 1})
+    assert v.ok
+    assert v.guardas["entidades"]["revisadas"] == 0
+    assert "no comprobó nada" in v.guardas["entidades"]["aviso"]
+
+
+def test_las_siglas_cortas_no_dan_falso_positivo():
+    """`VA` dentro de `vale`, `HE` dentro de `hecho`: el falso positivo más
+    obvio de una lista de siglas."""
+    from motor.verificar_texto import verificar_entidades
+
+    assert verificar_entidades("Eso vale la pena y ya está hecho.",
+                               EXTRACTO).ok
 
 
 def _correr():
