@@ -444,11 +444,32 @@ function vistaLectura(d){
       como vigente. El <b>Dossier</b> y la <b>Secuencia</b> responden 409 hasta
       que se vuelva a correr el motor.</p></div>` : '';
 
-  const aviso_excluido = d.excluido ? `<div class="banner" style="border-color:var(--salmon)">
+  /* El banner se dispara con el VEREDICTO, no con `d.excluido`.
+     `d.excluido` es solo la columna del libro. Armando Ochoa está excluido por
+     no-canibalización --3 de 4 operaciones con Everett Financial-- y esa
+     columna es nula para él, así que su ficha mostraba «MQL · P-Q14 · acto de
+     habla AFIRMA» y ni una palabra de que no se le escribe. Es exactamente el
+     caso que este PR existe para impedir, un piso más arriba: el diagnóstico
+     se ve impecable y nada dice que está fuera. */
+  const ver = d.veredicto || {};
+  const aviso_excluido = (ver.estado === 'excluido' || d.excluido)
+    ? `<div class="banner" style="border-color:var(--salmon)">
     <div class="seccion" style="color:var(--salmon)">⛔ No entra a ninguna cola de contacto</div>
     <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
-      El libro lo tiene como <b>${esc(d.excluido)}</b>.
-      ${d.excluido_motivo ? esc(d.excluido_motivo) : ''}</p>
+      ${d.excluido
+        ? `El libro lo tiene como <b>${esc(d.excluido)}</b>. ${esc(d.excluido_motivo || '')}`
+        : esc(ver.motivo || '')}</p>
+    ${(ver.evidencia && ver.evidencia.originadores_de_la_casa
+       && ver.evidencia.originadores_de_la_casa.length)
+      ? `<table class="tabla" style="margin-top:10px">
+      <tr><td class="lbl">originadores de la casa</td>
+          <td>${esc(ver.evidencia.originadores_de_la_casa.join(', '))}</td></tr>
+      <tr><td class="lbl">operaciones buyside</td>
+          <td class="num">${ver.evidencia.unidades_de_la_casa ?? '—'} de ${
+            ver.evidencia.unidades_totales ?? '—'} · ${
+            ver.evidencia.share_de_la_casa ?? '—'}% · base ${
+            esc(ver.evidencia.base || '')}</td></tr>
+    </table>` : ''}
     <p style="margin:8px 0 0;font-size:13px;color:var(--slate-600)">
       El diagnóstico de abajo se calculó igual y se conserva — el raspado y la
       evaluación no estorban. Lo que no existe para esta persona es la
