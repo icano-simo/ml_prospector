@@ -180,8 +180,11 @@ def test_la_lectura_habla_del_BORROWER_no_del_agente():
     c = mix_de_programa(MIX_SOLIDO, SOLANO, tipo="FHA")[0]
     texto = leer_mix_fha(c, "Armando").que_dice_del_borrower
     assert "down payment" in texto
-    assert "score entre 580 y 669" in texto
     assert "compradores" in texto or "cliente" in texto
+    # «score entre 580 y 669» salio el 2026-09-23. Del mix FHA se deduce el
+    # programa, no el score del comprador: ese dato no esta en Model Match ni
+    # en ninguna fuente que tengamos. Era caracterizar al cliente de otro.
+    assert "580" not in texto and "669" not in texto
 
 
 def test_la_lectura_dice_los_numeros_hablados():
@@ -332,6 +335,38 @@ def test_todo_el_copy_sin_dolor_pasa_el_vocabulario():
         c = copy_sin_dolor(r)
         for campo in (c.titular, c.cuerpo, c.apertura):
             verificar_vocabulario(campo)
+
+
+def test_nada_dice_que_el_realtor_no_tiene_dolor():
+    """«Sin dolor» culpa al realtor. La falta de evidencia es NUESTRA.
+
+    Un realtor sin activaciones no es alguien sin problemas: es alguien de
+    quien no sabemos lo suficiente. La distincion importa mas desde que R7
+    salio del motor -- hay gente que perdio su unica activacion porque se
+    activaba por el apellido, y llamarlos «sin dolor» seria decir que se les
+    miro y no habia nada.
+
+    Se revisa el texto que se SIRVE, no solo el modulo: `sin_dolor.py` ya lo
+    decia bien y la pantalla decia lo contrario en dos sitios.
+    """
+    import os
+
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    for ruta in ("public/index.html", "api/rutas.py", "motor/sin_dolor.py"):
+        with open(os.path.join(raiz, ruta), encoding="utf-8") as fh:
+            texto = fh.read()
+        # En `sin_dolor.py` la frase aparece en su docstring describiendo la
+        # categoria, que es distinto de mostrarsela a alguien. Lo que no puede
+        # haber es la frase dentro de una cadena que se pinta.
+        for mala in ("'sin dolor primario'", '"sin dolor primario"'):
+            assert mala not in texto, "%s dice %s" % (ruta, mala)
+
+
+def test_el_copy_sin_dolor_nombra_lo_que_falta():
+    """Y dice QUE conseguir, o «no lo sabemos» es un callejon sin salida."""
+    c = copy_sin_dolor({"nombre_mostrado": "Ana", "estado": "TX"})
+    assert c.falta, "no dice que haria falta para sacarlo de esta categoria"
+    assert c.cola == "enriquecimiento"
 
 
 def test_la_lista_de_prohibidas_no_esta_vacia():

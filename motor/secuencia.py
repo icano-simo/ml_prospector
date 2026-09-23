@@ -221,16 +221,23 @@ def _toque_4(nombre: str, lecturas: list, apertura_sin_dolor: str) -> Toque:
     AFIRMA, se dice lo que se ve; si no, va la pregunta del lender -- que cierra
     la categoria vacia en el 100% de las filas.
     """
-    afirman = [l for l in (lecturas or []) if getattr(l, "afirma", False)]
+    # Se exige `para_el_realtor`, no solo `afirma`.
+    #
+    # Antes se pegaba `que_dice_del_borrower` + `que_hacer` en el cuerpo. Los
+    # dos estan escritos para que los lea un BD: el primero habla de la persona
+    # en tercera persona y la nombra --a Armando le llegaba «Armando trabaja
+    # con compradores que…»-- y el segundo es una instruccion interna
+    # («Ofrecerle que el caso se origine y se cierre en la misma casa»).
+    #
+    # La plantilla en segunda persona vive con la lectura, junto al contraste
+    # que la sostiene, y no aca: escribirla aca la separaria del dato que la
+    # justifica, que es como se terminan mandando frases sin respaldo.
+    afirman = [l for l in (lecturas or [])
+               if getattr(l, "afirma", False)
+               and getattr(l, "para_el_realtor", "")]
     if afirman:
         l = afirman[0]
-        # El que_hacer ya esta escrito para ser usado por el BD.
-        cuerpo = ("%s\n\n%s" % (l.que_dice_del_borrower.strip(),
-                                l.que_hacer.strip()))
-        # Si el que_hacer no cierra con pregunta, se le agrega la de confirmar.
-        if "?" not in cuerpo.split("\n\n")[-1]:
-            cuerpo += " ¿Lo ves igual?"
-        return Toque(4, 21, "email", None, cuerpo,
+        return Toque(4, 21, "email", None, l.para_el_realtor.strip(),
                      fuente_del_valor="contraste activo: %s" % l.evidencia)
     return Toque(4, 21, "email", None, apertura_sin_dolor,
                  fuente_del_valor="ningún contraste activa: pregunta de cierre "

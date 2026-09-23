@@ -214,10 +214,15 @@ REGLAS: tuple[Regla, ...] = (
     ),
     Regla(
         id="P-Q01-4", qualifier="P-Q01", familia="P", intensidad=1, grado="E3",
-        texto="señal de afinidad latina sin nicho documental declarado",
-        campos=("R5_espanol", "R7_identidad_hispana"),
-        condicion=lambda r: _o(_ge(r, "R5_espanol", 6),
-                               _ge(r, "R7_identidad_hispana", 8)),
+        texto="publica en español sin nicho documental declarado",
+        # R7 salio el 2026-09-23: se calculaba desde el apellido y el nombre de
+        # pila. Era la otra rama de este OR, asi que la regla queda MAS
+        # ESTRECHA -- 987 activaciones pasan a 329-- y eso es lo correcto: las
+        # 658 que se caen se activaban por como se llama la persona.
+        # El enunciado tambien cambia: decia «afinidad latina», que era lo que
+        # R7 pretendia medir. Lo que queda medido es que publica en español.
+        campos=("R5_espanol",),
+        condicion=lambda r: _ge(r, "R5_espanol", 6),
         gancho="P-082",
     ),
 
@@ -235,30 +240,35 @@ REGLAS: tuple[Regla, ...] = (
         campos=("R5_espanol",),
         condicion=lambda r: _ge(r, "R5_espanol", 6),
     ),
-    Regla(
-        id="P-Q14-3", qualifier="P-Q14", familia="P", intensidad=1, grado="E3",
-        texto="identidad hispana sin evidencia de contenido en español",
-        campos=("R7_identidad_hispana",),
-        condicion=lambda r: _ge(r, "R7_identidad_hispana", 8),
-    ),
+    # P-Q14-3 ELIMINADA el 2026-09-23. Decia «identidad hispana sin evidencia
+    # de contenido en español» y se activaba SOLO con `R7 >= 8`, o sea solo por
+    # el apellido y el nombre de pila. Su propio enunciado admitia que no habia
+    # evidencia de idioma: la unica señal era como se llama la persona.
+    # 722 activaciones. Ver docs/r7-identidad-hispana.md.
 
     # ── P-Q13 · Costo reputacional comunitario ──────────────────────────────
     Regla(
         id="P-Q13-1", qualifier="P-Q13", familia="P", intensidad=2, grado="E1",
         texto="lenguaje de comunidad en su propio contenido",
-        campos=("ev2_comunidad", "R5_espanol", "R7_identidad_hispana"),
+        # R7 salio el 2026-09-23. Era la otra rama del OR interior, asi que la
+        # regla queda MAS ESTRECHA: 50 activaciones pasan a 18.
+        campos=("ev2_comunidad", "R5_espanol"),
         condicion=lambda r: _y(
             _b(r, "ev2_comunidad"),
-            _o(_ge(r, "R5_espanol", 6), _ge(r, "R7_identidad_hispana", 8)),
+            _ge(r, "R5_espanol", 6),
         ),
     ),
-    Regla(
-        id="P-Q13-2", qualifier="P-Q13", familia="P", intensidad=1, grado="E3",
-        texto="marcadores de familia o fe sin narrativa comunitaria explícita",
-        campos=("ev2_fe_familia", "R7_identidad_hispana"),
-        condicion=lambda r: _y(_b(r, "ev2_fe_familia"),
-                               _ge(r, "R7_identidad_hispana", 8)),
-    ),
+    # P-Q13-2 ELIMINADA el 2026-09-23, y por una razon distinta de la de
+    # P-Q14-3. Aqui R7 no era una rama de un OR sino un CONJUNTO de un AND:
+    # `ev2_fe_familia Y R7 >= 8`. Quitarle R7 no la depura, la ensancha --
+    # medido: de 144 activaciones a 523-- porque lo que la acotaba era
+    # justamente el apellido.
+    #
+    # Una regla que despues de sacarle el campo prohibido se activa sobre 3,6
+    # veces mas gente ya no es la misma regla con menos ruido: es otra regla,
+    # que nadie escribio ni valido. Marcadores de fe o familia en una bio son
+    # comunes en cualquier poblacion y no dicen nada del costo reputacional
+    # comunitario que P-Q13 pretende detectar.
 
     # ── P-Q07 · Capital de entrada ──────────────────────────────────────────
     Regla(

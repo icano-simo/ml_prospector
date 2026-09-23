@@ -22,6 +22,8 @@ from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
 from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
 from captura.pertenencia import comprobar  # noqa: E402
+from motor.evaluar import VERSION_REGLAS  # noqa: E402
+from motor.veredicto import puede_contactarse  # noqa: E402
 from captura.trampas import es_de_la_casa, share_de_la_casa  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
     detectar_inversion,
@@ -1073,6 +1075,13 @@ def lectura(params: dict) -> tuple[int, dict]:
                        "texto": leer_perfil_del_comprador(
                            m["metricas"], censo, m["etiqueta"] or "la zona")}
 
+    # ── ¿ESTA EVALUACION LA SACO EL MOTOR DE HOY? ───────────────────────────
+    # `pacs.evaluaciones` es append-only y el catalogo cambia. Una evaluacion
+    # de una version anterior no es una evaluacion mala: es una evaluacion que
+    # todavia no se rehizo. Pero su dolor primario NO es el que el motor de hoy
+    # sacaria, y presentarlo como vigente es afirmar algo que ya no se sostiene.
+    reglas_viejas = bool(ev) and (ev.get("version_reglas") != VERSION_REGLAS)
+
     sin_dolor = None
     if not (ev or {}).get("dolor_primario"):
         c = copy_sin_dolor(realtor,
@@ -1168,7 +1177,15 @@ def lectura(params: dict) -> tuple[int, dict]:
         "narrativa": texto_narrativa,
         "cabecera": {
             "nivel": (ev or {}).get("nivel") or _nivel_desde(ev),
-            "dolor_primario": primario,
+            # El dolor primario NO se presenta como vigente si la evaluacion se
+            # calculo con otra version de reglas. Es literalmente lo que pasa
+            # hoy con las 4.187: se evaluaron con
+            # `2026.09.23-vocabulario-de-oficio` y el catalogo ya es
+            # `2026.09.23-sin-r7`, sin R7. Mostrar ese P-Q14 como el dolor de
+            # alguien seria mostrar una conclusion que el motor actual no saca.
+            "dolor_primario": primario if not reglas_viejas else None,
+            "dolor_primario_de_reglas_anteriores": primario if reglas_viejas
+                                                   else None,
             "acto_de_habla": next((h["acto"] for h in hipotesis
                                    if h["papel"] == "principal"), None),
             "gating": {"qualifier": (ev or {}).get("gating_qualifier"),
@@ -1180,6 +1197,20 @@ def lectura(params: dict) -> tuple[int, dict]:
         # aqui ya no decide nada.
         "excluido": (ev or {}).get("excluido"),
         "excluido_motivo": (ev or {}).get("excluido_motivo"),
+        "reglas_anteriores": ({
+            "aviso": "Evaluada con reglas anteriores, pendiente de re-evaluar",
+            "version_de_la_evaluacion": (ev or {}).get("version_reglas"),
+            "version_actual": VERSION_REGLAS,
+        } if reglas_viejas else None),
+        # El veredicto completo tambien en la lectura: la pantalla necesita
+        # distinguir «excluido» de «falta Model Match», que son dos avisos
+        # distintos y dos trabajos distintos a continuacion.
+        "veredicto": puede_contactarse(
+            unir_perfiles([p for p in perfiles if isinstance(p, dict)])
+            if perfiles else None,
+            capturado_en=(cuantas_capturas or {}).get("vigente_desde"),
+            excluido_por_el_libro=(ev or {}).get("excluido"),
+            motivo_del_libro=(ev or {}).get("excluido_motivo")).a_dict(),
         "hipotesis": hipotesis,
         "evaluacion": ev,
         "lecturas": lecturas,
@@ -1189,6 +1220,12 @@ def lectura(params: dict) -> tuple[int, dict]:
         "perfil_de_la_zona": perfil_zona,
         "sin_dolor": sin_dolor,
         "mercados": len(mercados),
+        # El perfil unido viaja para que `dossier` pueda pedirle el veredicto a
+        # `puede_contactarse` sin volver a leer las capturas. Calcularlo dos
+        # veces es como se terminan desincronizando dos respuestas a la misma
+        # pregunta.
+        "perfil_unido": unir_perfiles(
+            [p for p in perfiles if isinstance(p, dict)]) if perfiles else None,
         "tiene_census": censo is not None,
         # Cuantas capturas hay y cual manda. Con mas de una, la pantalla lo
         # dice: un diagnostico que cambia porque alguien re-capturo tiene que
@@ -1314,20 +1351,74 @@ def dossier(params: dict) -> tuple[int, dict]:
     if cod >= 400:
         return cod, base
 
-    # ── LA EXCLUSION CORTA AQUI ─────────────────────────────────────────────
+    # ── LA COMPUERTA CORTA AQUI ─────────────────────────────────────────────
     # El dossier no es una lectura: es la secuencia de 7 toques, o sea la cola
     # de contacto misma. Un excluido tiene lectura -- su diagnostico sigue
     # visible en /api/lectura -- pero no tiene secuencia. Devolver el dossier y
     # confiar en que la pantalla no lo mande es la misma omision de antes, un
     # piso mas arriba.
-    if base.get("excluido"):
+    #
+    # Se llama a `motor.veredicto.puede_contactarse`, que es la MISMA que usan
+    # `/api/extracto`, `guardar_texto` y `correr_motor`. Cuatro criterios
+    # distintos para la misma pregunta dejaban al mismo realtor contactable por
+    # un camino e inviable por otro.
+    v = puede_contactarse(
+        base.get("perfil_unido"),
+        capturado_en=(base.get("capturas") or {}).get("vigente_desde"),
+        excluido_por_el_libro=base.get("excluido"),
+        motivo_del_libro=base.get("excluido_motivo"))
+    if not v.puede_escribirsele:
         return 409, {
-            "error": "excluido por metodología: %s" % base["excluido"],
-            "motivo": base.get("excluido_motivo"),
-            "excluido": base["excluido"],
-            "que_hacer": ("Su lectura sigue disponible en /api/lectura. Lo que "
-                          "no existe es la secuencia: no entra a ninguna cola "
-                          "de contacto mientras el libro lo tenga así."),
+            "error": v.motivo,
+            "veredicto": v.a_dict(),
+            # Lo que YA se sabe viaja igual: la pantalla tiene que poder
+            # mostrarlo. Lo que no viaja es un solo bloque de mensajes.
+            "lo_que_sabemos": {
+                "realtor": base.get("realtor"),
+                "cabecera": base.get("cabecera"),
+                "narrativa": base.get("narrativa"),
+                "hipotesis": base.get("hipotesis"),
+                "mercados": base.get("mercados"),
+            },
+            # Las MISMAS claves que la respuesta de 200, vacias. Si el 409
+            # usara otras, quien lea `d["secuencia"]["toques"]` reventaria en
+            # vez de ver cero toques -- y un KeyError se arregla con un
+            # `.get(...)` que devuelve None, que es lo que termina pintandose.
+            "bloques": [],
+            "secuencia": {"toques": [], "recursos_pendientes": []},
+            "que_hacer": (
+                "Su lectura sigue disponible en /api/lectura. Lo que no existe "
+                "es la secuencia."
+                if v.estado == "excluido" else
+                "Falta Model Match: capturar antes de dar veredicto."),
+        }
+
+    # La obsolescencia va DESPUES de la compuerta, y no al reves.
+    #
+    # `puede_contactarse` no mira el catalogo de qualifiers: lee el libro y el
+    # reparto de originadores de Model Match. Su veredicto vale igual con
+    # reglas viejas, y es permanente -- Armando Ochoa trabaja con Everett
+    # Financial se re-corra el motor o no. La obsolescencia, en cambio, es un
+    # estado temporal de NUESTROS datos.
+    #
+    # Con el orden al reves, Armando salia «pendiente de re-evaluar» y su
+    # exclusion quedaba tapada por un aviso que hoy tienen las 4.187 filas.
+    if base.get("reglas_anteriores"):
+        ra = base["reglas_anteriores"]
+        return 409, {
+            "error": ra["aviso"],
+            "reglas_anteriores": ra,
+            "lo_que_sabemos": {
+                "realtor": base.get("realtor"),
+                "cabecera": base.get("cabecera"),
+                "narrativa": base.get("narrativa"),
+                "mercados": base.get("mercados"),
+            },
+            "bloques": [],
+            "secuencia": {"toques": [], "recursos_pendientes": []},
+            "que_hacer": ("Volver a correr el motor sobre este realtor. Su "
+                          "diagnóstico anterior se conserva como histórico, "
+                          "pero no es el que el motor de hoy sacaría."),
         }
 
     nombre = base["realtor"]["nombre_mostrado"]
@@ -1350,7 +1441,14 @@ def dossier(params: dict) -> tuple[int, dict]:
             % urllib.parse.quote(params.get("realtor_id", "")))
         señales = (ent or [{}])[0].get("entrada") or {}
 
-    g = gancho_de(dolor, señales) if dolor else None
+    # La fuerza y el acto de habla viajan al gancho: con una hipotesis de
+    # fuerza 1 el gancho del corpus presupondria el dolor, y una presuposicion
+    # falsa tumba el mensaje en la primera linea.
+    principal = next((h for h in (base.get("hipotesis") or [])
+                      if h.get("papel") == "principal"), {})
+    g = gancho_de(dolor, señales,
+                  intensidad=principal.get("intensidad"),
+                  acto_de_habla=principal.get("acto")) if dolor else None
     if g:
         gancho, fuente_gancho = g.texto, g.fuente
     elif dolor:
@@ -1359,7 +1457,8 @@ def dossier(params: dict) -> tuple[int, dict]:
                          "el corpus" % dolor)
     else:
         gancho = GANCHO_GENERICO
-        fuente_gancho = ("genérico: sin dolor primario no hay ficha que abrir. "
+        fuente_gancho = ("genérico: sin evidencia suficiente no hay ficha que "
+                         "abrir — no lo sabemos todavía. "
                          "La apertura real es la pregunta del bloque G.")
 
     # Las lecturas como objetos, para que el toque 4 pueda mirar `afirma`.

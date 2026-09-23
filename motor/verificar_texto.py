@@ -211,13 +211,36 @@ def verificar_cifras(texto: str, insumos) -> Veredicto:
                             sorted(set(delta)))))
 
 
-def verificar_texto_generado(texto: str, insumos, *,
-                             afirma: bool = True) -> Veredicto:
-    """Las cinco guardas. Devuelve el veredicto con su denominador.
+def acto_de_habla_del_extracto(insumos) -> bool:
+    """¿Este material permite AFIRMAR? Se DERIVA, no se pasa.
 
-    `afirma=False` cuando el contraste que lo origina no activa: ahí el texto
-    no puede afirmar, solo preguntar.
+    `afirma=True` por defecto era el valor mas peligroso posible: quien llamara
+    sin pensarlo obtenia permiso para afirmar, que es justo lo que hay que
+    ganarse. La respuesta ya esta en el extracto -- `acto_de_habla` de la
+    evaluacion, que PACS-H fija en AFIRMA solo con intensidad 3 y evidencia E0.
+
+    Sin `acto_de_habla` en el material, la respuesta es **no**: no se puede
+    afirmar sobre un extracto que no dice con qué fuerza se lo evaluó.
     """
+    if not isinstance(insumos, dict):
+        return False
+    acto = insumos.get("acto_de_habla")
+    if acto is None:
+        cab = insumos.get("cabecera")
+        acto = (cab or {}).get("acto_de_habla") if isinstance(cab, dict) else None
+    return str(acto or "").strip().upper() == "AFIRMA"
+
+
+def verificar_texto_generado(texto: str, insumos, *,
+                             afirma: bool | None = None) -> Veredicto:
+    """Las seis guardas. Devuelve el veredicto con su denominador.
+
+    `afirma` se DERIVA del extracto cuando no se pasa, que es lo normal. Se
+    acepta explicito solo para las pruebas que quieren forzar un caso; pasarlo
+    desde el codigo de produccion es reintroducir el problema.
+    """
+    if afirma is None:
+        afirma = acto_de_habla_del_extracto(insumos)
     guardas: dict = {}
 
     for nombre, fn in (("nunca", verificar_nunca),

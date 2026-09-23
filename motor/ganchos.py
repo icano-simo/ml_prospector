@@ -653,23 +653,93 @@ class Gancho:
     ficha: str | None
     fuente: str
     derivado: bool = False
+    #: True cuando el texto se abrio para no presuponer. Ver `sin_presuposicion`.
+    abierto: bool = False
 
 
-def gancho_de(qualifier: str, señales: dict | None = None) -> Gancho | None:
+#: Los ganchos del corpus estan escritos PRESUPONIENDO el dolor. «¿Cuántas
+#: horas a la semana estás traduciendo papeles que no escribiste?» da por hecho
+#: que traduce; solo pregunta cuánto. Con evidencia fuerte eso es correcto y es
+#: lo que los hace buenos. Con una hipotesis de fuerza 1 y grado E3, es afirmar
+#: con forma de pregunta -- y si la presuposicion es falsa, el mensaje se cae
+#: entero en la primera linea.
+#:
+#: Estas son las aperturas que preguntan SI, antes de preguntar cuánto. No
+#: reescriben el gancho del corpus: lo preceden, y el del corpus queda para
+#: cuando el realtor conteste que si.
+_SIN_PRESUPONER = {
+    "P-Q01": "¿Te ha pasado que un cliente tuyo no pasa el filtro del lender?",
+    "P-Q13": "¿Te llega negocio por recomendación de clientes anteriores?",
+    "P-Q14": "¿Te toca traducirles documentos a tus clientes?",
+    "P-Q07": "¿Tus compradores llegan con el down payment resuelto?",
+    "P-Q09": "¿Trabajas con compradores de inversión?",
+    "P-Q10": "¿Se te caen operaciones ya en proceso?",
+    "P-Q11": "¿Cómo viene tu año en unidades cerradas?",
+    "P-Q17": "¿Tus clientes te preguntan por programas de gobierno?",
+    "P-Q19": "¿Trabajas con clientes que pagan con ITIN?",
+    "P-Q21": "¿Tienes clientes self-employed?",
+    "P-Q06": "¿Con qué lender estás cerrando hoy?",
+    # Los derivados tambien: su gancho presupone igual. «¿Cuántas veces al mes
+    # te enteras del avance por tu cliente?» da por hecho que le pasa.
+    "J-Q05": "¿Te toca a ti explicar partes del proceso del préstamo?",
+    "J-Q06": "¿Cómo te enteras de cómo va un préstamo en proceso?",
+}
+
+#: Con esta fuerza o mas, el gancho del corpus se usa tal cual.
+FUERZA_PARA_PRESUPONER = 3
+
+
+def sin_presuposicion(qualifier: str) -> str | None:
+    """La apertura abierta de un qualifier, si la hay."""
+    return _SIN_PRESUPONER.get(qualifier)
+
+
+def gancho_de(qualifier: str, señales: dict | None = None, *,
+              intensidad: int | None = None,
+              acto_de_habla: str | None = None) -> Gancho | None:
     """El gancho de un qualifier, con su procedencia declarada.
 
     Devuelve None cuando el qualifier no se conversa (las compuertas) o cuando
     no hay ni ficha ni derivado -- que es un dato, no un error: significa que
     el enrutado no lo cubre y la pantalla tiene que poder decirlo.
+
+    `intensidad` y `acto_de_habla` deciden si se puede PRESUPONER. Sin ellos se
+    asume que no: un gancho que da por hecho el dolor sobre una hipotesis de
+    fuerza 1 es afirmar con forma de pregunta.
     """
     if qualifier in NO_SE_CONVERSA:
         return None
+
+    # PACS-H ya calculo esto: AFIRMA solo con intensidad 3 y evidencia E0. Si
+    # llega el acto, manda; si no, se mira la intensidad; si no llega ninguno,
+    # no se presupone.
+    if acto_de_habla is not None:
+        puede_presuponer = str(acto_de_habla).strip().upper() == "AFIRMA"
+    elif intensidad is not None:
+        puede_presuponer = intensidad >= FUERZA_PARA_PRESUPONER
+    else:
+        puede_presuponer = False
 
     ficha = MAPA.get(qualifier)
     for campo, alterna in VARIANTES.get(qualifier, []):
         if (señales or {}).get(campo):
             ficha = alterna
             break
+
+    if not puede_presuponer:
+        abierta = sin_presuposicion(qualifier)
+        if abierta:
+            return Gancho(
+                texto=abierta, ficha=ficha, abierto=True,
+                fuente=("apertura sin presuposición: la hipótesis no alcanza "
+                        "para afirmar (%s). El gancho del corpus%s queda para "
+                        "cuando conteste que sí."
+                        % (acto_de_habla or ("fuerza %s" % intensidad),
+                           " (%s)" % ficha if ficha else "")),
+                derivado=False)
+        # Sin apertura abierta declarada NO se improvisa una ni se cae al
+        # gancho del corpus: se dice que no hay con que abrir sin presuponer.
+        return None
 
     if ficha and ficha in CORPUS:
         c = CORPUS[ficha]

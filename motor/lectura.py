@@ -33,6 +33,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from motor.contrastes import UMBRAL_CONTRASTE
+
 # ── Los cinco veredictos, explicitos ────────────────────────────────────────
 ES_NUESTRO_CLIENTE = "es nuestro cliente"
 NO_ES_NUESTRO_CLIENTE = "no es nuestro cliente"
@@ -147,6 +149,17 @@ class Lectura:
     evidencia: str = ""
     #: True cuando la lectura AFIRMA; False cuando solo pregunta.
     afirma: bool = False
+    #: Lo MISMO, dicho EN SEGUNDA PERSONA y para mandarselo a él.
+    #:
+    #: `que_dice_del_borrower` esta escrito para que lo lea un BD: habla de la
+    #: persona en tercera persona y la nombra. El toque 4 lo pegaba tal cual en
+    #: el cuerpo del email, asi que a Armando le llegaba «Armando trabaja con
+    #: compradores que…». Y `que_hacer` es una instruccion PARA el BD --
+    #: «Ofrecerle que el caso se origine…»-- que tampoco se le manda a nadie.
+    #:
+    #: Vacio significa que esta lectura no tiene forma de decirse a él. El
+    #: toque 4 entonces NO la usa; no improvisa una.
+    para_el_realtor: str = ""
 
     def __post_init__(self) -> None:
         if self.bueno_o_malo not in VEREDICTOS:
@@ -155,6 +168,15 @@ class Lectura:
                 "deja a interpretacion." % (self.bueno_o_malo, VEREDICTOS))
         for campo in (self.que_dice_del_borrower, self.que_hacer):
             verificar_vocabulario(campo)
+        if self.para_el_realtor:
+            verificar_vocabulario(self.para_el_realtor)
+        # Una lectura que AFIRMA tiene que poder decirsele. Si no, el toque 4
+        # se queda sin material y cae a la pregunta -- que es correcto, pero
+        # entonces afirmar no servia de nada.
+        if self.afirma and not self.para_el_realtor:
+            raise ValueError(
+                "la lectura afirma pero no trae `para_el_realtor`: no hay "
+                "forma de decirselo sin pegarle el texto interno")
 
 
 def _hablado(pct, femenino=False):
@@ -185,22 +207,50 @@ def leer_mix_fha(contraste, nombre_agente: str) -> Lectura:
     suyo = _hablado(agente)
     delmercado = _hablado(mercado, femenino=True)
 
+    # La frase «score entre 580 y 669» salio el 2026-09-23: NINGUN dato la
+    # respalda. Del mix FHA se deduce el tipo de programa, no el score del
+    # comprador -- que no esta en Model Match ni en ninguna fuente que tengamos.
+    # Era una caracterizacion inventada del cliente de otra persona.
     cuerpo = (
         "%s trabaja con compradores que necesitan préstamos de gobierno mucho "
         "más que el resto de su zona. %s de sus operaciones son FHA, cuando en "
-        "%s solo lo son %s. Su cliente típico tiene poco dinero para el down "
-        "payment y un score entre 580 y 669."
+        "%s solo lo son %s. Es un comprador que suele entrar con menos down "
+        "payment."
         % (nombre_agente, suyo.capitalize(), donde, delmercado))
+
+    # La plantilla depende de la DIRECCION. Antes habia una sola y decia «mucho
+    # más que el resto de su zona» tambien cuando el agente estaba por debajo:
+    # un agente con 5% de FHA contra un condado con 16% leia igual que uno con
+    # 66,7% contra 16%.
+    if contraste.direccion == "por_debajo" and contraste.activa:
+        return Lectura(
+            que_dice_del_borrower=(
+                "%s cierra con FHA bastante menos que su zona: %s de sus "
+                "operaciones, cuando en %s son %s. Su comprador llega con más "
+                "down payment, o no le están ofreciendo el programa."
+                % (nombre_agente, suyo, donde, delmercado)),
+            bueno_o_malo=NEUTRO,
+            que_hacer=("Preguntarle si ve clientes que califican para FHA y "
+                       "terminan yéndose. Si es lo segundo, ahí hay operaciones "
+                       "que se están perdiendo."),
+            evidencia="FHA del agente %s%% contra %s%% de %s · %s veces · base: %s"
+                      % (agente, mercado, donde, contraste.veces,
+                         contraste.base_agente_descripcion))
 
     if not contraste.activa:
         # La guardia manda: se describe lo que se ve y se pregunta, no se
         # concluye. Afirmar sobre tres operaciones es lo que las guardias
         # existen para impedir.
+        hacia = {"por_encima": "más que la zona",
+                 "por_debajo": "menos que la zona",
+                 "en_linea": "parecido a la zona",
+                 "sin_contraste": "sin con qué compararlo"}[contraste.direccion]
         return Lectura(
             que_dice_del_borrower=(
-                "Lo que vemos apunta a compradores que necesitan préstamos de "
-                "gobierno más que la zona, pero sobre una base corta: %s."
-                % contraste.base_agente_descripcion),
+                "Lo que vemos apunta a compradores que usan préstamos de "
+                "gobierno %s, pero no alcanza para afirmarlo: %s."
+                % (hacia, contraste.motivo or
+                   contraste.base_agente_descripcion)),
             bueno_o_malo=NEUTRO,
             que_hacer=("Preguntarle cuántas de sus operaciones del último año "
                        "cerraron con FHA. Si son varias, es exactamente el "
@@ -212,24 +262,48 @@ def leer_mix_fha(contraste, nombre_agente: str) -> Lectura:
         que_dice_del_borrower=cuerpo + " Es exactamente el cliente que sabemos "
                                        "cerrar.",
         bueno_o_malo=ES_NUESTRO_CLIENTE,
-        que_hacer=("Abrir por el perfil del comprador: decirle que trabajamos "
-                   "el FHA con score desde 580 y que le sostenemos el "
-                   "pre-approval antes de que escriba la oferta."),
+        # «score desde 580» sale el 2026-09-23: es MUNICION --lo que decimos que
+        # podemos hacer-- y la municion todavia no tiene version. Una cifra de
+        # producto sin version es la que sigue circulando en los mensajes seis
+        # meses despues de que el overlay cambio, y nadie se entera.
+        que_hacer=("Abrir por el perfil del comprador: decirle que sostenemos "
+                   "el pre-approval antes de que escriba la oferta."),
         evidencia="FHA del agente %s%% contra %s%% de %s · %s veces · base: %s"
                   % (agente, mercado, donde, contraste.veces,
                      contraste.base_agente_descripcion),
-        afirma=True)
+        afirma=True,
+        para_el_realtor=(
+            "%s de tus operaciones cierran con FHA, contra %s en %s. Es un "
+            "comprador que suele entrar con menos down payment y al que le "
+            "sostenemos el pre-approval antes de que escriba la oferta.\n\n"
+            "¿Lo ves igual desde tu lado?"
+            % (suyo.capitalize(), delmercado, donde)))
 
 
 def leer_canal_tpo(tpo_agente: float | None, canal_mercado: dict | None,
                    nombre_agente: str, donde: str,
-                   fallout_mercado: float | None = None) -> Lectura:
+                   fallout_mercado: float | None = None,
+                   originadores_de_la_casa: list | None = None) -> Lectura:
     """El canal del agente contra el del mercado.
 
     Un préstamo que sale de la casa que lo origina suma manos al expediente, y
     cada mano es un punto mas donde el caso se cae. Eso es friccion, no
     descarte: es justo lo que sabemos resolver.
+
+    Tres cosas que esta funcion NO puede hacer, y antes hacia:
+
+    1 · **Afirmar siempre.** Tenia `afirma=True` y `FRICCION_RESOLUBLE` fijos,
+        asi que un TPO de 3% contra 45% mayorista --el agente MUY por debajo
+        del mercado-- salia diciendo «sus originadores lo pasan a otro» igual
+        que uno de 67% contra 12%.
+    2 · **Leer sin los dos lados.** Un mayorista de mercado en 0 no es un
+        mercado sin canal mayorista: es un dato que falta.
+    3 · **Decir «sus originadores lo pasan a otro» cuando esos originadores son
+        NUESTROS.** Si trabaja con Everett/Supreme, la fricción que se le
+        estaria señalando es la de la casa propia, y el copy quedaria vendiendo
+        contra nosotros mismos.
     """
+    de_la_casa = [o for o in (originadores_de_la_casa or []) if o]
     if tpo_agente is None or not canal_mercado:
         return Lectura(
             que_dice_del_borrower=(
@@ -243,6 +317,64 @@ def leer_canal_tpo(tpo_agente: float | None, canal_mercado: dict | None,
     mayorista = (canal_mercado.get("banked_wholesale") or 0) + \
                 (canal_mercado.get("brokered") or 0)
     suyo = _hablado(tpo_agente)
+    evidencia = ("TPO del agente %s%% contra %s%% mayorista en %s"
+                 % (tpo_agente, round(mayorista, 1), donde))
+
+    # ── los dos lados, ninguno en cero ──────────────────────────────────────
+    if not tpo_agente or not mayorista:
+        cual = "del agente" if not tpo_agente else "del mercado en %s" % donde
+        return Lectura(
+            que_dice_del_borrower=(
+                "No podemos comparar por qué canal se fondean las operaciones "
+                "de %s: falta el dato %s." % (nombre_agente, cual)),
+            bueno_o_malo=NEUTRO,
+            que_hacer=("Preguntarle si sus originadores cierran en su propia "
+                       "casa o pasan el caso a otro."),
+            evidencia=evidencia + " · un lado en cero: no hay contraste")
+
+    veces = tpo_agente / mayorista
+
+    # ── si sus originadores son de la casa, esta friccion no es argumento ───
+    if de_la_casa:
+        return Lectura(
+            que_dice_del_borrower=(
+                "%s ya trabaja con %s. Su canal no es un problema que le "
+                "podamos resolver: es el nuestro."
+                % (nombre_agente, ", ".join(de_la_casa))),
+            bueno_o_malo=NEUTRO,
+            que_hacer=("No abrir por el canal. Este realtor está excluido por "
+                       "no-canibalización: la conversación que corresponde es "
+                       "con el originador que ya lo atiende."),
+            evidencia=evidencia + " · originadores de la casa: %s"
+                      % ", ".join(de_la_casa))
+
+    # ── el agente POR DEBAJO del mercado ────────────────────────────────────
+    if veces <= 1.0 / UMBRAL_CONTRASTE:
+        return Lectura(
+            que_dice_del_borrower=(
+                "%s de las operaciones de %s van por canal mayorista, bastante "
+                "menos que su condado — %s del mercado. Sus originadores están "
+                "colocando el préstamo en su propia casa."
+                % (suyo.capitalize(), nombre_agente, _hablado(mayorista))),
+            bueno_o_malo=NEUTRO,
+            que_hacer=("No abrir por el canal: no es su problema. Buscar el "
+                       "ángulo por el perfil del comprador."),
+            evidencia=evidencia + " · %s veces: por debajo del mercado"
+                      % ("%g" % round(veces, 1)).replace(".", ","))
+
+    # ── en linea: existe la diferencia pero no sostiene una afirmacion ──────
+    if veces < UMBRAL_CONTRASTE:
+        return Lectura(
+            que_dice_del_borrower=(
+                "El canal de %s se parece al de su condado: %s contra %s. No "
+                "hay ahí una diferencia que le sirva de nada."
+                % (nombre_agente, suyo, _hablado(mayorista))),
+            bueno_o_malo=NEUTRO,
+            que_hacer=("Preguntarle si los tiempos de cierre le están dando "
+                       "problemas, sin dar por hecho que el canal es la causa."),
+            evidencia=evidencia + " · %s veces: por debajo del umbral de %s"
+                      % (("%g" % round(veces, 1)).replace(".", ","),
+                         ("%g" % UMBRAL_CONTRASTE).replace(".", ",")))
 
     cuerpo = (
         "%s de las operaciones de %s se fondean por un canal mayorista, en un "
@@ -262,9 +394,15 @@ def leer_canal_tpo(tpo_agente: float | None, canal_mercado: dict | None,
         que_hacer=("Ofrecerle que el caso se origine y se cierre en la misma "
                    "casa, y decirle en cuántos días cerramos. La fricción que "
                    "está viendo no es del comprador: es del canal."),
-        evidencia="TPO del agente %s%% contra %s%% mayorista en %s"
-                  % (tpo_agente, round(mayorista, 1), donde),
-        afirma=True)
+        evidencia=evidencia + " · %s veces"
+                  % ("%g" % round(veces, 1)).replace(".", ","),
+        afirma=True,
+        para_el_realtor=(
+            "%s de tus operaciones se fondean por canal mayorista, en un "
+            "condado donde eso es %s. Cada mano extra en el expediente es un "
+            "punto más donde el caso se cae.\n\n"
+            "¿Te está pasando con los tiempos de cierre?"
+            % (suyo.capitalize(), _hablado(mayorista))))
 
 
 def leer_perfil_del_comprador(mercado: dict, censo: dict | None,
