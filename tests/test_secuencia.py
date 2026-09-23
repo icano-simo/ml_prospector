@@ -188,10 +188,45 @@ def test_el_toque_4_usa_el_contraste_cuando_AFIRMA():
                                "FHA, cuando en Solano son una y media."),
         bueno_o_malo=ES_NUESTRO_CLIENTE,
         que_hacer="Le sostenemos el pre-approval antes de la oferta.",
-        evidencia="FHA 40% contra 16%", afirma=True)
+        evidencia="FHA 40% contra 16%", afirma=True,
+        para_el_realtor=("Cuatro de cada diez de tus operaciones cierran con "
+                         "FHA, contra una y media en Solano.\n\n"
+                         "¿Lo ves igual desde tu lado?"))
     t4 = [t for t in _seq([lec]).toques if t.numero == 4][0]
     assert "FHA" in t4.cuerpo
     assert "contraste activo" in t4.fuente_del_valor
+
+
+def test_el_toque_4_le_habla_a_EL_y_no_de_el():
+    """El cuerpo es lo que se le manda, no la lectura interna.
+
+    Antes se pegaba `que_dice_del_borrower` --tercera persona, con su nombre--
+    mas `que_hacer`, que es una instruccion para el BD. A Armando le llegaba
+    «Armando trabaja con compradores que…» y «Ofrecerle que el caso se origine».
+    """
+    lec = Lectura(
+        que_dice_del_borrower="Armando trabaja con compradores que usan FHA.",
+        bueno_o_malo=ES_NUESTRO_CLIENTE,
+        que_hacer="Ofrecerle que el caso se origine en la misma casa.",
+        evidencia="FHA 40% contra 16%", afirma=True,
+        para_el_realtor=("Cuatro de cada diez de tus operaciones son FHA.\n\n"
+                         "¿Lo ves igual?"))
+    t4 = [t for t in _seq([lec]).toques if t.numero == 4][0]
+    assert t4.cuerpo.startswith("Cuatro de cada diez de tus operaciones")
+    assert "Armando trabaja" not in t4.cuerpo
+    assert "Ofrecerle" not in t4.cuerpo
+
+
+def test_una_lectura_que_afirma_sin_segunda_persona_no_se_puede_construir():
+    """La guarda esta en `Lectura`, no en el toque: nace verificada."""
+    try:
+        Lectura(que_dice_del_borrower="Usa FHA.",
+                bueno_o_malo=ES_NUESTRO_CLIENTE,
+                que_hacer="Abrir por el perfil del comprador.",
+                afirma=True)
+    except ValueError:
+        return
+    raise AssertionError("una lectura que afirma sin `para_el_realtor` se creó")
 
 
 def test_sin_contraste_que_active_el_toque_4_es_la_pregunta_del_lender():

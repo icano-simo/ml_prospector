@@ -50,6 +50,10 @@ SUITES = [
      "si el volcado pegado es de la persona que estaba abierta en la ficha"),
     ("guardas_inferencia", "tests.test_guardas_inferencia",
      "ECOA: por nombre exacto, por trozo y por procedencia declarada"),
+    ("veredicto", "tests.test_veredicto",
+     "la compuerta unica: excluido, pendiente_modelmatch u ok"),
+    ("afirmar", "tests.test_afirmar",
+     "que no se afirme nada que la evidencia no sostenga"),
 ]
 
 

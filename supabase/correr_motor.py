@@ -28,6 +28,8 @@ from motor.desde_instagram import (  # noqa: E402
 from motor.entrada import limpiar_entrada  # noqa: E402
 from motor.evaluar import evaluar  # noqa: E402
 from motor.exclusion import clasificar  # noqa: E402
+from motor.veredicto import puede_contactarse  # noqa: E402
+from captura.parser_mm import unir_perfiles  # noqa: E402
 from supabase.cargar import conectar  # noqa: E402
 
 LIBRO = os.path.join(RAIZ, "Data_inputIA",
@@ -133,12 +135,31 @@ def main() -> int:
     # Quien tiene captura de Model Match viva: es un termino de la confianza.
     with conectar() as conn:
         with conn.cursor() as cur:
+            # No basta con SABER quien tiene captura: hace falta su perfil, que
+            # es lo que decide si trabaja con originadores de la casa. Antes
+            # solo se leia el id, asi que la exclusion por no-canibalizacion no
+            # podia evaluarse aqui de ninguna manera.
             cur.execute("""
-                select distinct parseado->>'realtor_id'
+                select parseado->>'realtor_id', parseado->'perfil',
+                       capturado_en
                   from pacs.v_capturas_modelmatch_current
                  where parseado->>'realtor_id' is not null
+                   and parseado->'perfil' is not null
+                 order by capturado_en
             """)
-            con_modelmatch = {r[0] for r in cur.fetchall()}
+            por_realtor: dict = {}
+            for rid_mm, perfil_mm, cuando in cur.fetchall():
+                por_realtor.setdefault(rid_mm, []).append((perfil_mm, cuando))
+    # El perfil de Model Match vive repartido en varias filas -- Overview,
+    # Originators, Lenders-- y `orig_buyer` esta solo en una. Sin unir, el
+    # reparto por unidades no aparece y todo el lote saldria `pendiente`.
+    perfiles_mm = {}
+    for rid_mm, trozos in por_realtor.items():
+        unido = unir_perfiles([p for p, _c in trozos if isinstance(p, dict)])
+        if unido:
+            unido["capturado_en"] = str(trozos[-1][1])
+        perfiles_mm[rid_mm] = unido
+    con_modelmatch = set(perfiles_mm)
     print("con captura de Model Match: %d" % len(con_modelmatch))
 
     filas = []
@@ -208,6 +229,15 @@ def main() -> int:
             "entrada": reg,
             "excluido": excluido,
             "excluido_motivo": motivo if excluido else None,
+            # El veredicto de contacto, con la MISMA compuerta que usan
+            # /api/dossier, /api/extracto y guardar_texto. Sin captura de Model
+            # Match es `pendiente_modelmatch`, que es el estado normal de casi
+            # todo el lote: la evaluacion se guarda igual y dice que le falta.
+            "veredicto_contacto": puede_contactarse(
+                perfiles_mm.get(rid),
+                capturado_en=(perfiles_mm.get(rid) or {}).get("capturado_en"),
+                excluido_por_el_libro=excluido,
+                motivo_del_libro=motivo).a_dict(),
         })
 
     print("evaluaciones a escribir: %d · filas del libro sin cruce: %d"

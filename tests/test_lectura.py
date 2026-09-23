@@ -180,8 +180,11 @@ def test_la_lectura_habla_del_BORROWER_no_del_agente():
     c = mix_de_programa(MIX_SOLIDO, SOLANO, tipo="FHA")[0]
     texto = leer_mix_fha(c, "Armando").que_dice_del_borrower
     assert "down payment" in texto
-    assert "score entre 580 y 669" in texto
     assert "compradores" in texto or "cliente" in texto
+    # «score entre 580 y 669» salio el 2026-09-23. Del mix FHA se deduce el
+    # programa, no el score del comprador: ese dato no esta en Model Match ni
+    # en ninguna fuente que tengamos. Era caracterizar al cliente de otro.
+    assert "580" not in texto and "669" not in texto
 
 
 def test_la_lectura_dice_los_numeros_hablados():

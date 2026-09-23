@@ -22,6 +22,7 @@ from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
 from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
 from captura.pertenencia import comprobar  # noqa: E402
+from motor.veredicto import puede_contactarse  # noqa: E402
 from captura.trampas import es_de_la_casa, share_de_la_casa  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
     detectar_inversion,
@@ -1180,6 +1181,15 @@ def lectura(params: dict) -> tuple[int, dict]:
         # aqui ya no decide nada.
         "excluido": (ev or {}).get("excluido"),
         "excluido_motivo": (ev or {}).get("excluido_motivo"),
+        # El veredicto completo tambien en la lectura: la pantalla necesita
+        # distinguir «excluido» de «falta Model Match», que son dos avisos
+        # distintos y dos trabajos distintos a continuacion.
+        "veredicto": puede_contactarse(
+            unir_perfiles([p for p in perfiles if isinstance(p, dict)])
+            if perfiles else None,
+            capturado_en=(cuantas_capturas or {}).get("vigente_desde"),
+            excluido_por_el_libro=(ev or {}).get("excluido"),
+            motivo_del_libro=(ev or {}).get("excluido_motivo")).a_dict(),
         "hipotesis": hipotesis,
         "evaluacion": ev,
         "lecturas": lecturas,
@@ -1189,6 +1199,12 @@ def lectura(params: dict) -> tuple[int, dict]:
         "perfil_de_la_zona": perfil_zona,
         "sin_dolor": sin_dolor,
         "mercados": len(mercados),
+        # El perfil unido viaja para que `dossier` pueda pedirle el veredicto a
+        # `puede_contactarse` sin volver a leer las capturas. Calcularlo dos
+        # veces es como se terminan desincronizando dos respuestas a la misma
+        # pregunta.
+        "perfil_unido": unir_perfiles(
+            [p for p in perfiles if isinstance(p, dict)]) if perfiles else None,
         "tiene_census": censo is not None,
         # Cuantas capturas hay y cual manda. Con mas de una, la pantalla lo
         # dice: un diagnostico que cambia porque alguien re-capturo tiene que
@@ -1314,20 +1330,46 @@ def dossier(params: dict) -> tuple[int, dict]:
     if cod >= 400:
         return cod, base
 
-    # ── LA EXCLUSION CORTA AQUI ─────────────────────────────────────────────
+    # ── LA COMPUERTA CORTA AQUI ─────────────────────────────────────────────
     # El dossier no es una lectura: es la secuencia de 7 toques, o sea la cola
     # de contacto misma. Un excluido tiene lectura -- su diagnostico sigue
     # visible en /api/lectura -- pero no tiene secuencia. Devolver el dossier y
     # confiar en que la pantalla no lo mande es la misma omision de antes, un
     # piso mas arriba.
-    if base.get("excluido"):
+    #
+    # Se llama a `motor.veredicto.puede_contactarse`, que es la MISMA que usan
+    # `/api/extracto`, `guardar_texto` y `correr_motor`. Cuatro criterios
+    # distintos para la misma pregunta dejaban al mismo realtor contactable por
+    # un camino e inviable por otro.
+    v = puede_contactarse(
+        base.get("perfil_unido"),
+        capturado_en=(base.get("capturas") or {}).get("vigente_desde"),
+        excluido_por_el_libro=base.get("excluido"),
+        motivo_del_libro=base.get("excluido_motivo"))
+    if not v.puede_escribirsele:
         return 409, {
-            "error": "excluido por metodología: %s" % base["excluido"],
-            "motivo": base.get("excluido_motivo"),
-            "excluido": base["excluido"],
-            "que_hacer": ("Su lectura sigue disponible en /api/lectura. Lo que "
-                          "no existe es la secuencia: no entra a ninguna cola "
-                          "de contacto mientras el libro lo tenga así."),
+            "error": v.motivo,
+            "veredicto": v.a_dict(),
+            # Lo que YA se sabe viaja igual: la pantalla tiene que poder
+            # mostrarlo. Lo que no viaja es un solo bloque de mensajes.
+            "lo_que_sabemos": {
+                "realtor": base.get("realtor"),
+                "cabecera": base.get("cabecera"),
+                "narrativa": base.get("narrativa"),
+                "hipotesis": base.get("hipotesis"),
+                "mercados": base.get("mercados"),
+            },
+            # Las MISMAS claves que la respuesta de 200, vacias. Si el 409
+            # usara otras, quien lea `d["secuencia"]["toques"]` reventaria en
+            # vez de ver cero toques -- y un KeyError se arregla con un
+            # `.get(...)` que devuelve None, que es lo que termina pintandose.
+            "bloques": [],
+            "secuencia": {"toques": [], "recursos_pendientes": []},
+            "que_hacer": (
+                "Su lectura sigue disponible en /api/lectura. Lo que no existe "
+                "es la secuencia."
+                if v.estado == "excluido" else
+                "Falta Model Match: capturar antes de dar veredicto."),
         }
 
     nombre = base["realtor"]["nombre_mostrado"]
@@ -1350,7 +1392,14 @@ def dossier(params: dict) -> tuple[int, dict]:
             % urllib.parse.quote(params.get("realtor_id", "")))
         señales = (ent or [{}])[0].get("entrada") or {}
 
-    g = gancho_de(dolor, señales) if dolor else None
+    # La fuerza y el acto de habla viajan al gancho: con una hipotesis de
+    # fuerza 1 el gancho del corpus presupondria el dolor, y una presuposicion
+    # falsa tumba el mensaje en la primera linea.
+    principal = next((h for h in (base.get("hipotesis") or [])
+                      if h.get("papel") == "principal"), {})
+    g = gancho_de(dolor, señales,
+                  intensidad=principal.get("intensidad"),
+                  acto_de_habla=principal.get("acto")) if dolor else None
     if g:
         gancho, fuente_gancho = g.texto, g.fuente
     elif dolor:

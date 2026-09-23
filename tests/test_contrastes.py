@@ -115,7 +115,10 @@ def test_sin_dato_de_un_lado_no_hay_contraste_ni_ratio_inventado():
                     "metricas": {}}]
     c = mix_de_programa(MIX_ARMANDO, sin_mercado, tipo="FHA")[0]
     assert c.veces is None
-    assert "sin dato de un lado" in c.leer()
+    # Dice CUAL de los dos lados falta. Con cuatro geografias en pantalla,
+    # «sin dato de un lado» obliga a ir a buscar cual.
+    assert "sin dato del mercado" in c.leer()
+    assert not c.activa
 
     c2 = mix_de_programa({"filas": [], "unidades_identificadas": 30.0,
                           "cobertura": 80.0}, MERCADOS, tipo="FHA")[0]

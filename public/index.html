@@ -414,6 +414,20 @@ function vistaLectura(d){
   /* La exclusión va ARRIBA DE TODO y antes del diagnóstico. Lisa Munoz tiene
      P-Q10, confianza MEDIA y gating: por el diagnóstico sale impecable. Si el
      aviso va abajo, se lee después de haber decidido escribirle. */
+  /* Sin Model Match no hay veredicto. Es el estado de 4.185 de 4.187 hoy, así
+     que NO es un error: se muestra lo que ya se sabe y se marca. Lo que no se
+     produce es dolor primario, ganchos, toques ni textos. */
+  const aviso_pendiente = (d.veredicto && d.veredicto.estado === 'pendiente_modelmatch')
+    ? `<div class="banner" style="border-color:var(--coral)">
+    <div class="seccion" style="color:var(--rose-700)">▲ Falta Model Match: capturar antes de dar veredicto</div>
+    <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
+      ${esc(d.veredicto.motivo || '')}</p>
+    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-600)">
+      Lo de abajo es lo que ya se sabe. El <b>Dossier</b> y la <b>Secuencia</b>
+      responden 409 hasta que haya captura: sin saber con qué originadores
+      trabaja, no se puede saber si le estaríamos quitando su propia cartera a
+      un colega.</p></div>` : '';
+
   const aviso_excluido = d.excluido ? `<div class="banner" style="border-color:var(--salmon)">
     <div class="seccion" style="color:var(--salmon)">⛔ No entra a ninguna cola de contacto</div>
     <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
@@ -436,7 +450,7 @@ function vistaLectura(d){
     Un perfil describe un momento, y mezclar dos no da un momento mejor.</div>` : '';
 
   /* 1 · quién es, en prosa. Es lo primero que un BD lee. */
-  const quien = aviso_excluido + aviso_capturas + `<div class="tarjeta">
+  const quien = aviso_excluido + aviso_pendiente + aviso_capturas + `<div class="tarjeta">
     <div class="seccion">Qué clase de realtor es</div>
     <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
       ${esc(d.narrativa || '')}</p></div>`;
