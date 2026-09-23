@@ -1162,8 +1162,22 @@ def dossier(params: dict) -> tuple[int, dict]:
                           perfil_zona=zona.get("texto"), lecturas=lecturas,
                           apertura_sin_dolor=apertura)
 
+    from motor.dossier import armar_dossier
+
+    bloques = armar_dossier(
+        realtor=base["realtor"], narrativa=base.get("narrativa") or "",
+        cabecera=base.get("cabecera") or {},
+        hipotesis=base.get("hipotesis") or [],
+        lecturas=base.get("lecturas") or [],
+        perfil_zona=base.get("perfil_de_la_zona"),
+        condado_dominante=base.get("condado_dominante"),
+        gancho=gancho, gancho_fuente=fuente_gancho)
+
     return 200, {
         **base,
+        "bloques": [{"letra": b.letra, "titulo": b.titulo, "texto": b.texto,
+                     "datos": b.datos, "fuente": b.fuente,
+                     "vacio_porque": b.vacio_porque} for b in bloques],
         "gancho": {"texto": gancho, "fuente": fuente_gancho},
         "secuencia": {
             "toques": [{"numero": t.numero, "dia": t.dia, "canal": t.canal,

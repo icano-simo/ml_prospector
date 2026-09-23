@@ -38,6 +38,7 @@ import re
 from dataclasses import dataclass, field
 
 from motor.lectura import _hablado, verificar_vocabulario
+from motor.nunca import verificar_nunca
 
 # ── Lo que el copy NO puede prometer ────────────────────────────────────────
 #
@@ -134,11 +135,16 @@ class Toque:
         verificar_vocabulario(self.cuerpo)
         verificar_sin_promesas(self.cuerpo)
         verificar_sin_folleto(self.cuerpo)
+        # El bloque F corre sobre TODO el copy generado, no solo sobre el
+        # dossier: prometer pago por referir en un toque es el mismo problema
+        # que escribirlo en la ficha, y peor, porque el toque se envía.
+        verificar_nunca(self.cuerpo)
         verificar_una_sola_idea(self.cuerpo)
         verificar_cierra_con_pregunta_u_oferta(self.cuerpo)
         if self.asunto:
             verificar_sin_promesas(self.asunto)
             verificar_sin_folleto(self.asunto)
+            verificar_nunca(self.asunto)
 
 
 @dataclass

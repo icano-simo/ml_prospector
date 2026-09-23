@@ -239,38 +239,54 @@ function pendientes(d){
 }
 
 function vistaDossier(d){
-  const ev = d.evaluacion || {};
-  const lec = (d.lecturas || []).filter(l => l.afirma);
+  const c = d.cabecera || {};
+  const [cn, ci] = NIVEL_BADGE[c.nivel] || ['sin-evaluar','▣'];
+
+  const bloque = b => {
+    /* El bloque F se pinta distinto: es una lista de no/sí, no un dato. */
+    if(b.letra === 'F') return `<div class="tarjeta"
+      style="border-color:var(--coral)">
+      <div class="seccion" style="color:var(--rose-700)">F · ${esc(b.titulo.replace(/^.*·\s*/,''))}</div>
+      ${b.datos.map(x => `<div style="border-left:3px solid var(--rose-200);
+        padding:8px 0 8px 12px;margin-top:10px">
+        <p style="margin:0;font-size:13px;font-weight:700;color:var(--rose-700)">
+          ${esc(x.no)}</p>
+        <p style="margin:4px 0 0;font-size:13px;color:var(--emerald-800)">
+          <b>En su lugar:</b> ${esc(x.si)}</p>
+        <p class="pista" style="margin:4px 0 0">${esc(x.por_que)}</p>
+      </div>`).join('')}
+      <p class="sub" style="margin-top:12px">${esc(b.fuente)}</p></div>`;
+
+    if(b.vacio_porque && !b.texto && !b.datos.length) return `<div class="tarjeta">
+      <div class="seccion">${esc(b.letra)} · ${esc(b.titulo)}</div>
+      <span class="badge sin-evaluar"><i>▣</i>sin dato</span>
+      <p class="sub" style="margin-top:8px">${esc(b.vacio_porque)}</p></div>`;
+
+    return `<div class="tarjeta">
+      <div class="seccion">${esc(b.letra)} · ${esc(b.titulo)}</div>
+      ${b.texto ? `<p style="margin:8px 0 0;font-size:${b.letra==='E'?'15px':'13px'};
+        line-height:1.65;color:var(--${b.letra==='E'?'navy':'slate-800'});
+        font-weight:${b.letra==='E'?'700':'500'}">${esc(b.texto)}</p>` : ''}
+      ${b.datos.length ? `<ul class="lista" style="margin-top:10px">${
+        b.datos.filter(x=>x.v!=null&&x.v!=='').map(x =>
+        `<li><b>${esc(x.k)}</b><span class="${typeof x.v==='number'?'num':''}"
+          style="margin-left:auto;text-align:right">${esc(x.v)}</span></li>`
+      ).join('')}</ul>` : ''}
+      ${b.vacio_porque ? `<p class="sub" style="margin-top:8px">${esc(b.vacio_porque)}</p>` : ''}
+      ${b.fuente ? `<p class="pista" style="margin-top:8px">${esc(b.fuente)}</p>` : ''}
+    </div>`;
+  };
+
   return `
     <div class="banner">
-      <div class="seccion">Dossier · ${esc(d.realtor.nombre_mostrado)}</div>
-      <span class="cifra">${esc(d.dolor_primario || 'sin dolor primario')}</span>
+      <div class="seccion">Dossier A–G · ${esc(d.realtor.nombre_mostrado)}</div>
+      <span class="badge ${cn}" style="font-size:13px;padding:6px 12px">
+        <i>${ci}</i>${esc(c.nivel || '—')}</span>
+      <span class="cifra" style="margin-left:12px;font-size:18px">${esc(d.dolor_primario || 'sin dolor primario')}</span>
       <span class="pista" style="margin-left:10px">${esc(d.realtor.estado_nombre || '')}
-        · ${d.mercados} mercados capturados</span>
+        · ${d.mercados} mercados</span>
     </div>
-    ${d.sin_dolor ? `<div class="tarjeta">
-      <div class="seccion">A · Qué sabemos</div>
-      <p style="margin:6px 0 0;font-size:13px;line-height:1.6">${esc(d.sin_dolor.cuerpo)}</p>
-    </div>` : ''}
-    ${d.perfil_de_la_zona ? `<div class="tarjeta">
-      <div class="seccion">B · A quién le vende</div>
-      <p style="margin:6px 0 0;font-size:13px;line-height:1.65">
-        ${esc(d.perfil_de_la_zona.texto)}</p></div>` : ''}
-    <div class="tarjeta">
-      <div class="seccion">C · Lo que afirma el motor</div>
-      ${lec.length ? lec.map(l => `
-        <p style="margin:6px 0;font-size:13px;line-height:1.6">
-          ${esc(l.que_dice_del_borrower)}</p>`).join('')
-        : `<span class="badge sin-evaluar"><i>▣</i>ningún contraste activa</span>
-           <p class="sub" style="margin-top:8px">Los contrastes se calculan
-             igual y están en <b>Cómo se calculó</b>, con el motivo por el que
-             no activan.</p>`}
-    </div>
-    <div class="tarjeta">
-      <div class="seccion">D · Por dónde abrir</div>
-      <h2>${esc(d.gancho.texto)}</h2>
-      <p class="sub">${esc(d.gancho.fuente)}</p>
-    </div>
+    ${(d.bloques||[]).map(bloque).join('')}
     ${pendientes(d)}`;
 }
 

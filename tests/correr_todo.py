@@ -40,6 +40,7 @@ SUITES = [
     ("cargar_ig", "tests.test_cargar_instagram", "la llave, la PII del agente y la coherencia CSV/crudo"),
     ("secuencia", "tests.test_secuencia", "siete toques sin una sola promesa de material"),
     ("qualifiers", "tests.test_qualifiers", "el banco de la matriz y la narrativa de apertura"),
+    ("dossier", "tests.test_dossier", "los bloques A-G y el bloque F como regla ejecutable"),
     ("marca", "tests.test_marca", "la guia de diseño sobre los archivos servidos"),
 ]
 
