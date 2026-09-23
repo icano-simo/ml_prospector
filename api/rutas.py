@@ -229,12 +229,30 @@ def realtors(params: dict) -> tuple[int, dict]:
     # Ademas leia la TABLA `capturas_modelmatch` --con los lotes de ensayo
     # dentro-- y cruzaba por `sf_lead_id`, que es nulo en 62 realtors. Ahora es
     # la vista vigente y `realtor_id`, que es la llave.
-    ids_filtro: set | None = None
+    # Un filtro es de DOS clases, y confundirlas costaba caro:
+    #
+    #   · positivo    «tiene X» -> el conjunto de ids es CHICO (3 con Model
+    #                 Match, 298 con Instagram). Va como `id=in.(...)`.
+    #   · complemento «NO tiene X» -> el conjunto es TODO menos los de arriba,
+    #                 o sea 4.246 ids. Va como `id=not.in.(...)` sobre el
+    #                 conjunto CHICO.
+    #
+    # La version anterior materializaba el complemento --pedia los 4.249
+    # realtors y restaba-- y despues cortaba en `TOPE_IDS = 400`. Dos
+    # consecuencias, y la segunda es peor que la primera:
+    #
+    #   1 · el total decia «400», que era el tamaño del recorte y no un dato;
+    #   2 · los ids se ordenan por UUID antes de cortar, asi que la lista NO
+    #       eran los primeros 400 por nombre sino 400 CUALESQUIERA. Una lista
+    #       ordenada alfabeticamente que en realidad es una muestra al azar es
+    #       indistinguible de una lista correcta: nada se ve raro.
+    ids_incluir: set | None = None
+    ids_excluir: set = set()
     truncado_por_ids = False
 
-    def _acotar(nuevos: set) -> None:
-        nonlocal ids_filtro
-        ids_filtro = nuevos if ids_filtro is None else (ids_filtro & nuevos)
+    def _incluir(nuevos: set) -> None:
+        nonlocal ids_incluir
+        ids_incluir = nuevos if ids_incluir is None else (ids_incluir & nuevos)
 
     if con_mm in ("si", "no"):
         _c, capturas, _ = leer(
@@ -243,10 +261,9 @@ def realtors(params: dict) -> tuple[int, dict]:
         con_captura = {c["realtor_id"] for c in (capturas or [])
                        if c.get("realtor_id")}
         if con_mm == "si":
-            _acotar(con_captura)
+            _incluir(con_captura)
         else:
-            _c, todos, _ = leer("realtors", "?select=id&limit=10000")
-            _acotar({r["id"] for r in (todos or [])} - con_captura)
+            ids_excluir |= con_captura
 
     # Instagram: utilizable / no aporta / sin raspar.
     ig_filtro = (params.get("ig") or "").strip()
@@ -258,12 +275,12 @@ def realtors(params: dict) -> tuple[int, dict]:
             (util if c.get("clase") in CLASES_UTILIZABLES
              else no_util).add(c["realtor_id"])
         if ig_filtro == "utilizable":
-            _acotar(util)
+            _incluir(util)
         elif ig_filtro == "no_aporta":
-            _acotar(no_util)
+            _incluir(no_util)
         else:
-            _c, todos, _ = leer("realtors", "?select=id&limit=10000")
-            _acotar({r["id"] for r in (todos or [])} - util - no_util)
+            # «sin raspar» es el complemento de «tiene clase», que son 298.
+            ids_excluir |= (util | no_util)
 
     # Veredicto de contacto.
     ver_filtro = (params.get("veredicto") or "").strip()
@@ -272,18 +289,21 @@ def realtors(params: dict) -> tuple[int, dict]:
             "v_evaluacion_actual",
             "?select=realtor_id&veredicto_contacto->>estado=eq.%s&limit=10000"
             % urllib.parse.quote(ver_filtro))
-        _acotar({e["realtor_id"] for e in (evs or []) if e.get("realtor_id")})
+        _incluir({e["realtor_id"] for e in (evs or []) if e.get("realtor_id")})
 
-    if ids_filtro is not None:
-        if not ids_filtro:
+    if ids_incluir is not None:
+        # Un positivo que se queda sin ids no es «no hay filtro»: es «ninguno
+        # cumple», y son cosas distintas.
+        efectivos = sorted(ids_incluir - ids_excluir)
+        if not efectivos:
             return 200, {"filas": [], "mostradas": 0, "total": "0",
                          "tope": TOPE, "truncado": False, "estados": ESTADOS}
-        # PostgREST acota el largo de la URL. Hoy los filtros devuelven 3 y
-        # 298 ids, muy por debajo; si algun dia pasa, se DICE que se truncó en
-        # vez de devolver una lista corta que parece completa.
-        ids = sorted(ids_filtro)
-        truncado_por_ids = len(ids) > TOPE_IDS
-        partes.append("id=in.(%s)" % ",".join(ids[:TOPE_IDS]))
+        truncado_por_ids = len(efectivos) > TOPE_IDS
+        partes.append("id=in.(%s)" % ",".join(efectivos[:TOPE_IDS]))
+    elif ids_excluir:
+        fuera = sorted(ids_excluir)
+        truncado_por_ids = len(fuera) > TOPE_IDS
+        partes.append("id=not.in.(%s)" % ",".join(fuera[:TOPE_IDS]))
 
     codigo, datos, cabeceras = leer("realtors", "?" + "&".join(partes),
                                     rango="0-%d" % (TOPE - 1))
