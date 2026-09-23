@@ -499,6 +499,53 @@ def resumen_de_captura(filas: list[dict], perfil_unido: dict,
     }
 
 
+def leer_overview(d: dict) -> tuple[int, dict]:
+    """El Overview -> el estado y los condados, para que aparezcan las cajas.
+
+    No guarda nada. Es el paso 1 de la captura por cajas: se pega el Overview,
+    se ve QUE se detectó, se corrige a mano lo que haga falta, y recién
+    entonces aparecen las cajas de Market Insight con su nombre puesto.
+
+    Si no encuentra la tabla lo dice en una línea y deja agregarlos a mano. Un
+    parser que devuelve una lista vacía sin explicar por qué obliga a adivinar
+    si el texto estaba mal o la tabla no existe.
+    """
+    from captura.parser_mm import _condados, parsear_perfil
+
+    texto = str(d.get("overview") or "")
+    if not texto.strip():
+        return 400, {"error": "La caja del Overview está vacía."}
+
+    filas = _condados(texto)
+    perfil, error = None, None
+    try:
+        perfil = parsear_perfil(texto)
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)[:200]
+
+    estado_detectado = None
+    for c in filas:
+        if c.get("estado"):
+            estado_detectado = c["estado"]
+            break
+
+    return 200, {
+        "estado": estado_detectado,
+        "estado_nombre": ESTADOS.get(estado_detectado or ""),
+        "condados": [{"nombre": c["nombre"], "tipo": c.get("tipo"),
+                      "es_condado": c.get("es_condado", True),
+                      "estado": c.get("estado"), "unidades": c.get("unidades")}
+                     for c in filas],
+        "nombre": (perfil or {}).get("nombre"),
+        "buyer_units": (perfil or {}).get("buyer_units"),
+        "ventana_meses": (perfil or {}).get("ventana_meses"),
+        "aviso": (None if filas else
+                  "No encontré la tabla «View Counties»: agregá los condados a "
+                  "mano con el botón de abajo."),
+        "error_parser": error,
+    }
+
+
 def guardar(d: dict) -> tuple[int, dict]:
     realtor_id = (d.get("realtor_id") or "").strip()
     sf_lead_id = (d.get("sf_lead_id") or "").strip() or None
@@ -1786,6 +1833,7 @@ RUTAS = {
     "/api/extracto": (extracto, "GET"),
     "/api/realtors": (realtors, "GET"),
     "/api/geografias": (geografias, "GET"),
+    "/api/leer_overview": (leer_overview, "POST"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
     "/api/instagram": (instagram, "GET"),

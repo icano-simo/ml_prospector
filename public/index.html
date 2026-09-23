@@ -962,23 +962,30 @@ async function vModelMatch(){
 }
 
 /* ── pestaña Mercados · el pegado va acá, dentro de la ficha ──────────── */
+/* ══ CAPTURA POR CAJAS ═════════════════════════════════════════════════════
+ * Una caja por sección, cada una con su nombre. El condado lo define LA CAJA,
+ * no la posición: antes se pegaba todo junto y el servidor exigía 1 + N
+ * bloques exactos, así que cuando Model Match mostraba 5 condados en el
+ * Overview y 3 en Market Insight, la captura se rechazaba entera.
+ */
+let CAJAS = [];          /* [{clave, tipo, etiqueta, vacio_declarado}] */
+let CONDADOS = [];       /* lo que devolvió /api/leer_overview, editable */
+
 function vMercados(){
   $('#cuerpo').innerHTML = `
     <div class="tarjeta">
-      <h2>Pegar Model Match</h2>
-      <p class="sub" style="margin:0 0 12px">Una sola caja. Recorré el perfil en
-        este orden y pegá todo seguido acá:
-        <b>1</b> Overview con <i>View Counties</i> ·
-        <b>2</b> Market Signals del estado ·
-        <b>3</b> Market Signals de cada condado, en el orden del Overview ·
-        <b>4</b> Originators con filtro Buyer · <b>5</b> Lenders.<br>
-        Los cortes los encuentra el servidor por los títulos de sección; no hay
-        que separar nada.</p>
+      <h2>1 · Overview</h2>
+      <p class="sub" style="margin:0 0 12px">Pegá el Overview con la tabla
+        <i>View Counties</i> y tocá <b>Leer</b>. Aparecen el estado y los
+        condados que detecté, para corregirlos antes de seguir.</p>
       <div id="msgs"></div>
-      <label>Volcado completo
-        <span class="pista">Ctrl+A, Ctrl+C en cada pestaña, una debajo de otra</span></label>
-      <textarea id="volcado" style="min-height:320px"
-        placeholder="Pegá acá el perfil entero, en orden."></textarea>
+      <textarea id="ovw" style="min-height:180px"
+        placeholder="Pegá acá el Overview de Model Match."></textarea>
+      <div style="margin-top:10px">
+        <button class="btn" id="btnLeer">Leer</button>
+        <span class="pista" id="tamOvw"></span>
+      </div>
+      <div id="detectado"></div>
       <label>Ventana de Model Match
         <span class="pista">el <b>Set Date Range</b> del perfil, en meses. No
           viaja en el texto pegado: vive en un desplegable, igual que Set
@@ -989,10 +996,11 @@ function vMercados(){
         <span class="badge sin-evaluar" id="ventanaOrigen"><i>·</i>el de fábrica</span>
       </div>
       <div id="extra"></div>
-      <div style="margin-top:12px">
-        <button class="btn" id="btnGuardar">Guardar</button>
-        <span class="pista" id="tam"></span>
-      </div>
+    </div>
+    <div id="cajas"></div>
+    <div class="tarjeta" id="tarjetaGuardar" style="display:none">
+      <button class="btn" id="btnGuardar">Guardar la captura</button>
+      <span class="pista" id="tam"></span>
     </div>
     <div id="confirmacion"></div>
     <div class="tarjeta">
@@ -1002,10 +1010,11 @@ function vMercados(){
   if(!SEL.sf_lead_id) $('#extra').innerHTML =
     `<label>MMI Agent ID <span class="pista">este realtor no tiene Lead ID,
       así que hace falta</span></label><input type="text" id="agent">`;
-  $('#volcado').oninput = () => {
-    const n = $('#volcado').value.length;
-    $('#tam').textContent = n ? n.toLocaleString('es') + ' caracteres' : '';
+  $('#ovw').oninput = () => {
+    const n = $('#ovw').value.length;
+    $('#tamOvw').textContent = n ? n.toLocaleString('es') + ' caracteres' : '';
   };
+  $('#btnLeer').onclick = leerOverview;
   /* Un 14 declarado y un 14 por descuido son el mismo número y no valen lo
      mismo. Tocar el campo — aunque se deje en 14 — cuenta como mirarlo. */
   VENTANA_CONFIRMADA = false;
@@ -1018,21 +1027,147 @@ function vMercados(){
   cargarBiblio();
 }
 
-async function guardar(){
-  const volcado = $('#volcado').value;
-  if(!volcado.trim()){
-    $('#msgs').innerHTML = `<div class="err">La caja está vacía.</div>`;
+/* Una línea por caja, con uno de los tres estados. Es lo que se mira antes de
+   pasar al realtor siguiente: «leído (N métricas)», «vacío declarado» o «no se
+   pudo leer». Sin esto hay que abrir la base para saber qué entró. */
+const ESTADO_CAJA = {
+  leido:           ['mql','✓','leído'],
+  vacio_declarado: ['sin-evaluar','·','vacío declarado'],
+  sin_pegar:       ['bloqueado','▲','falta capturar'],
+  no_se_pudo_leer: ['excluido','⛔','no se pudo leer (se guardó el texto)'],
+};
+
+function pintarCajasGuardadas(d){
+  const c = d.cajas;
+  if(!c) return '';
+  const filas = (c.cajas || []).map(x => {
+    const [cl, ic, tx] = ESTADO_CAJA[x.estado] || ESTADO_CAJA.sin_pegar;
+    return `<tr class="metric">
+      <td class="lbl">${esc(x.etiqueta || x.clave)}</td>
+      <td><span class="badge ${cl}"><i>${ic}</i>${tx}</span></td>
+      <td class="num">${x.caracteres ? x.caracteres.toLocaleString('es') + ' car.' : '—'}</td>
+      <td class="pista">${esc(x.aviso || '')}</td></tr>`;
+  }).join('');
+  const faltan = c.faltan || [];
+  const sinMI = d.sin_market_insight || [];
+  return `<div class="tarjeta">
+    <div class="seccion">Qué entró, caja por caja</div>
+    <table class="tabla" style="margin-top:8px"><tbody>${filas}</tbody></table>
+    ${sinMI.length ? `<p class="sub" style="margin-top:10px">Model Match no
+      muestra Market Insight de <b>${esc(sinMI.join(', '))}</b>: se guardaron
+      como «no disponible» y no bloquean nada.</p>` : ''}
+    ${faltan.length ? `<div class="avi" style="margin-top:10px">Quedaron sin
+      pegar y sin marcar: <b>${esc(faltan.join(', '))}</b>. Si Model Match no
+      las muestra, marcá su casilla; si no, pegalas y volvé a guardar.</div>` : ''}
+  </div>`;
+}
+
+/* ── paso 1 · leer el Overview ─────────────────────────────────────────── */
+async function leerOverview(){
+  const texto = $('#ovw').value;
+  if(!texto.trim()){
+    $('#msgs').innerHTML = `<div class="err">La caja del Overview está vacía.</div>`;
     return;
   }
+  $('#btnLeer').disabled = true; $('#btnLeer').textContent = 'leyendo…';
+  try{
+    const d = await api('/api/leer_overview', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({overview: texto})
+    });
+    CONDADOS = (d.condados || []).map(c => c.nombre);
+    $('#msgs').innerHTML = d.aviso ? `<div class="avi">${esc(d.aviso)}</div>` : '';
+    pintarDetectado(d);
+    pintarCajas(d);
+    $('#tarjetaGuardar').style.display = '';
+  }catch(e){
+    $('#msgs').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }finally{
+    $('#btnLeer').disabled = false; $('#btnLeer').textContent = 'Leer';
+  }
+}
+
+function pintarDetectado(d){
+  $('#detectado').innerHTML = `
+    <div class="tarjeta" style="margin-top:12px">
+      <div class="seccion">Lo que detecté</div>
+      ${d.nombre ? `<p class="sub" style="margin:4px 0">Agente:
+        <b>${esc(d.nombre)}</b>${d.buyer_units != null
+          ? ` · <span class="num">${d.buyer_units}</span> buyer units` : ''}</p>` : ''}
+      <label style="margin-top:8px">Estado
+        <span class="pista">corregilo si no es el que va</span></label>
+      <input type="text" id="estadoDet" value="${esc(d.estado || SEL.estado || '')}"
+        style="max-width:120px">
+      <label style="margin-top:12px">Condados
+        <span class="pista">uno por línea. Quitá los que no van o agregá los
+          que falten: cada uno tendrá su caja.</span></label>
+      <textarea id="condadosDet" style="min-height:90px">${
+        esc(CONDADOS.join('\n'))}</textarea>
+      <button class="btn" id="btnRehacer" style="margin-top:8px">
+        Rehacer las cajas con estos condados</button>
+    </div>`;
+  $('#btnRehacer').onclick = () => {
+    CONDADOS = $('#condadosDet').value.split('\n')
+      .map(s => s.trim()).filter(Boolean);
+    pintarCajas({estado: $('#estadoDet').value});
+  };
+}
+
+/* ── paso 2 · una caja por geografía, más Originators y Lenders ────────── */
+function pintarCajas(d){
+  const estado = ($('#estadoDet') ? $('#estadoDet').value : d.estado) || '';
+  CAJAS = [{clave:'ms_estado', tipo:'estado', etiqueta: estado}]
+    .concat(CONDADOS.map((c,i) => ({clave:'ms_'+i, tipo:'condado', etiqueta:c})))
+    .concat([{clave:'orig', tipo:'originators', etiqueta:'Originators (Buyer)'},
+             {clave:'lend', tipo:'lenders', etiqueta:'Lenders'}]);
+
+  $('#cajas').innerHTML = CAJAS.map(c => {
+    const esGeo = c.tipo === 'estado' || c.tipo === 'condado';
+    const titulo = esGeo
+      ? `Market Insight · ${c.tipo === 'estado' ? 'estado de ' : ''}${esc(c.etiqueta || '—')}`
+      : esc(c.etiqueta);
+    /* La casilla solo en Originators y Lenders: son las dos secciones donde
+       «no hay» y «no miré» son cosas distintas y el veredicto las trata
+       distinto. En una geografía, vacío es vacío. */
+    const casilla = esGeo ? '' : `
+      <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:400">
+        <input type="checkbox" id="vd_${c.clave}" style="width:auto;margin:0">
+        <span>Model Match no muestra ${c.tipo === 'originators'
+          ? 'originadores' : 'lenders'} para este agente</span></label>`;
+    const nota = esGeo ? `<span class="pista">puede quedar vacía: se guarda
+      como «Model Match no muestra este condado»</span>` : '';
+    return `<div class="tarjeta">
+      <div class="seccion">${titulo}</div>
+      ${nota}
+      <textarea id="tx_${c.clave}" style="min-height:110px"
+        placeholder="Pegá acá esta sección, o dejala vacía."></textarea>
+      ${casilla}
+    </div>`;
+  }).join('');
+}
+
+/* ── paso 3 · guardar ──────────────────────────────────────────────────── */
+async function guardar(){
+  const overview = $('#ovw') ? $('#ovw').value : '';
+  if(!overview.trim()){
+    $('#msgs').innerHTML = `<div class="err">La caja del Overview está vacía.</div>`;
+    return;
+  }
+  const cajas = CAJAS.map(c => ({
+    clave: c.clave, tipo: c.tipo, etiqueta: c.etiqueta,
+    texto: ($('#tx_'+c.clave) ? $('#tx_'+c.clave).value : ''),
+    vacio_declarado: !!($('#vd_'+c.clave) && $('#vd_'+c.clave).checked),
+  }));
   $('#btnGuardar').disabled = true;
   $('#btnGuardar').textContent = 'guardando…';
   try{
     const d = await api('/api/guardar', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
-        realtor_id: SEL.id, sf_lead_id: SEL.sf_lead_id, estado: SEL.estado,
+        realtor_id: SEL.id, sf_lead_id: SEL.sf_lead_id,
+        estado: ($('#estadoDet') ? $('#estadoDet').value : SEL.estado),
         mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
-        volcado: volcado, forzar: FORZAR,
+        overview: overview, cajas: cajas, forzar: FORZAR,
         ventana_meses: ($('#ventana') ? $('#ventana').value : null),
         ventana_confirmada: VENTANA_CONFIRMADA,
       })
@@ -1052,9 +1187,10 @@ async function guardar(){
         · ${esc(cont)}` : ''}</div>${avisos}`;
     /* La confirmación va DEBAJO de la caja y no se borra: es lo que se mira
        antes de pasar al realtor siguiente. */
-    $('#confirmacion').innerHTML = pintarResumen(d.resumen);
-    $('#volcado').value = '';
-    $('#tam').textContent = '';
+    $('#confirmacion').innerHTML = pintarCajasGuardadas(d)
+      + pintarResumen(d.resumen);
+    /* NO se borran las cajas: la confirmación se lee al lado de lo que se
+       pegó, y si algo salió mal hay que poder mirar qué había. */
     cargarBiblio();
   }catch(e){
     /* 409 = este volcado ya esta, identico. Se puede guardar igual, pero a
