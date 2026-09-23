@@ -21,6 +21,12 @@ for ruta in (AQUI, os.path.dirname(AQUI)):
 from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
 from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
+from ingest.instagram.clase_perfil import CLASES_UTILIZABLES  # noqa: E402
+from captura.cajas import (  # noqa: E402
+    cajas_desde,
+    condados_sin_market_insight,
+    resumen_de_cajas,
+)
 from captura.pertenencia import comprobar  # noqa: E402
 from motor.evaluar import VERSION_REGLAS  # noqa: E402
 from motor.veredicto import puede_contactarse  # noqa: E402
@@ -32,6 +38,7 @@ from captura.parser_mm import (  # noqa: E402
     unir_perfiles,
 )
 from captura.protocolo import (  # noqa: E402
+    Bloque,
     ProtocoloInvalido,
     condados_del_overview,
     etiquetar_por_posicion,
@@ -42,6 +49,10 @@ CAMPOS_LISTA = ("id,nombre_completo,brokerage,estado,email_principal,"
                 "telefono_e164,unidades_ano,sf_lead_id,sin_llave_dura,"
                 "condado_fips")
 TOPE = 300
+
+#: Cuantos ids caben en un `id=in.(...)` sin pasarse del largo de URL que
+#: PostgREST acepta. Hoy el filtro mas grande devuelve 298.
+TOPE_IDS = 400
 
 #: Con que etiqueta entra cada dato de contacto de Model Match.
 FUENTE_CONTACTOS = "Model Match"
@@ -207,20 +218,79 @@ def realtors(params: dict) -> tuple[int, dict]:
     if estado:
         partes.append("estado=eq." + urllib.parse.quote(estado))
 
+    # ── LOS FILTROS SE APLICAN ANTES DEL TOPE ───────────────────────────────
+    #
+    # El filtro «con Model Match» traia los primeros 300 por nombre y filtraba
+    # DESPUES. Hay 3 realtors con captura vigente; Aaron Gaston esta en la
+    # posicion 2 y los dos Armandos en la 509 y la 511, asi que la pantalla
+    # mostraba 1 de 3. Y no es que dijera «1 de 3»: decia «1», que es la forma
+    # en que un filtro roto se ve exactamente igual que un dato que no existe.
+    #
+    # Ademas leia la TABLA `capturas_modelmatch` --con los lotes de ensayo
+    # dentro-- y cruzaba por `sf_lead_id`, que es nulo en 62 realtors. Ahora es
+    # la vista vigente y `realtor_id`, que es la llave.
+    ids_filtro: set | None = None
+    truncado_por_ids = False
+
+    def _acotar(nuevos: set) -> None:
+        nonlocal ids_filtro
+        ids_filtro = nuevos if ids_filtro is None else (ids_filtro & nuevos)
+
+    if con_mm in ("si", "no"):
+        _c, capturas, _ = leer(
+            "v_capturas_modelmatch_current",
+            "?select=realtor_id&alcance=eq.perfil&limit=5000")
+        con_captura = {c["realtor_id"] for c in (capturas or [])
+                       if c.get("realtor_id")}
+        if con_mm == "si":
+            _acotar(con_captura)
+        else:
+            _c, todos, _ = leer("realtors", "?select=id&limit=10000")
+            _acotar({r["id"] for r in (todos or [])} - con_captura)
+
+    # Instagram: utilizable / no aporta / sin raspar.
+    ig_filtro = (params.get("ig") or "").strip()
+    if ig_filtro in ("utilizable", "no_aporta", "sin_raspar"):
+        _c, clases, _ = leer("v_ig_clase_actual",
+                             "?select=realtor_id,clase&limit=5000")
+        util, no_util = set(), set()
+        for c in clases or []:
+            (util if c.get("clase") in CLASES_UTILIZABLES
+             else no_util).add(c["realtor_id"])
+        if ig_filtro == "utilizable":
+            _acotar(util)
+        elif ig_filtro == "no_aporta":
+            _acotar(no_util)
+        else:
+            _c, todos, _ = leer("realtors", "?select=id&limit=10000")
+            _acotar({r["id"] for r in (todos or [])} - util - no_util)
+
+    # Veredicto de contacto.
+    ver_filtro = (params.get("veredicto") or "").strip()
+    if ver_filtro in ("excluido", "pendiente_modelmatch", "ok"):
+        _c, evs, _ = leer(
+            "v_evaluacion_actual",
+            "?select=realtor_id&veredicto_contacto->>estado=eq.%s&limit=10000"
+            % urllib.parse.quote(ver_filtro))
+        _acotar({e["realtor_id"] for e in (evs or []) if e.get("realtor_id")})
+
+    if ids_filtro is not None:
+        if not ids_filtro:
+            return 200, {"filas": [], "mostradas": 0, "total": "0",
+                         "tope": TOPE, "truncado": False, "estados": ESTADOS}
+        # PostgREST acota el largo de la URL. Hoy los filtros devuelven 3 y
+        # 298 ids, muy por debajo; si algun dia pasa, se DICE que se truncó en
+        # vez de devolver una lista corta que parece completa.
+        ids = sorted(ids_filtro)
+        truncado_por_ids = len(ids) > TOPE_IDS
+        partes.append("id=in.(%s)" % ",".join(ids[:TOPE_IDS]))
+
     codigo, datos, cabeceras = leer("realtors", "?" + "&".join(partes),
                                     rango="0-%d" % (TOPE - 1))
     if codigo >= 400:
         return codigo, {"error": "supabase", "detalle": datos}
 
     filas = datos or []
-    if con_mm in ("si", "no"):
-        _, capturas, _ = leer(
-            "capturas_modelmatch",
-            "?select=sf_lead_id&alcance=eq.perfil&limit=5000")
-        con_captura = {c.get("sf_lead_id") for c in (capturas or [])
-                       if c.get("sf_lead_id")}
-        filas = [f for f in filas
-                 if (f.get("sf_lead_id") in con_captura) == (con_mm == "si")]
 
     # Los excluidos van MARCADOS en la lista, no ocultos. Esconderlos haria
     # que alguien los volviera a buscar, los capturara de nuevo y no entendiera
@@ -244,7 +314,8 @@ def realtors(params: dict) -> tuple[int, dict]:
     # divergir. `California` en una tabla y `CA` en otra es lo que hizo que
     # ninguna de las 4.249 filas cruzara con ninguno de los 2.261 condados.
     return 200, {"filas": filas, "mostradas": len(filas), "total": total,
-                 "tope": TOPE, "truncado": len(datos or []) >= TOPE,
+                 "tope": TOPE,
+                 "truncado": (len(datos or []) >= TOPE) or truncado_por_ids,
                  "estados": ESTADOS}
 
 
@@ -526,14 +597,54 @@ def guardar(d: dict) -> tuple[int, dict]:
                 "hash_volcado": huella}
 
     condados = [n for n, _ in condados_del_overview(overview)]
-    try:
-        bloques = etiquetar_por_posicion(ms, condados)
-    except ProtocoloInvalido as exc:
-        return 400, {"error": str(exc), "condados": condados}
+    avisos_de_cajas: list[str] = []
+
+    # ── CAPTURA POR CAJAS ───────────────────────────────────────────────────
+    # Si la pantalla manda `cajas`, el condado lo define LA CAJA. El camino
+    # viejo --etiquetar por posicion-- se conserva para las capturas que ya
+    # estan en vuelo, pero exige `1 + N` bloques exactos y rechaza la captura
+    # ENTERA cuando Model Match muestra 5 condados en el Overview y 3 en Market
+    # Insight. Un dato que falta hacia perder los cuatro que si estaban.
+    cajas: list = []
+    sin_market_insight: list[str] = []
+    if d.get("cajas"):
+        cajas = cajas_desde(d)
+        bloques = []
+        orden = 0
+        for c in cajas:
+            if c.tipo not in ("estado", "condado") or c.estado != "leido":
+                continue
+            bloques.append(Bloque(
+                seccion="market_signals", texto=c.texto, orden=orden,
+                nivel=("estado" if c.tipo == "estado" else "condado"),
+                etiqueta=(estado if c.tipo == "estado" else c.etiqueta)))
+            orden += 1
+        sin_market_insight = condados_sin_market_insight(condados, cajas)
+        for c in cajas:
+            if c.aviso:
+                avisos_de_cajas.append(c.aviso)
+        for nombre in sin_market_insight:
+            avisos_de_cajas.append(
+                "Model Match no muestra Market Insight de %s: se guarda como "
+                "«no disponible» y no bloquea la captura." % nombre)
+        # Las dos casillas del perfil viajan al parser por el mismo camino que
+        # el resto, para que el veredicto las vea.
+        for c in cajas:
+            if c.tipo == "originators" and c.estado == "vacio_declarado":
+                d = {**d, "sin_originadores_declarado": True}
+            if c.tipo == "lenders" and c.estado == "vacio_declarado":
+                d = {**d, "sin_lenders_declarado": True}
+    else:
+        try:
+            bloques = etiquetar_por_posicion(ms, condados)
+        except ProtocoloInvalido as exc:
+            return 400, {"error": str(exc), "condados": condados}
 
     ahora = dt.datetime.now(dt.timezone.utc).isoformat()
     lote = str(uuid.uuid4())
-    avisos: list[str] = []
+    # Los avisos de las cajas se calcularon antes de abrir el lote, asi que
+    # entran aca: un aviso que se calcula y no se muestra no existe.
+    avisos: list[str] = list(avisos_de_cajas)
     filas: list[dict] = []
 
     def _parsear(funcion, texto, etiqueta_error):
@@ -653,6 +764,20 @@ def guardar(d: dict) -> tuple[int, dict]:
                 if f["parseado"]["seccion"] in ("overview", "originators",
                                                 "lenders")]
     perfil_unido = unir_perfiles([p for p in perfiles if isinstance(p, dict)])
+
+    # Las dos casillas viajan DENTRO del perfil, que es lo que lee el veredicto.
+    # `orig_buyer = []` con casilla y sin casilla son el mismo dato y dos
+    # veredictos opuestos; la casilla es el unico sitio donde queda constancia
+    # de que alguien miro.
+    if d.get("sin_originadores_declarado"):
+        perfil_unido["sin_originadores_declarado"] = True
+        perfil_unido["declarado_por"] = "pantalla de captura"
+        avisos.append(
+            "Declaraste que Model Match no muestra originadores: el veredicto "
+            "queda en `ok` con 0 operaciones con la casa, no en pendiente.")
+    if d.get("sin_lenders_declarado"):
+        perfil_unido["sin_lenders_declarado"] = True
+
     for f in perfil_unido.get("fallos") or []:
         avisos.append(
             "FALLO DE LECTURA · la seccion `%s` esta en el texto y `%s` salio "
@@ -824,6 +949,10 @@ def guardar(d: dict) -> tuple[int, dict]:
                  "resumen": resumen_de_captura(filas, perfil_unido,
                                                dict(pertenece,
                                                     realtor=ficha_del_realtor)),
+                 # Una linea por caja: leido (N metricas), vacio declarado, o
+                 # no se pudo leer. Es lo que se mira despues de guardar.
+                 "cajas": resumen_de_cajas(cajas) if cajas else None,
+                 "sin_market_insight": sin_market_insight,
                  "contactos": [{"canal": c["canal"], "valor": c["valor"],
                                 "nuevo": c in nuevos} for c in contactos],
                  "contactos_nuevos": len(nuevos),
@@ -982,13 +1111,18 @@ def lectura(params: dict) -> tuple[int, dict]:
         nombre = nombre.title()
 
     # El Census del condado donde opera, si lo hay.
+    # UNA sola lectura: antes se pedia la misma fila dos veces --una para
+    # `variables` y otra, treinta lineas mas abajo, para `nombre`-- con el
+    # mismo `condado_fips`. Dos viajes a Supabase por el mismo dato.
     censo = None
+    fila_censo = None
     if realtor.get("condado_fips"):
         _c, cc, _ = leer("census_condados",
                          "?select=nombre,variables&condado_fips=eq.%s"
                          % urllib.parse.quote(realtor["condado_fips"]))
         if cc:
-            censo = (cc[0].get("variables") or {}).get("_derivadas")
+            fila_censo = cc[0]
+            censo = (fila_censo.get("variables") or {}).get("_derivadas")
 
     # ── EL CONDADO DOMINANTE, Y SOLO ESE ────────────────────────────────────
     # Cuatro tarjetas de `mix de programa` con el mismo texto palabra por
@@ -998,12 +1132,8 @@ def lectura(params: dict) -> tuple[int, dict]:
     # `Como se calculo`, que es donde se revisa el calculo.
     dominante_fips = realtor.get("condado_fips")
     nombre_dominante = None
-    if dominante_fips:
-        _c, nc, _ = leer("census_condados",
-                         "?select=nombre&condado_fips=eq.%s"
-                         % urllib.parse.quote(dominante_fips))
-        if nc:
-            nombre_dominante = (nc[0].get("nombre") or "").split(" County")[0]
+    if fila_censo:
+        nombre_dominante = (fila_censo.get("nombre") or "").split(" County")[0]
 
     def _es(m, quien):
         return quien and (m.get("etiqueta") or "").lower() == quien.lower()
@@ -1537,6 +1667,35 @@ GANCHO_GENERICO = ("Una curiosidad de oficio: ¿qué es lo que más se te "
 
 # ══════════════════════════════════════════════════════════════════════════════
 
+#: Los conjuntos CERRADOS contra los que se comprueba que un texto no nombro
+#: algo ajeno. Son 3.000 condados y 2.500 lenders, y cambian casi nunca -- pero
+#: se pedian ENTEROS en cada peticion de `/api/extracto`, que por eso tardaba
+#: 5,9 segundos con 1.025 filas leidas.
+#:
+#: La cache vive en el proceso. En Vercel cada funcion fria la vuelve a llenar,
+#: que es lo correcto: no hay invalidacion que mantener, y el costo se paga una
+#: vez por instancia en vez de una vez por peticion.
+_VOCABULARIO: dict = {}
+
+
+def _vocabulario_cerrado() -> tuple[list, list]:
+    if _VOCABULARIO:
+        return _VOCABULARIO["condados"], _VOCABULARIO["lenders"]
+    _c, condados, _ = leer("census_condados", "?select=nombre&limit=3000")
+    nombres_condado = sorted({(c.get("nombre") or "").split(" County")[0]
+                              for c in (condados or []) if c.get("nombre")})
+    _c, lenders, _ = leer("lenders", "?select=nombre,nombre_comercial&limit=500")
+    _c, origs, _ = leer("originadores", "?select=nombre,empresa_texto&limit=2000")
+    nombres_lender = sorted({v for f in ((lenders or []) + (origs or []))
+                             for v in f.values() if v})
+    # Solo se cachea si vino algo: cachear una lista vacia por un error de red
+    # convertiria la guarda de entidades en una que rechaza todo para siempre.
+    if nombres_condado and nombres_lender:
+        _VOCABULARIO["condados"] = nombres_condado
+        _VOCABULARIO["lenders"] = nombres_lender
+    return nombres_condado, nombres_lender
+
+
 def extracto(params: dict) -> tuple[int, dict]:
     """El material EXACTO con el que se escribe. Y es lo que va a `insumos`.
 
@@ -1556,14 +1715,7 @@ def extracto(params: dict) -> tuple[int, dict]:
     # Los conjuntos CERRADOS contra los que se puede comprobar que el texto no
     # nombro algo ajeno. Viajan DENTRO del extracto, para que la verificacion
     # no dependa de volver a consultar la base.
-    _c, condados, _ = leer("census_condados", "?select=nombre&limit=3000")
-    nombres_condado = sorted({(c.get("nombre") or "").split(" County")[0]
-                              for c in (condados or [])
-                              if c.get("nombre")})
-    _c, lenders, _ = leer("lenders", "?select=nombre,nombre_comercial&limit=500")
-    _c, origs, _ = leer("originadores", "?select=nombre,empresa_texto&limit=2000")
-    nombres_lender = sorted({v for f in ((lenders or []) + (origs or []))
-                             for v in f.values() if v})
+    nombres_condado, nombres_lender = _vocabulario_cerrado()
 
     # Instagram, cuando este cargado: lo que EL escribio es lo unico que un
     # realtor reconoce como suyo.
