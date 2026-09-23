@@ -420,9 +420,9 @@ function vistaLectura(d){
   const aviso_pendiente = (d.veredicto && d.veredicto.estado === 'pendiente_modelmatch')
     ? `<div class="banner" style="border-color:var(--coral)">
     <div class="seccion" style="color:var(--rose-700)">▲ Falta Model Match: capturar antes de dar veredicto</div>
-    <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
+    <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--white)">
       ${esc(d.veredicto.motivo || '')}</p>
-    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-600)">
+    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-300)">
       Lo de abajo es lo que ya se sabe. El <b>Dossier</b> y la <b>Secuencia</b>
       responden 409 hasta que haya captura: sin saber con qué originadores
       trabaja, no se puede saber si le estaríamos quitando su propia cartera a
@@ -439,7 +439,7 @@ function vistaLectura(d){
       <tr><td class="lbl">el motor de hoy es</td>
           <td class="num">${esc(ra.version_actual || '—')}</td></tr>
     </table>
-    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-600)">
+    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-300)">
       Su diagnóstico anterior se conserva abajo como histórico y no se presenta
       como vigente. El <b>Dossier</b> y la <b>Secuencia</b> responden 409 hasta
       que se vuelva a correr el motor.</p></div>` : '';
@@ -455,7 +455,7 @@ function vistaLectura(d){
   const aviso_excluido = (ver.estado === 'excluido' || d.excluido)
     ? `<div class="banner" style="border-color:var(--salmon)">
     <div class="seccion" style="color:var(--salmon)">⛔ No entra a ninguna cola de contacto</div>
-    <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
+    <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--white)">
       ${d.excluido
         ? `El libro lo tiene como <b>${esc(d.excluido)}</b>. ${esc(d.excluido_motivo || '')}`
         : esc(ver.motivo || '')}</p>
@@ -470,7 +470,7 @@ function vistaLectura(d){
             ver.evidencia.share_de_la_casa ?? '—'}% · base ${
             esc(ver.evidencia.base || '')}</td></tr>
     </table>` : ''}
-    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-600)">
+    <p style="margin:8px 0 0;font-size:13px;color:var(--slate-300)">
       El diagnóstico de abajo se calculó igual y se conserva — el raspado y la
       evaluación no estorban. Lo que no existe para esta persona es la
       <b>secuencia</b>: las pestañas Dossier y Secuencia responden 409.</p>
