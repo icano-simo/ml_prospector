@@ -683,6 +683,38 @@ const pct = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
 
 function pintarResumen(r){
   if(!r) return '';
+
+  /* A QUIÉN quedó pegada, arriba de todo. Es lo único de la confirmación que
+     no se puede deducir mirando el resto: los cuatro mercados y el perfil se
+     ven igual de bien estando pegados a la persona equivocada. */
+  const p = r.pertenencia;
+  const PERT = {
+    respalda:  ['mql','✓','El volcado respalda que es suya'],
+    discrepa:  ['excluido','⛔','El volcado NO parece de esta persona'],
+    no_consta: ['bloqueado','▲','No se pudo comprobar de quién es'],
+  };
+  const [pc, pi, pt] = p ? (PERT[p.veredicto] || PERT.no_consta) : PERT.no_consta;
+  const quien = p ? `<div class="banner" ${p.veredicto === 'discrepa'
+      ? 'style="border-color:var(--salmon)"' : ''}>
+    <div class="seccion">Quedó pegada a</div>
+    <span class="cifra" style="font-size:18px">${esc(
+      (p.realtor && p.realtor.nombre_completo) || '—')}</span>
+    ${p.realtor && p.realtor.brokerage ? `<span class="pista" style="margin-left:10px">
+      ${esc(p.realtor.brokerage)} · ${esc(p.realtor.estado || '')}</span>` : ''}
+    <div style="margin-top:8px">
+      <span class="badge ${pc}"><i>${pi}</i>${pt}</span>
+      <span class="pista" style="margin-left:8px">${esc(p.por || '')}</span></div>
+    ${p.veredicto === 'discrepa' ? `<table class="tabla" style="margin-top:10px">
+      <tr><td class="lbl">el volcado dice</td>
+          <td class="num">${esc(p.nombre_en_el_volcado || '—')}</td></tr>
+      <tr><td class="lbl">la ficha abierta era</td>
+          <td class="num">${esc(p.nombre_en_el_libro || '—')}</td></tr>
+      </table>
+      <p class="sub" style="margin-top:8px">Si te equivocaste de ficha, retirá
+      el lote y volvé a capturar: el diagnóstico se calcularía con la
+      producción de otro.</p>` : ''}
+  </div>` : '';
+
   const secc = r.secciones.map(s => {
     const donde = s.seccion === 'market_signals'
       ? `<span class="badge sin-evaluar"><i>▣</i>${s.nivel === 'estado' ? 'estado' : 'condado'}
@@ -752,6 +784,7 @@ function pintarResumen(r){
   const p = r.perfil || {};
   const guardia = p.cobertura_mix != null && p.cobertura_mix < 50;
   return `
+    ${quien}
     ${banner}
     ${repes}
     <div class="tarjeta">

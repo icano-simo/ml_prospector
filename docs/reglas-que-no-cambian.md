@@ -242,6 +242,45 @@ Lo que lo hizo visible no fue una prueba: fue preguntar por dos nombres
 concretos. **Un agregado nunca lo habría mostrado** — 158 sobre 4.187 no mueve
 ningún porcentaje que alguien estuviera mirando.
 
+### La otra cara: una columna que nadie escribe
+
+**El mismo día, la misma forma, al revés.** `capturas_modelmatch.realtor_id`
+existe desde el esquema original y estuvo **NULL en las 60 filas**: el guardado
+escribía el id dentro de `parseado` y nunca en la columna. Nadie lo notó porque
+`capturas_que_mandan()` lee `parseado->>realtor_id`, que sí estaba lleno. La
+columna no estaba rota: estaba **muerta**.
+
+Y el costo no fue el dato perdido —no se perdió nada— sino **la conclusión
+falsa**: mirar esa columna lleva a decidir que las capturas están huérfanas
+cuando están perfectamente pegadas. Una columna muerta no devuelve un error;
+devuelve NULL, que se lee como un hecho.
+
+De ahí: **si un dato vive en dos sitios, los dos se escriben en el mismo acto**
+—nunca uno «por ahora»— y el sitio que lleva la restricción es el que tiene que
+poder rechazar. La restricción se puso `NOT VALID` a propósito: 33 filas de
+ensayo retirado apuntan a realtors sintéticos que nunca existieron, y crear un
+realtor de mentira para satisfacerla es cómo se ensucia una tabla de identidad.
+`NOT VALID` rige lo que se escriba de ahora en más sin reescribir la historia,
+y deja constancia en el esquema de que hay historia que no la cumple.
+
+### Y lo que sí podía perderse: la captura pegada a la persona equivocada
+
+Una captura huérfana no sirve para nada **y se nota**. Una captura pegada al
+realtor equivocado **sirve para lo que no es**, y no se nota nunca: los cuatro
+mercados entran, el perfil parsea, la confirmación dice que todo salió bien, y
+el diagnóstico de Fulano se calcula con la producción de Mengano.
+
+El volcado trae con qué comprobarlo —el Overview abre con el nombre del agente
+y su email—, así que `captura/pertenencia.py` compara y la confirmación dice
+**a quién quedó pegada** antes que ninguna otra cosa. No bloquea el guardado: el
+crudo ya se pegó y tirarlo obliga a repetir el trabajo. Los tres veredictos son
+`respalda`, `discrepa` y `no_consta` — y **`no_consta` no es `respalda`**, que
+es la distinción del §3 otra vez.
+
+Dos piezas del nombre, no una: `MARIA CRESPO` y `ARMANDO CRESPO` son dos
+realtors de eXp en Florida, y aceptar por apellido es aceptar a la familia
+entera.
+
 ### Las tres reglas que salen de ahí
 
 **La exclusión se lee, no se deduce.** Un descarte por cobertura, por NMLS

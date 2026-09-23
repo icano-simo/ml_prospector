@@ -21,6 +21,7 @@ for ruta in (AQUI, os.path.dirname(AQUI)):
 from _comun import SinCredenciales, escribir, leer  # noqa: E402
 
 from captura.estados import ESTADOS, normalizar_estado  # noqa: E402
+from captura.pertenencia import comprobar  # noqa: E402
 from captura.trampas import es_de_la_casa, share_de_la_casa  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
     detectar_inversion,
@@ -338,7 +339,8 @@ def _en_orden(filas: list[dict]) -> list[dict]:
         f["parseado"].get("orden") or 0))
 
 
-def resumen_de_captura(filas: list[dict], perfil_unido: dict) -> dict:
+def resumen_de_captura(filas: list[dict], perfil_unido: dict,
+                       pertenece: dict | None = None) -> dict:
     """Lo que hay que poder mirar SIN abrir la base.
 
     Capturar 25 condados a ciegas y descubrir el problema al final es la forma
@@ -404,6 +406,13 @@ def resumen_de_captura(filas: list[dict], perfil_unido: dict) -> dict:
                                 if len(nombres) > 1],
         "originadores": originadores,
         "share_de_la_casa": casa,
+        # A QUIEN quedo pegada, y si el volcado lo respalda. Va arriba en la
+        # confirmacion: es lo primero que hay que poder mirar, porque es lo
+        # unico que no se puede deducir mirando el resto.
+        "pertenencia": pertenece,
+        "realtor_id": (filas[0].get("realtor_id") if filas else None)
+                      or (filas[0]["parseado"].get("realtor_id")
+                          if filas else None),
         "fallos": perfil_unido.get("fallos") or [],
         "perfil": {
             "nombre": perfil_unido.get("nombre"),
@@ -548,8 +557,23 @@ def guardar(d: dict) -> tuple[int, dict]:
 
     def agregar(seccion, texto, *, alcance, nivel=None, etiqueta=None,
                 orden=0, extra=None):
+        # Guarda REDUNDANTE a proposito: `guardar` ya devuelve 400 sin
+        # realtor_id, arriba. Pero la columna `realtor_id` estuvo NULL en las
+        # 60 capturas durante todo el proyecto porque nadie la escribia, y una
+        # captura no pegada a nadie no sirve para nada de lo que existe. Que
+        # reviente al construir la fila y no al leerla tres semanas despues.
+        if not realtor_id:
+            raise ValueError(
+                "captura sin realtor_id: no se guarda a ciegas. El crudo es "
+                "inutil si no se sabe de quien es.")
         filas.append({
             "upload_batch_id": lote, "uploaded_at": ahora, "alcance": alcance,
+            # En COLUMNA y tambien en `parseado`. La columna es la que puede
+            # llevar NOT NULL y un indice; el jsonb es el que ya leen
+            # `capturas_que_mandan` y `/api/capturas`. Escribir las dos y no
+            # migrar una a la otra evita el rato en que la mitad del codigo
+            # lee un sitio y la otra mitad el otro.
+            "realtor_id": realtor_id,
             "estado": estado, "hash_volcado": huella,
             "condado_fips": None,   # el crosswalk nombre->FIPS todavia no
             # La etiqueta va en COLUMNA, no solo dentro del jsonb: si dos
@@ -683,6 +707,26 @@ def guardar(d: dict) -> tuple[int, dict]:
                 "(%s)." % (donde, c.get("suma_de_tramos"),
                            c.get("denominador_propio")))
 
+    # TRAMPA 0 · ¿el volcado es de la persona que estaba abierta en la ficha?
+    # Se abre a Fulano, se pega el volcado de Mengano, y la captura queda
+    # colgada de Fulano sin que falle nada. Es peor que una captura huerfana:
+    # una huerfana no sirve para nada y se nota, esta sirve para lo que no es.
+    # El Overview trae el nombre y el email del agente, asi que hay con que.
+    _c_r, fichas, _ = leer(
+        "realtors", "?select=nombre_completo,email_principal,brokerage,estado"
+                    "&id=eq.%s" % urllib.parse.quote(realtor_id))
+    ficha_del_realtor = (fichas or [{}])[0]
+    pertenece = comprobar(perfil_unido, ficha_del_realtor)
+    if pertenece["veredicto"] == "discrepa":
+        avisos.append(
+            "EL VOLCADO NO PARECE DE ESTA PERSONA · %s. Si te equivocaste de "
+            "ficha, retira el lote y vuelve a capturar: el diagnostico se "
+            "calcularia con la produccion de otro." % pertenece["por"])
+    elif pertenece["veredicto"] == "no_consta":
+        avisos.append(
+            "no se pudo comprobar que el volcado sea de esta persona: %s"
+            % pertenece["por"])
+
     # TRAMPA 1 · las geografias tienen que dar volumenes distintos.
     vols = [(f["parseado"].get("metricas") or {}).get("total_volume")
             for f in filas if f["parseado"]["seccion"] == "market_signals"]
@@ -775,7 +819,9 @@ def guardar(d: dict) -> tuple[int, dict]:
                  "condados": condados, "avisos": avisos, "volumenes": vols,
                  "estado": estado, "hash_volcado": huella,
                  "mercados_promovidos": promovidos,
-                 "resumen": resumen_de_captura(filas, perfil_unido),
+                 "resumen": resumen_de_captura(filas, perfil_unido,
+                                               dict(pertenece,
+                                                    realtor=ficha_del_realtor)),
                  "contactos": [{"canal": c["canal"], "valor": c["valor"],
                                 "nuevo": c in nuevos} for c in contactos],
                  "contactos_nuevos": len(nuevos),
@@ -807,6 +853,11 @@ def capturas(params: dict) -> tuple[int, dict]:
         % urllib.parse.quote(realtor_id))
     if cod >= 400:
         return cod, {"error": "supabase", "detalle": filas}
+
+    _c_r, fichas, _ = leer(
+        "realtors", "?select=nombre_completo,email_principal,brokerage,estado"
+                    "&id=eq.%s" % urllib.parse.quote(realtor_id))
+    ficha_del_realtor = (fichas or [{}])[0]
 
     por_lote: dict = {}
     for f in filas or []:
@@ -855,7 +906,12 @@ def capturas(params: dict) -> tuple[int, dict]:
                                                         "originators",
                                                         "lenders")]
         unido = unir_perfiles([p for p in perfiles if isinstance(p, dict)])
-        lote["resumen"] = resumen_de_captura(crudas, unido)
+        # La pertenencia se recalcula tambien en el historico: las capturas
+        # guardadas ANTES de que existiera la trampa 0 nunca se comprobaron, y
+        # sin esto seguirian sin comprobarse para siempre.
+        lote["resumen"] = resumen_de_captura(
+            crudas, unido, dict(comprobar(unido, ficha_del_realtor),
+                                realtor=ficha_del_realtor))
         lote["caracteres"] = sum(len(c["texto_crudo"]) for c in crudas)
         salida.append(lote)
 
