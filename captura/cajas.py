@@ -28,8 +28,13 @@ LEIDO = "leido"
 VACIO_DECLARADO = "vacio_declarado"
 SIN_PEGAR = "sin_pegar"
 NO_SE_PUDO_LEER = "no_se_pudo_leer"
+#: La caja quedo vacia y NO hacia falta: el dato vino en el Overview.
+#: `Buyer Side Relationships` vive alli, no en la pestaña Originators, asi que
+#: una captura sin esa pestaña puede traer el reparto completo igual.
+DEL_OVERVIEW = "del_overview"
 
-ESTADOS_DE_CAJA = (LEIDO, VACIO_DECLARADO, SIN_PEGAR, NO_SE_PUDO_LEER)
+ESTADOS_DE_CAJA = (LEIDO, VACIO_DECLARADO, SIN_PEGAR, NO_SE_PUDO_LEER,
+                   DEL_OVERVIEW)
 
 #: `Set Location` del bloque, que es como Model Match dice de qué geografía es.
 _RE_SET_LOCATION = re.compile(
@@ -140,6 +145,18 @@ def condados_sin_market_insight(condados: list[str],
     con_texto = {_normalizar(c.etiqueta) for c in cajas
                  if c.tipo == "condado" and c.estado == LEIDO}
     return [c for c in condados if _normalizar(c) not in con_texto]
+
+
+def marcar_del_overview(cajas: list[Caja], tipos: list[str]) -> None:
+    """Las cajas cuyo dato vino en el Overview dejan de ser «falta capturar».
+
+    Sin esto, la confirmación pedía pegar una sección que ya estaba leída, y el
+    aviso contradecía al veredicto.
+    """
+    for c in cajas:
+        if c.tipo in (tipos or []) and c.estado == SIN_PEGAR:
+            c.estado = DEL_OVERVIEW
+            c.aviso = "el reparto vino en el Overview: no hace falta pegarla"
 
 
 def resumen_de_cajas(cajas: list[Caja]) -> dict:

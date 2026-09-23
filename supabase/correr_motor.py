@@ -75,7 +75,29 @@ BOOLEANOS.add("ev_bio_legible")
 #: 2026-09-23, cuando se cargaron los 298 perfiles y se conecto
 #: `motor.desde_instagram`. Mientras estuvo aqui, cargar Instagram a la base no
 #: movia ni un numero -- el motor no lo leia.
-FALTAN_HOY = ("contrastes_de_mercado", "modelmatch")
+FALTAN_HOY = ("contrastes_de_mercado",)
+
+#: Lo que el motor toma del perfil de Model Match.
+#:
+#: `mm_buyside_anualizado` lo piden DOS reglas -- P-Q11-2, que es la produccion
+#: que manda, y P-Q11-3, que solo aplica cuando NO hay Model Match-- y nunca
+#: llegaba: `correr_motor` usaba el perfil para el veredicto y no lo metia al
+#: registro. O sea que P-Q11-2 no podia activarse nunca, y todos caian en
+#: P-Q11-3 «segun el libro», que no distingue lado ni ventana.
+#:
+#: Es la misma forma de siempre: el dato existia, la regla existia, y nadie las
+#: unia. Nada fallaba.
+DEL_PERFIL_MM = {"buyside_anualizado": "mm_buyside_anualizado"}
+
+
+def campos_de_modelmatch(perfil: dict | None) -> dict:
+    """Los `mm_*` que el motor entiende. Solo lo que tiene valor."""
+    salida = {}
+    for origen, campo in DEL_PERFIL_MM.items():
+        v = (perfil or {}).get(origen)
+        if v is not None:
+            salida[campo] = v
+    return salida
 
 #: Las dos columnas del libro que deciden si una persona es contactable. NO
 #: entran al registro que evalua el motor -- no son evidencia, son una decision
@@ -210,6 +232,11 @@ def main() -> int:
             cats = categorias_acreditadas(fila_ig)
             bio_ig = bio_legible(fila_ig)
             con_instagram += 1
+
+        # ── MODEL MATCH ──────────────────────────────────────────────────────
+        # La produccion anualizada del lado comprador, que es la que manda para
+        # la compuerta. Sin esto P-Q11-2 no se activaba nunca.
+        reg.update(campos_de_modelmatch(perfiles_mm.get(rid)))
 
         ev = evaluar(reg, realtor_id=rid)
         conf = evaluar_confianza(
