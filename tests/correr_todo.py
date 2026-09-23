@@ -11,6 +11,7 @@ Sale con 1 si alguna falla. Sirve en CI.
 """
 from __future__ import annotations
 
+import glob
 import importlib
 import os
 import sys
@@ -56,7 +57,33 @@ SUITES = [
      "que no se afirme nada que la evidencia no sostenga"),
     ("reglas_viejas", "tests.test_reglas_viejas",
      "una evaluacion de otra version no se presenta como vigente"),
+    ("ig_clase_perfil", "tests.test_ig_clase_perfil",
+     "la compuerta de perfil de Instagram y las ocho correcciones"),
+    ("ig_senales", "tests.test_ig_senales",
+     "qualifiers con ancla, idioma separado, S6 por token y ECOA"),
 ]
+
+
+def descubrir() -> list[tuple[str, str, str]]:
+    """TODAS las suites de `tests/`, no solo las de la lista.
+
+    La lista de arriba da el ORDEN y la descripcion, que es lo que hace legible
+    el resumen. Pero el descubrimiento es por glob a proposito: una suite que
+    alguien escribe y olvida registrar **no puede quedar fuera en silencio**.
+    Eso ya paso -- `test_guardas_inferencia` existia y no corria en la suite.
+
+    Una lista manual es documentacion; un glob es una garantia. Aca hacen falta
+    las dos, y el glob manda.
+    """
+    aqui = os.path.dirname(os.path.abspath(__file__))
+    registradas = {m for _n, m, _d in SUITES}
+    salida = list(SUITES)
+    for ruta in sorted(glob.glob(os.path.join(aqui, "test_*.py"))):
+        modulo = "tests." + os.path.basename(ruta)[:-3]
+        if modulo not in registradas:
+            salida.append((os.path.basename(ruta)[5:-3], modulo,
+                           "SIN REGISTRAR en SUITES: corre igual"))
+    return salida
 
 
 def main() -> int:
@@ -64,7 +91,7 @@ def main() -> int:
     fallas = 0
     por_suite: list[tuple[str, int, int]] = []
 
-    for nombre, modulo_ruta, descripcion in SUITES:
+    for nombre, modulo_ruta, descripcion in descubrir():
         print("")
         print("=" * 72)
         print("%s · %s" % (nombre, descripcion))
