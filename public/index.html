@@ -91,6 +91,7 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 let FILAS = [], SEL = null, TAB = 'mercados', GEO = [], FORZAR = false;
+let VENTANA_CONFIRMADA = false;
 
 async function api(ruta, opciones){
   const r = await fetch(ruta, opciones);
@@ -849,8 +850,11 @@ function vMercados(){
         <span class="pista">el <b>Set Date Range</b> del perfil, en meses. No
           viaja en el texto pegado: vive en un desplegable, igual que Set
           Location. Sin ella no se puede anualizar la producción.</span></label>
-      <input type="number" id="ventana" min="1" max="60" value="14"
-        style="max-width:120px">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <input type="number" id="ventana" min="1" max="60" value="14"
+          style="max-width:110px">
+        <span class="badge sin-evaluar" id="ventanaOrigen"><i>·</i>el de fábrica</span>
+      </div>
       <div id="extra"></div>
       <div style="margin-top:12px">
         <button class="btn" id="btnGuardar">Guardar</button>
@@ -868,6 +872,14 @@ function vMercados(){
   $('#volcado').oninput = () => {
     const n = $('#volcado').value.length;
     $('#tam').textContent = n ? n.toLocaleString('es') + ' caracteres' : '';
+  };
+  /* Un 14 declarado y un 14 por descuido son el mismo número y no valen lo
+     mismo. Tocar el campo — aunque se deje en 14 — cuenta como mirarlo. */
+  VENTANA_CONFIRMADA = false;
+  $('#ventana').oninput = $('#ventana').onfocus = () => {
+    VENTANA_CONFIRMADA = true;
+    $('#ventanaOrigen').className = 'badge mql';
+    $('#ventanaOrigen').innerHTML = '<i>✓</i>confirmada';
   };
   $('#btnGuardar').onclick = guardar;
   cargarBiblio();
@@ -889,6 +901,7 @@ async function guardar(){
         mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
         volcado: volcado, forzar: FORZAR,
         ventana_meses: ($('#ventana') ? $('#ventana').value : null),
+        ventana_confirmada: VENTANA_CONFIRMADA,
       })
     });
     const avisos = (d.avisos||[]).map(a => `<div class="avi">${esc(a)}</div>`).join('');

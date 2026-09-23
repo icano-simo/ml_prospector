@@ -364,11 +364,15 @@ def guardar(d: dict) -> tuple[int, dict]:
     # compuerta -- nueve unidades en catorce meses son 7,7 al año, no nueve.
     #
     # Se declara una vez por captura: el rango es del perfil entero.
+    # Y se guarda SI EL VALOR ERA EL DE FABRICA o alguien lo cambió: un 14
+    # declarado y un 14 por descuido son el mismo número y no valen lo mismo.
+    # Model Match trae 14 de fábrica y casi nadie lo toca.
     ventana = d.get("ventana_meses")
     try:
         ventana = int(ventana) if ventana not in (None, "") else None
     except (TypeError, ValueError):
         ventana = None
+    ventana_confirmada = bool(d.get("ventana_confirmada"))
     if ventana is not None and not (1 <= ventana <= 60):
         return 400, {"error": (
             "La ventana de Model Match es %r meses. Va entre 1 y 60: es el "
@@ -486,6 +490,11 @@ def guardar(d: dict) -> tuple[int, dict]:
     if isinstance(perfil, dict) and ventana:
         perfil["ventana_meses"] = ventana
         perfil["ventana_declarada"] = True
+        # `de_fabrica` cuando nadie tocó el campo: es el 14 que Model Match
+        # trae por defecto y que casi nadie cambia. Sigue siendo usable, pero
+        # el que lo lea sabe que nadie lo miró.
+        perfil["ventana_origen"] = ("confirmada" if ventana_confirmada
+                                    else "de_fabrica")
         if perfil.get("buyer_units"):
             perfil["buyside_anualizado"] = round(
                 perfil["buyer_units"] / ventana * 12.0, 1)
