@@ -117,16 +117,25 @@ def main() -> int:
             cur.execute("select count(*) from pacs.realtors")
             total_realtors = cur.fetchone()[0]
 
-            # Las señales de Instagram, por realtor. De la VISTA, no de la
-            # tabla: los raspados viejos estan apagados.
+            # Las señales de Instagram, por realtor, CON SU CLASE.
+            #
+            # La clase viene de `v_ig_clase_actual`, donde la auditoria manual
+            # gana sobre la automatica. Sin este join el motor la recalcularia,
+            # y recalcularla es ignorar la auditoria: alguien miro 55 perfiles a
+            # mano y el motor decidiria por su cuenta igual.
             cur.execute("""
-                select realtor_id::text, estado_perfil, captions_n,
-                       comentarios_n, senales
-                  from pacs.v_ig_senales_current
-                 where realtor_id is not null
+                select s.realtor_id::text, s.estado_perfil, s.captions_n,
+                       s.comentarios_n, s.senales,
+                       c.clase, c.motivo, c.origen
+                  from pacs.v_ig_senales_current s
+                  left join pacs.v_ig_clase_actual c
+                         on c.realtor_id = s.realtor_id
+                 where s.realtor_id is not null
             """)
             ig = {r[0]: {"estado_perfil": r[1], "captions_n": r[2],
-                         "comentarios_n": r[3], "senales": r[4]}
+                         "comentarios_n": r[3], "senales": r[4],
+                         "clase_perfil": r[5], "clase_motivo": r[6],
+                         "clase_origen": r[7]}
                   for r in cur.fetchall()}
 
     print("realtors: %d · con email para cruzar: %d" % (total_realtors, len(por_email)))

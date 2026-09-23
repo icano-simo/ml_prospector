@@ -172,6 +172,41 @@ def test_se_cargan_las_dos_familias_tipograficas():
     assert "--font-barlow:" in HOMESI
 
 
+def test_no_hay_identificadores_declarados_dos_veces_en_la_misma_funcion():
+    """Un `const` repetido en un scope es un SyntaxError que mata el ARCHIVO.
+
+    Paso de verdad: `pintarResumen` declaraba `const p = r.pertenencia` y mas
+    abajo `const p = r.perfil`. La app quedo en «cargando…» con la lista vacia,
+    en produccion, y las comprobaciones por HTTP no lo vieron -- el HTML se
+    sirve igual y la API responde igual: lo unico muerto era el navegador.
+
+    Esto no parsea JavaScript: cuenta declaraciones por funcion, que es lo que
+    se puede hacer sin dependencias. No cubre todos los casos; cubre EL caso.
+    """
+    import os
+    import re
+
+    raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(raiz, "public", "index.html"),
+              encoding="utf-8") as fh:
+        html = fh.read()
+
+    script = html.split("<script>")[-1].split("</script>")[0]
+    # Se parte por `function nombre(`, que es como esta escrito todo el archivo.
+    trozos = re.split(r"\nfunction\s+(\w+)\s*\(", script)
+    problemas = []
+    for i in range(1, len(trozos), 2):
+        nombre, cuerpo = trozos[i], trozos[i + 1]
+        # Solo el nivel superior de la funcion: dentro de un `map(f => …)` un
+        # `const` repetido es legal porque es otro scope.
+        declarados = re.findall(r"^  (?:const|let)\s+(\w+)\s*=", cuerpo,
+                                re.MULTILINE)
+        repetidos = {d for d in declarados if declarados.count(d) > 1}
+        if repetidos:
+            problemas.append((nombre, sorted(repetidos)))
+    assert not problemas, problemas
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
