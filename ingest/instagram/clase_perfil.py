@@ -23,7 +23,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
-from captura.estados import ESTADOS
+from captura.estados import ESTADOS, normalizar_estado
 from ingest.instagram.lexico import (
     CONFERENCISTA,
     ES_EEUU_SIEMPRE,
@@ -155,6 +155,45 @@ def _tiene_estado_de_eeuu(lugar: str) -> bool:
     return bool(re.search(r",\s*(%s)\b" % "|".join(_SIGLAS_ESTADO), lugar or ""))
 
 
+#: «Aqui esta el inmueble». Sin esto, un pais nombrado en cualquier parte del
+#: post contaba como ubicacion de la propiedad.
+_UBICACION = re.compile(
+    r"(📍|ubicad[oa]s? en|located in|en venta en|for sale in|just listed in"
+    r"|nueva propiedad en|listing in)\s*[^.\n]{0,40}", re.I)
+
+
+def post_es_listado_extranjero(post: str) -> bool:
+    """¿Este post de real estate vende algo FUERA de EE. UU.?
+
+    Mencionar un pais NO convierte un post en listado del extranjero. El bug
+    medido: «Just listed! Beautiful home in Panama City Beach, FL», «Just
+    listed in Mexico Beach, FL» y «Cerré para mis compradores que vinieron de
+    México» (un realtor de TX) daban los tres `re_fuera_eeuu`. El primero y el
+    segundo son ciudades de Florida; el tercero habla del ORIGEN de sus
+    clientes, que no es donde esta la casa.
+
+    Es la misma forma del error que A1 arreglo en los geotags, un nivel mas
+    abajo: alli el pais estaba en el geotag, aqui en el texto.
+
+    Hacen falta DOS cosas:
+      1 · que el post NO traiga un estado de EE. UU. -- si lo trae, es de aca;
+      2 · un marcador de LISTADO extranjero: telefono o moneda de otro pais,
+          metros cuadrados, o una ciudad extranjera como ubicacion del inmueble.
+    """
+    if not post:
+        return False
+    if _tiene_estado_de_eeuu(post) or ES_EEUU_SIEMPRE.search(post):
+        return False
+    if LISTADO_EXTRANJERO.search(post) or TELEFONO_EXTRANJERO.search(post):
+        return True
+    # La ciudad extranjera tiene que estar donde se dice DONDE ESTA el inmueble,
+    # no en cualquier parte del texto.
+    for m in _UBICACION.finditer(post):
+        if PAISES_NO_EEUU.search(m.group(0)):
+            return True
+    return False
+
+
 def geotags_extranjeros(geotags) -> tuple[int, int] | None:
     """(extranjeros, total), o `None` si no hay geotags que leer."""
     if geotags is None or geotags != geotags or not str(geotags).strip():
@@ -262,8 +301,9 @@ def clasificar(fila: dict, *, handles_repetidos: frozenset | set = frozenset()
     estado_lead = fila.get("estado")
 
     # 3 · hashtag regional fuera de su estado
+    codigo_lead = normalizar_estado(estado_lead) or estado_lead
     for tag, estados_ok in HASHTAG_REGIONAL.items():
-        if re.search(r"#" + tag, texto, re.I) and estado_lead not in estados_ok:
+        if re.search(r"#" + tag, texto, re.I) and codigo_lead not in estados_ok:
             return Clase("persona_equivocada",
                          "#%s en un lead de %s" % (tag, estado_lead),
                          detalle={"hashtag": tag, "estado_lead": estado_lead})
@@ -286,9 +326,7 @@ def clasificar(fila: dict, *, handles_repetidos: frozenset | set = frozenset()
     #     `re_fuera_eeuu` exige que los POSTS DE REAL ESTATE esten fuera. Un
     #     realtor de TX con 18 de 20 posts de real estate y 2 geotags de Cancun
     #     esta de vacaciones, no opera alla.
-    re_afuera = [p for p in re_posts
-                 if LISTADO_EXTRANJERO.search(p) or TELEFONO_EXTRANJERO.search(p)
-                 or PAISES_NO_EEUU.search(p)]
+    re_afuera = [p for p in re_posts if post_es_listado_extranjero(p)]
     geo_mayoria_afuera = bool(geo and geo[1] >= 2 and geo[0] / geo[1] >= 0.5)
     if re_afuera and len(re_afuera) >= max(1, n_re // 2):
         return Clase("re_fuera_eeuu",

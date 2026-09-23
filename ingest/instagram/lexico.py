@@ -46,12 +46,26 @@ RE_FUERTE = re.compile(
     r"home ?buyers?\b|escrow|mortgage|bienes ra[ií]ces|inmobiliari|"
     r"first.?time (home)?buyer|primera casa|pre.?approv|preaprob|\bmls\b|"
     r"sq\.? ?ft\b|bedrooms?\b|rec[aá]maras|open ?house|listing agent|"
+    # Español de oficio que faltaba. Sin esto, «En venta en Bogotá, 120 m2, 3
+    # habitaciones» no contaba como post de real estate -- o sea que el lexico
+    # leia mejor a un realtor que publica en ingles, en un proyecto cuyo nicho
+    # es justo el contrario.
+    r"en venta\b|se vende\b|habitaciones?\b|ba[nñ]os completos|"
     r"comprador(es)? primerizo)", re.I)
 
 #: De estos hacen falta DOS DISTINTOS en el mismo post.
 RE_DEBIL = re.compile(
     r"(\blisting\b|\bsold\b|\bpending\b|\bbuyers?\b|\bsellers?\b|closing|"
-    r"closed|\bkeys\b|llaves|propiedad|cierre|\bhome\b|\bhouse\b|casa\b)", re.I)
+    r"closed|\bkeys\b|llaves|propiedad|cierre|\bhome\b|\bhouse\b|casa\b|"
+    # «ya son dueños» / «became homeowners» es el anuncio de un cierre. Va de
+    # DEBIL y no de fuerte: «los dueños del perro» existe, y un falso positivo
+    # aca mete cuentas personales al motor, que es la direccion cara.
+    r"due[nñ][oa]s?\b|homeowners?\b|propietari|"
+    # Las abreviaturas de listado: «3 bed | 2.5 bath». El lexico tenia
+    # `bedrooms?` entero y se perdia la forma corta, que es la que mas se usa.
+    # Van de DEBILES: «beds» solo aparece tambien en un post de muebles, y con
+    # la regla de dos distintos «3 bed» + «2.5 bath» ya cuenta.
+    r"\d\s?beds?\b|\d\s?baths?\b|\bba[nñ]os?\b)", re.I)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -85,10 +99,16 @@ PORTUGUES = re.compile(
     r"\b(obrigad[oa]|voc[eê]|n[aã]o|muito|pra|meu|minha|tamb[eé]m|ent[aã]o|"
     r"precisamos|esque[cç]a|vezes)\b", re.I)
 
-#: hashtag -> estados donde es legitimo
+#: hashtag -> estados donde es legitimo, en CODIGO DE DOS LETRAS.
+#:
+#: Estaban con el nombre completo («Virginia»), y el lead trae el codigo
+#: («VA»), asi que `@realtor_geo` --un realtor de Virginia que publica
+#: `#dmvrealestate`-- salia `persona_equivocada`. Es el mismo error de CA
+#: contra California que ya costo la biblioteca de geografias: se compara
+#: SIEMPRE por el codigo, y quien tenga el nombre lo normaliza antes.
 HASHTAG_REGIONAL = {
-    "dmvrealestate": {"Virginia", "Maryland", "District of Columbia"},
-    "dmvrealtor": {"Virginia", "Maryland", "District of Columbia"},
+    "dmvrealestate": {"VA", "MD", "DC"},
+    "dmvrealtor": {"VA", "MD", "DC"},
 }
 
 #: Señales de que un listado esta FUERA de EE. UU. (correccion A2). No basta un
@@ -136,8 +156,18 @@ ORIGINADOR = re.compile(
     r"mortgage (?:broker|banker|loan originator))"
     r"|\b(?:loan officer|mlo|mortgage broker)\s*[|·\-–]\s*nmls"
     r"|nmls\s*#?\s*\d{4,}\s*[|·\-–]?\s*(?:loan officer|mlo|mortgage)"
-    r"|i have multiple loan strategies"
     r"|mi\s+nmls\b)", re.I)
+
+#: «I have multiple loan strategies» NO alcanza sola.
+#:
+#: El caso golden la trae junto a una bio «Loan Officer | NMLS 123456», y asi
+#: es autoatribucion. Sola, la dice tambien un realtor que trabaja con varios
+#: lenders: `@ezequiel_bolanos_` la publica y su post siguiente es un condo de
+#: $619K en Spring Valley. Hace falta que ADEMAS haya titulo o NMLS propio, y
+#: eso es lo que `ORIGINADOR` ya exige.
+ORIGINADOR_DEBIL = re.compile(
+    r"(i have multiple loan strategies|multiple loan (?:programs|options))",
+    re.I)
 
 #: Es wholesaler quien COMPRA para revender, en primera persona del plural.
 #: `Costco Wholesale` y «the wholesaler's asking price» quedan fuera.
@@ -152,7 +182,10 @@ WHOLESALER = re.compile(
 #: Vive de formar agentes. `speaker` suelto matchea «Spanish speaker» y
 #: `my book` es un modismo («a win in my book») y un estante de libros.
 CONFERENCISTA = re.compile(
-    r"(conferencista|keynote speaker|\bspeaker at\b|charl[oa] en"
+    # `charl[oa] en` salio: matcheaba «¿Quieres esta charla en tu negocio?» de
+    # una realtor que da educacion a compradores, y el resumen de un evento al
+    # que FUE. Queda la forma que dice que vive de eso.
+    r"(conferencista|keynote speaker|\bspeaker at\b|doy charlas"
     r"|autor[ao] de[l]? libro|mi libro (?:ya |est[aá] |sali[oó])"
     r"|my book is (?:out|available)|coach de agentes"
     r"|(?:doy|imparto|dicto)\s+(?:mi\s+)?masterclass"

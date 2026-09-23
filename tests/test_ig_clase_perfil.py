@@ -64,6 +64,59 @@ def test_panama_city_florida_es_EEUU():
     assert c.utilizable
 
 
+#: El bug de A1 en el TEXTO, reproducido sobre el lote. `PAISES_NO_EEUU` en
+#: cualquier parte del post lo contaba como listado del extranjero, y con una
+#: zona que se llama «Panama City Beach» eso es casi todos sus posts.
+#:
+#: Es la misma forma del error que A1 arregló en los geotags, un nivel más
+#: abajo: allí el país estaba en el geotag, aquí en el texto.
+PAIS_EN_EL_TEXTO = [
+    ("Panama City Beach FL", "Florida",
+     "Just listed! Beautiful home in Panama City Beach, FL. 3 bedrooms"),
+    ("Mexico Beach FL", "Florida",
+     "Just listed in Mexico Beach, FL — open house this Saturday"),
+    ("el ORIGEN de sus compradores", "Texas",
+     "Cerré para mis compradores que vinieron de México. Su primera casa "
+     "en San Antonio"),
+    ("clientes de Guatemala y Venezuela", "Texas",
+     "Cerré con mis clientes de Guatemala y Venezuela: ya son dueños de su "
+     "casa en Houston"),
+]
+
+
+def test_un_pais_en_el_texto_no_hace_extranjero_al_listado():
+    """Los cuatro casos, con la forma real: su zona se llama así.
+
+    Con un solo post no se alcanza el umbral, así que el bug solo aparece
+    cuando casi todos los posts nombran el lugar — que es exactamente lo que
+    hace un realtor cuyo mercado es Panama City Beach.
+    """
+    for etiqueta, estado, cita in PAIS_EN_EL_TEXTO:
+        posts = ["2026-09-%02d | %s" % (i + 1, cita) for i in range(8)]
+        posts += ["2026-09-09 | New listing, open house, 3 bedrooms",
+                  "2026-09-10 | Just sold, real estate"]
+        c = clasificar(_fila(estado=estado, captions=posts))
+        assert c.clase == "realtor_activo", (etiqueta, c.a_dict())
+
+
+def test_un_listado_de_verdad_afuera_si_cuenta():
+    """El control: sin él, esto se «arregla» desactivando la regla entera."""
+    fuera = [
+        "2026-09-%02d | En venta en Bogotá, Colombia. 120 m2, 3 habitaciones. "
+        "Escríbeme: +57 300 000 0000" % (i + 1) for i in range(8)]
+    fuera += ["2026-09-09 | New listing open house", "2026-09-10 | Just sold"]
+    c = clasificar(_fila(estado="Texas", captions=fuera))
+    assert c.clase == "re_fuera_eeuu", c.a_dict()
+
+
+def test_un_post_con_estado_de_EEUU_nunca_cuenta_como_extranjero():
+    """Regla 1 del arreglo: si trae un estado de EE. UU., es de acá."""
+    from ingest.instagram.clase_perfil import post_es_listado_extranjero
+    assert not post_es_listado_extranjero(
+        "En venta en Panama City Beach, FL. 120 m2")
+    assert post_es_listado_extranjero("En venta en Panamá. 120 m2")
+
+
 def test_panama_de_verdad_sigue_siendo_extranjero():
     """El control: sin estado de EE. UU., «Panama City, Panama» SÍ es afuera.
 
@@ -152,15 +205,51 @@ def test_los_dieciseis_falsos_positivos_de_otro_perfil():
 def test_los_verdaderos_otro_perfil_siguen_saliendo():
     """El control: si la guarda dijera que no a todo, no serviría de nada."""
     verdaderos = [
-        "I have multiple loan strategies for business owners",
-        "We purchased this property below market value from our "
-        "direct-to-seller marketing",
+        # El caso golden trae la frase JUNTO a la bio con el título.
+        ({"bio": "Loan Officer | NMLS 123456"},
+         "Business owner? I have multiple loan strategies for you"),
+        ({}, "We purchased this property below market value from our "
+             "direct-to-seller marketing"),
     ]
-    for cita in verdaderos:
+    for extra, cita in verdaderos:
         posts = ["2026-09-01 | " + cita]
         posts += ["2026-09-%02d | New listing, open house" % (i + 2)
                   for i in range(9)]
-        assert clasificar(_fila(captions=posts)).clase == "otro_perfil", cita
+        c = clasificar(_fila(captions=posts, **extra))
+        assert c.clase == "otro_perfil", (cita, c.a_dict())
+
+
+def test_multiple_loan_strategies_SOLA_no_alcanza():
+    """Hallazgo de la auditoría: `@ezequiel_bolanos_`.
+
+    Publica la frase y su post siguiente es un condo de $619K en Spring
+    Valley. Un realtor que trabaja con varios lenders dice lo mismo que un
+    loan officer; lo que los separa es el título o el NMLS propio.
+    """
+    posts = ["2026-09-01 | I have multiple loan strategies for business owners"]
+    posts += ["2026-09-%02d | 3 bed 2.5 bath condo for $619K, new listing"
+              % (i + 2) for i in range(9)]
+    c = clasificar(_fila(captions=posts))
+    assert c.clase == "realtor_activo", c.a_dict()
+
+
+def test_el_hashtag_regional_compara_por_CODIGO_de_estado():
+    """Hallazgo de la auditoría: `@realtor_geo`, un realtor de Virginia.
+
+    `HASHTAG_REGIONAL` tenía «Virginia» y el lead trae «VA», así que un realtor
+    del DMV publicando #dmvrealestate salía `persona_equivocada`. Es el mismo
+    error de CA contra California que ya costó la biblioteca de geografías.
+    """
+    posts = ["2026-09-01 | UNDER CONTRACT! 46678 Abigail Terrace in Sterling, "
+             "VA #dmvrealestate"]
+    posts += ["2026-09-%02d | New listing, open house" % (i + 2)
+              for i in range(9)]
+    for estado in ("VA", "Virginia", "MD", "DC"):
+        c = clasificar(_fila(estado=estado, captions=posts))
+        assert c.clase == "realtor_activo", (estado, c.a_dict())
+    # Y en Texas sigue siendo persona equivocada.
+    assert clasificar(_fila(estado="TX", captions=posts)).clase == \
+        "persona_equivocada"
 
 
 def test_reproducible_contra_capturado_en():
