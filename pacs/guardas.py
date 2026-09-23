@@ -317,13 +317,51 @@ CAMPOS_PROHIBIDOS_PARA_INFERENCIA = frozenset({
 })
 
 
+#: Trozos que descalifican un nombre de campo aunque no sea exacto.
+#: `hispanic_surname_score` no esta en el conjunto de arriba y pasaba entero.
+TROZOS_PROHIBIDOS = ("surname", "apellido", "etnia", "ethnic", "race",
+                     "national_origin", "origen_nacional")
+
+#: Campos cuya PROCEDENCIA es una base prohibida, se llamen como se llamen.
+#:
+#: Este registro existe porque el de arriba no alcanza, y se sabe desde un caso
+#: concreto: `R7_identidad_hispana` se calcula desde el apellido y el nombre de
+#: pila -- base censal de apellidos con >=75% de portadores hispanos, mas una
+#: lista de nombres-- y **ninguna** de las dos listas de nombres lo atrapa. No
+#: contiene «apellido», ni «surname», ni «etnia». Esta nombrado por lo que dice
+#: medir, no por lo que lo calcula.
+#:
+#: Ahi esta el limite de cualquier guarda sobre la etiqueta: la etiqueta es
+#: justamente el unico lugar donde la procedencia prohibida no tiene por que
+#: aparecer. Un campo entra aca por lo que se sabe de su ORIGEN, una vez, y deja
+#: de depender de que alguien lo haya nombrado con honestidad.
+#:
+#: Ver `docs/r7-identidad-hispana.md` para el detalle y el alcance medido.
+CAMPOS_DE_PROCEDENCIA_PROHIBIDA = {
+    "r7_identidad_hispana": (
+        "se calcula desde el apellido y el nombre de pila (base censal de "
+        "apellidos hispanos + heuristica patronimica -ez/-es/-az/-iz/-oz); "
+        "el libro lo define como «probabilidad de que el realtor pertenezca a "
+        "la comunidad latina». Ver docs/r7-identidad-hispana.md"),
+}
+
+
 def verificar_entradas_de_inferencia(campos_usados: set[str], qualifier: str) -> None:
     """Falla si una regla de inferencia se apoya en un campo prohibido.
 
     Inferir nicho desde el origen del agente es discriminacion bajo ECOA
     Regulation B. Aplica al realtor, a sus clientes y a los loan officers.
+
+    Mira TRES cosas, y las tres hacen falta:
+      1 · el nombre exacto  (`apellido`, `surname`, …)
+      2 · el nombre por trozos  (`hispanic_surname_score` pasaba entero)
+      3 · la procedencia declarada  (`R7_identidad_hispana` no se parece a nada
+          prohibido, y se calcula desde el apellido)
     """
-    prohibidos = {c for c in campos_usados if c.lower() in CAMPOS_PROHIBIDOS_PARA_INFERENCIA}
+    prohibidos = {c for c in campos_usados
+                  if c.lower() in CAMPOS_PROHIBIDOS_PARA_INFERENCIA}
+    prohibidos |= {c for c in campos_usados
+                   if any(t in c.lower() for t in TROZOS_PROHIBIDOS)}
     if prohibidos:
         raise ViolacionDeGuarda(
             "el qualifier %s se apoya en %s. Inferir nicho, idioma o mercado "
@@ -332,6 +370,17 @@ def verificar_entradas_de_inferencia(campos_usados: set[str], qualifier: str) ->
             "precio, geografia, LMI, y el idioma de lo que la persona publica."
             % (qualifier, sorted(prohibidos))
         )
+
+    por_procedencia = {c: CAMPOS_DE_PROCEDENCIA_PROHIBIDA[c.lower()]
+                       for c in campos_usados
+                       if c.lower() in CAMPOS_DE_PROCEDENCIA_PROHIBIDA}
+    if por_procedencia:
+        raise ViolacionDeGuarda(
+            "el qualifier %s se apoya en %s. El nombre del campo no lo dice, "
+            "pero su procedencia si: %s. Que un campo no se llame «apellido» "
+            "no cambia de donde sale."
+            % (qualifier, sorted(por_procedencia),
+               " · ".join(sorted(por_procedencia.values()))))
 
 
 # ── 8 · Ninguna variable de tract clasifica a una persona ─────────────────────
