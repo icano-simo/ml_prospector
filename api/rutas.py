@@ -1119,10 +1119,32 @@ def dossier(params: dict) -> tuple[int, dict]:
     zona = base.get("perfil_de_la_zona") or {}
     donde = zona.get("donde") or base["realtor"].get("estado") or "su zona"
 
-    # El gancho del corpus, literal. Sin ficha enrutada todavia, se usa el
-    # generico de oficio -- y se DICE que falta el enrutado, en vez de elegir
-    # uno al azar y que parezca calibrado.
-    gancho, fuente_gancho = GANCHO_GENERICO, "genérico: falta enrutar el qualifier a su ficha"
+    # ── EL GANCHO · literal de la ficha que le toca ─────────────────────────
+    # El enrutado qualifier -> ficha es una DECISION, y esta en `motor/ganchos`.
+    # `P-Q01` se abre distinto segun la señal que lo activo, asi que se le pasa
+    # la entrada de la evaluacion para elegir la variante.
+    from motor.ganchos import gancho_de
+
+    dolor = (base.get("cabecera") or {}).get("dolor_primario")
+    señales = ((ev or {}).get("entrada") or {}) if isinstance(ev, dict) else {}
+    if not señales and dolor:
+        _c, ent, _ = leer(
+            "v_evaluacion_actual",
+            "?select=entrada&realtor_id=eq.%s"
+            % urllib.parse.quote(params.get("realtor_id", "")))
+        señales = (ent or [{}])[0].get("entrada") or {}
+
+    g = gancho_de(dolor, señales) if dolor else None
+    if g:
+        gancho, fuente_gancho = g.texto, g.fuente
+    elif dolor:
+        gancho = GANCHO_GENERICO
+        fuente_gancho = ("genérico: %s no tiene ficha enrutada ni derivado en "
+                         "el corpus" % dolor)
+    else:
+        gancho = GANCHO_GENERICO
+        fuente_gancho = ("genérico: sin dolor primario no hay ficha que abrir. "
+                         "La apertura real es la pregunta del bloque G.")
 
     # Las lecturas como objetos, para que el toque 4 pueda mirar `afirma`.
     lecturas = []

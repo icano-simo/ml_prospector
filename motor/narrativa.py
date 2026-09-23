@@ -55,8 +55,10 @@ def _produccion(realtor: dict, mm: dict) -> str:
                       % "{:,.0f}".format(mix).replace(",", "."))
         partes.append(frase)
         if anual:
-            partes.append("que anualizado da %s al año, y es el número que "
-                          "manda" % ("%g" % anual).replace(".", ","))
+            partes.append(
+                "que anualizado da %s al año — y es el número que manda, "
+                "porque el del libro no distingue lado ni ventana"
+                % ("%g" % anual).replace(".", ","))
     elif buy:
         partes.append("Model Match le registra %s del lado comprador, sin "
                       "ventana declarada, así que no se puede anualizar"
@@ -91,46 +93,67 @@ def narrativa(realtor: dict, *, estado_nombre: str | None = None,
     # El lado comprador es lo que decide si nos sirve: un agente de listados no
     # nos trae borrower. `sf_buy/sf_sell` son de la cabecera de Model Match y
     # su ventana es la misma que la de arriba, asi que se dice una sola vez.
+    # Cada dato lleva SU CONSECUENCIA, no solo su cifra. `su negocio es sobre
+    # todo del lado comprador` es un dato; `que es justo donde el
+    # financiamiento decide si la operacion existe` es lo que hace que el BD
+    # entienda en vez de solo leer.
     sf_buy, sf_sell = mm.get("sf_buy"), mm.get("sf_sell")
     if sf_buy is not None and sf_sell is not None and (sf_buy or sf_sell):
         if sf_sell == 0:
-            texto += "Su actividad reciente es toda del lado comprador. "
+            texto += ("Su negocio es todo del lado comprador, que es justo "
+                      "donde el financiamiento decide si la operación existe. ")
         elif sf_sell > sf_buy:
-            texto += ("Trabaja más listados que compradores (%d contra %d), "
-                      "que es el lado que menos borrower nos trae. "
+            texto += ("Trabaja más listados que compradores (%d contra %d), y "
+                      "el lado vendedor no nos trae borrower: ahí el "
+                      "financiamiento ya lo eligió otro. "
                       % (sf_sell, sf_buy))
+        else:
+            texto += ("Trabaja los dos lados, con más peso en el comprador "
+                      "(%d contra %d), que es el que nos llega a nosotros. "
+                      % (sf_buy, sf_sell))
     elif mm.get("side_focus"):
-        texto += "Model Match lo clasifica como %s. " % str(
-            mm["side_focus"]).lower()
+        texto += ("Model Match lo clasifica como %s, que es la pista de dónde "
+                  "entra el financiamiento en su operación. "
+                  % str(mm["side_focus"]).lower())
 
     # El mercado donde opera, en una frase.
     m = mercado or {}
     if donde and m.get("fallout") is not None:
         texto += ("En %s, donde concentra su operación, se caen %s "
-                  "expedientes antes de cerrar" % (donde,
-                                                   _hablado(m["fallout"])))
+                  "expedientes antes de cerrar: cada uno de esos es una "
+                  "comisión que él ya había dado por hecha"
+                  % (donde, _hablado(m["fallout"])))
         if m.get("mkt_fha") is not None:
-            texto += " y %s préstamos son FHA" % _hablado(m["mkt_fha"])
+            texto += (". Y %s préstamos de la zona son FHA, así que el "
+                      "comprador típico de ahí llega con poco para el down "
+                      "payment" % _hablado(m["mkt_fha"]))
         texto += ". "
     elif donde:
-        texto += ("Todavía no tenemos las métricas de %s, así que las "
-                  "comparaciones con su mercado no pueden correr. " % donde)
+        texto += ("Todavía no tenemos las métricas de %s, así que no hay "
+                  "contra qué comparar lo suyo y las lecturas se quedan en "
+                  "umbrales fijos, que es lo que este sistema existe para "
+                  "evitar. " % donde)
     else:
-        texto += ("No sabemos en qué condado concentra su operación: sin eso "
-                  "no hay contra qué compararlo. ")
+        texto += ("No sabemos en qué condado concentra su operación, así que "
+                  "no hay contra qué compararlo: sin eso, cualquier cifra "
+                  "suya se lee contra una constante y no contra su mercado. ")
 
     # Y lo único que puede hacer irrelevante todo lo anterior.
     cov = cobertura or {}
     if cov.get("activos") == 0:
         texto += ("No tenemos licencia en %s: califica comercialmente y hoy no "
-                  "podemos originarle." % estado)
+                  "podemos originarle, así que activarlo sería gastar "
+                  "credibilidad en una promesa que no podemos cumplir."
+                  % estado)
     elif cov.get("activos"):
-        texto += ("Podemos originarle: %d loan officer%s con licencia en %s."
+        texto += ("Podemos originarle: %d loan officer%s con licencia en %s, "
+                  "así que lo que se le prometa se puede sostener."
                   % (cov["activos"], "" if cov["activos"] == 1 else "s",
                      estado))
     else:
-        texto += ("No sabemos si tenemos licencia en %s, así que no se puede "
-                  "decir todavía si podemos originarle." % estado)
+        texto += ("No sabemos si tenemos licencia en %s, y esa es la que puede "
+                  "hacer irrelevante todo lo anterior: sin ella no hay a quién "
+                  "mandarle el caso." % estado)
 
     verificar_vocabulario(texto)
     return texto
