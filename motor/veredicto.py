@@ -112,6 +112,29 @@ def puede_contactarse(perfil: dict | None, *,
                     "qué originadores trabaja, y no saberlo no es poder"),
             evidencia=_evidencia_base(None, capturado_en))
 
+    # 3 · «Model Match no muestra originadores para este agente», declarado con
+    #     la casilla de la pantalla de captura.
+    #
+    #     Decision de Isabella del 2026-09-23: no tener originadores esta bien y
+    #     NO bloquea. Lo que bloquea es no saber.
+    #
+    #     La diferencia entre esto y el caso de abajo es toda la diferencia:
+    #     una caja vacia SIN la casilla es «falta capturar», y una caja vacia
+    #     CON la casilla es «se miro y no hay». Son el mismo `orig_buyer = []`
+    #     en el dato, y dos veredictos opuestos -- por eso la casilla existe:
+    #     es el unico sitio donde queda constancia de que alguien miro.
+    if perfil.get("sin_originadores_declarado"):
+        evidencia = _evidencia_base([], capturado_en)
+        evidencia.update({"unidades_de_la_casa": 0, "unidades_totales": 0,
+                          "share_de_la_casa": 0.0,
+                          "vacio_declarado": True,
+                          "declarado_por": perfil.get("declarado_por")})
+        return Veredicto(
+            estado=OK,
+            motivo=("Model Match no registra originadores del lado comprador: "
+                    "0 operaciones con la casa"),
+            evidencia=evidencia)
+
     try:
         reparto = share_de_la_casa(perfil)
     except TrampaDetectada as exc:
@@ -124,10 +147,20 @@ def puede_contactarse(perfil: dict | None, *,
             evidencia=_evidencia_base(None, capturado_en))
 
     if reparto.get("share") is None and not reparto.get("unidades"):
+        # Dos casos distintos con el mismo sintoma, y el motivo tiene que
+        # decir cual es: uno se arregla pegando una seccion, el otro marcando
+        # una casilla. Un motivo que no distingue manda a buscar lo que no es.
+        if perfil.get("tab_orig"):
+            falta = ("está pegada la pestaña Originators, que reparte por "
+                     "VOLUMEN, y falta la sección «Buyer Side Relationships», "
+                     "que es la que reparte por unidades")
+        else:
+            falta = ("falta la sección Originators. Si Model Match no le "
+                     "muestra originadores a este agente, marcá la casilla "
+                     "«Model Match no muestra originadores»")
         return Veredicto(
             estado=PENDIENTE,
-            motivo=("hay captura pero sin reparto por unidades: %s"
-                    % (reparto.get("razon") or "sin Buyer Side Relationships")),
+            motivo="hay captura pero sin reparto por unidades: %s" % falta,
             evidencia=_evidencia_base(None, capturado_en))
 
     unidades = reparto.get("unidades") or 0

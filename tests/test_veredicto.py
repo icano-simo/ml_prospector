@@ -189,6 +189,73 @@ def test_el_libro_excluye_aunque_el_perfil_este_limpio():
     assert v.estado == EXCLUIDO
 
 
+# ══ LA TABLA DE LA SECCION 2: UNA PRUEBA POR FILA ════════════════════════════
+#
+# Decisión de Isabella del 2026-09-23: si Model Match no muestra originadores,
+# está bien y el realtor NO queda bloqueado. Lo que bloquea es no saber.
+
+def test_sin_captura_sigue_siendo_pendiente():
+    """Fila 1. No cambia."""
+    assert puede_contactarse(None).estado == PENDIENTE
+
+
+def test_originators_vacio_DECLARADO_es_ok():
+    """Fila 2. La casilla es lo único que distingue «no hay» de «no miré»."""
+    v = puede_contactarse({"nombre": "Fulana", "buyer_units": 12.0,
+                           "sin_originadores_declarado": True})
+    assert v.estado == OK, v.a_dict()
+    assert v.puede_escribirsele
+    assert "no registra originadores" in v.motivo
+    assert v.evidencia["unidades_de_la_casa"] == 0
+    assert v.evidencia["vacio_declarado"] is True
+
+
+def test_originators_con_filas_por_unidades_funciona_como_siempre():
+    """Fila 3."""
+    con_casa = {"orig_buyer": [
+        {"nombre": "Grace Davis", "empresa": "Everett Financial, Inc.",
+         "unidades": 1.0, "share": 50.0},
+        {"nombre": "Otro", "empresa": "Otro LLC", "unidades": 1.0,
+         "share": 50.0}]}
+    assert puede_contactarse(con_casa).estado == EXCLUIDO
+    sin_casa = {"orig_buyer": [
+        {"nombre": "Otro", "empresa": "Otro LLC", "unidades": 2.0,
+         "share": 100.0}]}
+    assert puede_contactarse(sin_casa).estado == OK
+
+
+def test_solo_la_pestana_por_volumen_es_pendiente_y_lo_dice():
+    """Fila 4. El motivo tiene que decir QUE falta pegar."""
+    v = puede_contactarse({"tab_orig": [
+        {"nombre": "Grace Davis", "empresa": "Everett Financial, Inc.",
+         "unidades": 1, "share": 35.3}]})
+    assert v.estado == PENDIENTE, v.a_dict()
+    assert "Buyer Side Relationships" in v.motivo
+    assert "VOLUMEN" in v.motivo
+
+
+def test_sin_pegar_y_sin_casilla_es_pendiente_y_menciona_la_casilla():
+    """Fila 5. El motivo tiene que decir qué hacer, no solo qué falta."""
+    v = puede_contactarse({"nombre": "Fulana", "buyer_units": 12.0})
+    assert v.estado == PENDIENTE, v.a_dict()
+    assert "falta la sección Originators" in v.motivo
+    assert "casilla" in v.motivo
+
+
+def test_la_casilla_NO_salva_a_un_excluido_por_el_libro():
+    """El orden importa: la exclusión metodológica manda sobre todo."""
+    v = puede_contactarse({"sin_originadores_declarado": True},
+                          excluido_por_el_libro="DESCARTADO")
+    assert v.estado == EXCLUIDO
+
+
+def test_armando_ochoa_sigue_excluido():
+    """El control de la sección 2: el caso que no puede cambiar."""
+    v = puede_contactarse(_perfil_de_armando())
+    assert v.estado == EXCLUIDO, v.a_dict()
+    assert v.evidencia["unidades_de_la_casa"] == 1
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

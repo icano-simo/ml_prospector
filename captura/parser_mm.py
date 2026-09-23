@@ -541,9 +541,23 @@ def _tabla_originadores(txt: str) -> list[dict]:
 #: devolvia CERO condados contra el volcado real. Sin condados no hay
 #: etiquetado por posicion, o sea que la validacion de conteo habria dejado
 #: pasar cualquier cantidad de bloques como si fuera solo el estado.
+#: Una fila de View Counties. Cuatro cosas que la version anterior perdia, y
+#: las cuatro se midieron contra volcados reales:
+#:
+#:   · **Espacios ademas de tabuladores.** Al copiar desde el navegador a veces
+#:     llegan espacios, y la fila entera no matcheaba -- o sea CERO condados,
+#:     que es el peor resultado posible porque no parece un error.
+#:   · **Parish, Borough y city.** Luisiana usa Parish, Alaska Borough, y hay
+#:     ciudades independientes (`Baltimore city`). Sin esto, un realtor de
+#:     Nueva Orleans no tenia ni un condado.
+#:   · **Acentos y ñ.** `Doña Ana County` en Nuevo Mexico.
+#:   · **Nombres de una sola palabra.** El `{2,40}?` sobre la clase pedia al
+#:     menos 3 caracteres, asi que `Lee County` (Florida) pasaba raspando y
+#:     `Ada County` tambien -- pero la intencion era otra y conviene que se vea.
 _RE_FILA_CONDADO_REAL = re.compile(
-    r"^\s*([A-Z][A-Za-z.\-' ]{2,40}?)\s+County\s*,\s*([A-Z]{2})\s*\t"
-    r"\s*\$[\d.,]+\s*[MKB]?\s*\t\s*(\d+)\s*\t",
+    r"^[ \t]*([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ.\-' ]{1,40}?)\s+"
+    r"(?:County|Parish|Borough|city|City and County)\s*,\s*([A-Z]{2})"
+    r"[ \t]+\$[\d.,]+\s*[MKB]?[ \t]+(\d+)(?:[ \t]|$)",
     re.MULTILINE,
 )
 
