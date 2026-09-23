@@ -43,6 +43,58 @@ TOPE = 300
 #: Con que etiqueta entra cada dato de contacto de Model Match.
 FUENTE_CONTACTOS = "Model Match"
 
+
+def capturas_que_mandan(realtor_id: str) -> tuple[list, dict]:
+    """Las filas de la captura MAS RECIENTE, y cuantas quedaron atras.
+
+    LA REGLA, y por que hace falta
+    ------------------------------
+    Con dos capturas vivas del mismo realtor el sistema las COMBINABA, y mal:
+    `Solano` salia dos veces en los contrastes y `unir_perfiles` tomaba "la
+    primera no vacia" de un orden que PostgREST no garantiza. O sea que entre
+    dos capturas con cifras distintas ganaba una al azar, y el diagnostico
+    cambiaba sin que nadie tocara nada.
+
+    No era ninguna de las dos opciones razonables -- ni la mas reciente manda,
+    ni una union declarada-- sino una mezcla no determinista.
+
+    **Manda la mas reciente.** La anterior sigue visible como historico en la
+    pestaña Model Match, y no alimenta el diagnostico. Un perfil de Model Match
+    describe un momento; mezclar dos momentos no da un momento mejor.
+    """
+    cod, filas, _ = leer(
+        "v_capturas_modelmatch_current",
+        "?select=upload_batch_id,capturado_en,parseado,geografia_etiqueta,"
+        "geografia_nivel,estado&parseado->>realtor_id=eq.%s"
+        "&order=capturado_en.desc" % urllib.parse.quote(realtor_id))
+    if cod >= 400:
+        return [], {"lotes": 0, "anteriores": 0, "vigente_desde": None}
+    return lote_vigente(filas or [])
+
+
+def lote_vigente(filas: list) -> tuple[list, dict]:
+    """De todas las filas, las del lote MAS RECIENTE. Función pura.
+
+    Ordena aquí y no confía en el orden que venga: `order=capturado_en.desc`
+    ya se pide en la consulta, pero apoyar la regla en que el servidor
+    devuelva lo que se le pidió es apoyarla en algo que no se comprueba.
+    """
+    if not filas:
+        return [], {"lotes": 0, "anteriores": 0, "vigente_desde": None}
+
+    ordenadas = sorted(filas, key=lambda f: f.get("capturado_en") or "",
+                       reverse=True)
+    vigente = ordenadas[0]["upload_batch_id"]
+    lotes = {f["upload_batch_id"] for f in ordenadas}
+    return [f for f in ordenadas if f["upload_batch_id"] == vigente], {
+        "lotes": len(lotes),
+        "anteriores": len(lotes) - 1,
+        "vigente_desde": ordenadas[0].get("capturado_en"),
+        "anteriores_desde": sorted(
+            {f["capturado_en"] for f in ordenadas
+             if f["upload_batch_id"] != vigente}, reverse=True),
+    }
+
 #: Por debajo de esto, el bloque no trajo metricas de verdad y no hay nada que
 #: promover. Un bloque real de Market Signals trae 38-45 campos.
 MINIMO_CAMPOS_PARA_PROMOVER = 5
@@ -777,11 +829,8 @@ def lectura(params: dict) -> tuple[int, dict]:
         "&realtor_id=eq.%s" % urllib.parse.quote(realtor_id))
     ev = (evs or [None])[0]
 
-    # El perfil y los mercados de sus capturas vivas.
-    _c, crudas, _ = leer(
-        "v_capturas_modelmatch_current",
-        "?select=parseado,geografia_etiqueta,geografia_nivel,estado"
-        "&parseado->>realtor_id=eq.%s" % urllib.parse.quote(realtor_id))
+    # SOLO la captura mas reciente. Ver `capturas_que_mandan`.
+    crudas, cuantas_capturas = capturas_que_mandan(realtor_id)
     perfiles, mercados = [], []
     for f in crudas or []:
         p = f.get("parseado") or {}
@@ -1007,6 +1056,10 @@ def lectura(params: dict) -> tuple[int, dict]:
         "sin_dolor": sin_dolor,
         "mercados": len(mercados),
         "tiene_census": censo is not None,
+        # Cuantas capturas hay y cual manda. Con mas de una, la pantalla lo
+        # dice: un diagnostico que cambia porque alguien re-capturo tiene que
+        # ser visible, no una sorpresa.
+        "capturas": cuantas_capturas,
     }
 
 
@@ -1158,11 +1211,7 @@ def dossier(params: dict) -> tuple[int, dict]:
     # Las lecturas como objetos, para que el toque 4 pueda mirar `afirma`.
     lecturas = []
     if base.get("mercados"):
-        _c, crudas, _ = leer(
-            "v_capturas_modelmatch_current",
-            "?select=parseado,geografia_etiqueta,geografia_nivel,estado"
-            "&parseado->>realtor_id=eq.%s"
-            % urllib.parse.quote(params.get("realtor_id", "")))
+        crudas, _cuantas = capturas_que_mandan(params.get("realtor_id", ""))
         perfiles, mercados = [], []
         for f in crudas or []:
             p = f.get("parseado") or {}
@@ -1303,10 +1352,7 @@ def extracto(params: dict) -> tuple[int, dict]:
     # son suyos. Sin esto, `Everett Financial` -- que ES su originador-- se
     # rechazaria como entidad ajena: un falso positivo que hace inservible la
     # guarda justo en el caso que mas importa, la exclusion.
-    _c, crudas_o, _ = leer(
-        "v_capturas_modelmatch_current",
-        "?select=parseado&parseado->>realtor_id=eq.%s"
-        % urllib.parse.quote(realtor_id))
+    crudas_o, _cuantas_o = capturas_que_mandan(realtor_id)
     perfiles_o = [(f.get("parseado") or {}).get("perfil") for f in (crudas_o or [])]
     unido_o = unir_perfiles([p for p in perfiles_o if isinstance(p, dict)])
     suyos, vistos_o = [], set()

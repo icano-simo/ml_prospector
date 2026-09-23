@@ -409,8 +409,18 @@ function vistaLectura(d){
   const conf = c.confianza || {};
   const [cn, ci] = NIVEL_BADGE[c.nivel] || ['sin-evaluar','▣'];
 
+  /* Con más de una captura, decirlo: un diagnóstico que cambió porque alguien
+     re-capturó tiene que ser visible, no una sorpresa. */
+  const cap = d.capturas || {};
+  const aviso_capturas = cap.anteriores > 0 ? `<div class="avi">
+    <b>Hay ${cap.lotes} capturas de Model Match de este realtor.</b>
+    Manda la más reciente (${esc((cap.vigente_desde||'').slice(0,16).replace('T',' '))});
+    ${cap.anteriores === 1 ? 'la anterior queda' : 'las ' + cap.anteriores + ' anteriores quedan'}
+    como histórico en la pestaña <b>Model Match</b> y no alimenta el diagnóstico.
+    Un perfil describe un momento, y mezclar dos no da un momento mejor.</div>` : '';
+
   /* 1 · quién es, en prosa. Es lo primero que un BD lee. */
-  const quien = `<div class="tarjeta">
+  const quien = aviso_capturas + `<div class="tarjeta">
     <div class="seccion">Qué clase de realtor es</div>
     <p style="margin:6px 0 0;font-size:14px;line-height:1.7;color:var(--slate-800)">
       ${esc(d.narrativa || '')}</p></div>`;
@@ -805,9 +815,16 @@ async function vModelMatch(){
       return;
     }
     CAPTURAS = d.capturas;
-    $('#cuerpo').innerHTML = d.capturas.map((c, i) => `
+    /* La más reciente es la que manda; las otras son histórico. Se dice en
+       cada tarjeta, no solo arriba. */
+    $('#cuerpo').innerHTML = (d.capturas.length > 1 ? `<div class="avi">
+      Hay ${d.capturas.length} capturas. <b>Manda la primera</b>, que es la más
+      reciente. Las demás quedan como histórico y no alimentan el
+      diagnóstico.</div>` : '') + d.capturas.map((c, i) => `
       <div class="tarjeta">
         <div class="seccion">Captura ${d.capturas.length - i} de ${d.capturas.length}</div>
+        <span class="badge ${i === 0 ? 'mql' : 'sin-evaluar'}">
+          <i>${i === 0 ? '✓' : '·'}</i>${i === 0 ? 'manda' : 'histórico'}</span>
         <h2>${esc((c.capturado_en || '').slice(0,16).replace('T',' '))} ·
           ${esc(c.estado || '—')}</h2>
         <p class="sub" style="margin-bottom:10px">

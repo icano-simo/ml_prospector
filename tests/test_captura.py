@@ -1422,6 +1422,66 @@ def test_la_exclusion_sobre_la_forma_vieja_no_se_bloquea_ni_se_cree_la_etiqueta(
     assert base_normalizada("unidades")["medida"] is None
 
 
+# ══ DOS CAPTURAS DEL MISMO REALTOR · manda la mas reciente ══════════════════
+#
+# Antes las COMBINABA, y mal: `Solano` salia dos veces en los contrastes y
+# `unir_perfiles` tomaba "la primera no vacia" de un orden que PostgREST no
+# garantiza. Entre dos capturas con cifras distintas ganaba una al azar, y el
+# diagnostico cambiaba sin que nadie tocara nada.
+
+def _fila(lote, cuando, etiqueta):
+    return {"upload_batch_id": lote, "capturado_en": cuando,
+            "geografia_etiqueta": etiqueta, "parseado": {}}
+
+
+def test_manda_la_captura_mas_reciente():
+    from api.rutas import lote_vigente
+
+    filas = [_fila("A", "2026-09-22T20:07:00Z", "Solano"),
+             _fila("A", "2026-09-22T20:07:00Z", "Alameda"),
+             _fila("B", "2026-09-23T10:00:00Z", "Solano"),
+             _fila("B", "2026-09-23T10:00:00Z", "Alameda")]
+    vivas, cuantas = lote_vigente(filas)
+    assert {f["upload_batch_id"] for f in vivas} == {"B"}
+    assert len(vivas) == 2
+    assert cuantas["lotes"] == 2 and cuantas["anteriores"] == 1
+
+
+def test_no_se_duplica_una_geografia_entre_capturas():
+    """Dos tarjetas de Solano con cifras distintas son la misma geografía
+    leída dos veces, y el BD no sabe cuál mirar."""
+    from api.rutas import lote_vigente
+
+    vivas, _ = lote_vigente([_fila("A", "2026-09-22T20:07:00Z", "Solano"),
+                             _fila("B", "2026-09-23T10:00:00Z", "Solano")])
+    assert [f["geografia_etiqueta"] for f in vivas] == ["Solano"]
+
+
+def test_el_orden_se_calcula_aqui_y_no_se_confia_en_el_que_venga():
+    """Apoyar la regla en que el servidor devuelva lo que se le pidió es
+    apoyarla en algo que no se comprueba."""
+    from api.rutas import lote_vigente
+
+    # A propósito al revés de lo que pide la consulta.
+    vivas, _ = lote_vigente([_fila("B", "2026-09-23T10:00:00Z", "Solano"),
+                             _fila("A", "2026-09-24T10:00:00Z", "Solano")])
+    assert vivas[0]["upload_batch_id"] == "A"
+
+
+def test_con_una_sola_captura_no_hay_anteriores():
+    from api.rutas import lote_vigente
+
+    _v, cuantas = lote_vigente([_fila("A", "2026-09-22T20:07:00Z", "Solano")])
+    assert cuantas["lotes"] == 1 and cuantas["anteriores"] == 0
+
+
+def test_sin_capturas_devuelve_vacio_sin_reventar():
+    from api.rutas import lote_vigente
+
+    vivas, cuantas = lote_vigente([])
+    assert vivas == [] and cuantas["lotes"] == 0
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
