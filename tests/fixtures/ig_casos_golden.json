@@ -1,0 +1,422 @@
+{
+  "version_lexico": "ig-2026.09.23-v2",
+  "nota": "Casos reales del lote ig_signals 2026-09-23, ANONIMIZADOS para el repo publico: sin handles de personas, sin emails, texto recortado a lo minimo que dispara la regla. La correspondencia con los perfiles reales vive solo en el proyecto Prospecting, no en git.",
+  "clase_perfil": [
+    {
+      "id": "perfil_A",
+      "entrada": {
+        "estado": "Texas",
+        "geotags_top": "Panama City, Panama (2)",
+        "captions": [
+          "2023-05-27 | GALLO ESPAÑOL IMPORTADO DISPONIBLE PARA ENTREGA EN PANAMA",
+          "2023-01-07 | DISPONIBLE LINEA GALLINO"
+        ]
+      },
+      "esperado": {
+        "clase": "persona_equivocada",
+        "qualifiers": [],
+        "categorias": [],
+        "nota": "'disponible' solo NO hace post de real estate"
+      }
+    },
+    {
+      "id": "perfil_B",
+      "entrada": {
+        "estado": "California",
+        "captions": [
+          "2026-09-13 | Às vezes precisamos colocar toda energia pra fora",
+          "2026-08-24 | Obrigada por tudo, você é meu amor, não esqueça"
+        ]
+      },
+      "esperado": {
+        "clase": "persona_equivocada",
+        "idioma": "pt",
+        "P-Q14": null
+      }
+    },
+    {
+      "id": "perfil_C",
+      "entrada": {
+        "estado": "Texas",
+        "captions": [
+          "2026-09-04 | He was soo proud #dmvrealestate"
+        ],
+        "geotags_top": "Arlington, Virginia (1), Washington D. C. (1)"
+      },
+      "esperado": {
+        "clase": "persona_equivocada"
+      }
+    },
+    {
+      "id": "perfil_D",
+      "entrada": {
+        "estado": "Texas",
+        "captions": [
+          "2026-09-10 | Protección en dólares desde USD 160.000 ... Escríbeme: +57 300 000 0000"
+        ]
+      },
+      "esperado": {
+        "clase_en": [
+          "re_fuera_eeuu",
+          "persona_equivocada"
+        ],
+        "utilizable": false
+      }
+    },
+    {
+      "id": "perfil_E",
+      "entrada": {
+        "mismo_handle_en_leads": [
+          "lead_1",
+          "lead_2"
+        ]
+      },
+      "esperado": {
+        "clase": "persona_equivocada",
+        "motivo_contiene": "más de un lead",
+        "aplica_a": "ambos leads hasta verificar"
+      }
+    },
+    {
+      "id": "perfil_F",
+      "entrada": {
+        "estado": "Texas",
+        "geotags_top": "El Paso County (2), Santa Teresa, New Mexico (1), Sunland Park, New Mexico (1)"
+      },
+      "esperado": {
+        "clase": "realtor_activo",
+        "nota": "New Mexico es EE. UU."
+      }
+    },
+    {
+      "id": "perfil_G",
+      "entrada": {
+        "estado_perfil": "publico_leido",
+        "captions_n": 0
+      },
+      "esperado": {
+        "clase": "sin_datos",
+        "senales": "None (no 0)"
+      }
+    },
+    {
+      "id": "perfil_H",
+      "entrada": {
+        "captions_n": 19,
+        "posts_re": 0,
+        "ultimo_post": "2022-10-14"
+      },
+      "esperado": {
+        "clase": "personal_sin_re",
+        "utilizable": false,
+        "nota": "contenido antes que inactividad (correccion A5)"
+      }
+    },
+    {
+      "id": "nuevo_panama_city_fl",
+      "entrada": {
+        "estado": "Florida",
+        "geotags_top": "Panama City Beach, Florida (2), Destin, Florida (1)",
+        "posts_re": "15 de 20"
+      },
+      "esperado": {
+        "clase": "realtor_activo",
+        "nota": "correccion A1"
+      }
+    },
+    {
+      "id": "nuevo_vacaciones_cancun",
+      "entrada": {
+        "estado": "Texas",
+        "geotags_top": "Cancún, Quintana Roo (2)",
+        "posts_re": "18 de 20, listados en San Antonio TX"
+      },
+      "esperado": {
+        "clase": "realtor_activo",
+        "opera_tambien_fuera": false,
+        "nota": "correccion A2: geotags de viaje no bastan"
+      }
+    },
+    {
+      "id": "nuevo_personal_con_palabras_debiles",
+      "entrada": {
+        "captions": [
+          "Finally got the keys to our new boat!",
+          "Closing out summer with the family",
+          "Pending: my birthday party"
+        ]
+      },
+      "esperado": {
+        "posts_re": 0,
+        "nota": "correccion A3: un debil solo no cuenta"
+      }
+    },
+    {
+      "id": "nuevo_loan_officer",
+      "entrada": {
+        "bio": "Loan Officer | NMLS 123456",
+        "captions": [
+          "Business owner? I have multiple loan strategies for you"
+        ]
+      },
+      "esperado": {
+        "clase": "otro_perfil",
+        "es_originador": true,
+        "revisar": true,
+        "nota": "correccion A6 · regla 7 descarte; NMLS 2129 = exclusion dura"
+      }
+    },
+    {
+      "id": "nuevo_wholesaler",
+      "entrada": {
+        "captions": [
+          "We purchased this property below market value from our direct-to-seller marketing",
+          "Another wholesale deal closed"
+        ]
+      },
+      "esperado": {
+        "clase": "otro_perfil",
+        "revisar": true
+      }
+    },
+    {
+      "id": "nuevo_reproducible",
+      "entrada": {
+        "capturado_en": "2026-09-23",
+        "ultimo_post": "2026-05-01"
+      },
+      "esperado": {
+        "inactivo": false,
+        "nota": "correccion A4: se mide contra capturado_en, no contra hoy"
+      }
+    }
+  ],
+  "senales": [
+    {
+      "id": "sen_01",
+      "cita": "Aceptamos ITIN (Personas con ITIN califican)",
+      "esperado": {
+        "P-Q01": [
+          3,
+          "E0"
+        ],
+        "acto_de_habla": "AFIRMA"
+      }
+    },
+    {
+      "id": "sen_02",
+      "cita": "PRESTAMOS CON TAX ID ✔️ PRESTAMO SIN CRÉDITO",
+      "repeticiones": 12,
+      "esperado": {
+        "P-Q01": [
+          3,
+          "E0"
+        ],
+        "posts_distintos": 1
+      }
+    },
+    {
+      "id": "sen_03",
+      "cita": "Trabajas por tu cuenta y pensabas que necesitabas tus taxes para comprar casa?",
+      "esperado": {
+        "P-Q01": [
+          3,
+          "E0"
+        ]
+      }
+    },
+    {
+      "id": "sen_04",
+      "cita": "Got denied by the bank? This home doesn't require bank approval. Owner financing available",
+      "esperado": {
+        "P-Q01": [
+          2,
+          "E1"
+        ]
+      }
+    },
+    {
+      "id": "sen_05",
+      "cita": "help business owners, investors, and property owners make confident moves #CommercialRealEstate",
+      "esperado": {
+        "P-Q01": null
+      }
+    },
+    {
+      "id": "sen_06",
+      "cita": "ideal para contratistas, carpinteros, constructores o trabajadores independientes que buscan mayor capacidad",
+      "esperado": {
+        "P-Q01": null
+      }
+    },
+    {
+      "id": "sen_07",
+      "cita": "potencial estudio independiente ¡Uno de ellos tiene su propia entrada!",
+      "esperado": {
+        "P-Q01": null
+      }
+    },
+    {
+      "id": "sen_08",
+      "cita": "2 months of recent Paystubs • 2 most recent bank statements",
+      "esperado": {
+        "P-Q01_por_self_employed": null
+      }
+    },
+    {
+      "id": "sen_09",
+      "cita": "Qualifies for 0% down financing 3 beds, 2 baths",
+      "esperado": {
+        "P-Q07": [
+          2,
+          "E1"
+        ],
+        "acto_de_habla": "PREGUNTA"
+      }
+    },
+    {
+      "id": "sen_10",
+      "cita": "helped MANY families become homeowners with zero money down using grants, down payment assistance programs",
+      "esperado": {
+        "P-Q07": [
+          2,
+          "E1"
+        ],
+        "nota": "3/E0 solo con >=2 posts distintos"
+      }
+    },
+    {
+      "id": "sen_11",
+      "cita": "Congratulations to my amazing VA buyer",
+      "esperado": {
+        "P-Q17": [
+          2,
+          "E1"
+        ]
+      }
+    },
+    {
+      "id": "sen_12",
+      "cita": "#MilitaryFamilies ... MRP MilitaryCityUSA",
+      "esperado": {
+        "P-Q17": [
+          3,
+          "E0"
+        ]
+      }
+    },
+    {
+      "id": "sen_13",
+      "cita": "Foreclosure activity is rising, and Texas continues to see significant foreclosure activity",
+      "esperado": {
+        "P-Q19_3": false
+      }
+    },
+    {
+      "id": "sen_14",
+      "cita": "Credit repair companies. ... 30 DAYS LATER: credit restoration GRADUATE ➡️ HOMEOWNER",
+      "esperado": {
+        "P-Q19": [
+          3,
+          "E0"
+        ]
+      }
+    },
+    {
+      "id": "sen_15",
+      "cita": "Una comunidad bilingüe que sigue creciendo en el suroeste de Florida",
+      "esperado": {
+        "es_decl": false
+      }
+    },
+    {
+      "id": "sen_16",
+      "cita": "Te conecto con un lender de confianza que habla español",
+      "esperado": {
+        "es_decl": true,
+        "S6": "menciona lender (sin nombre)"
+      }
+    },
+    {
+      "id": "sen_17",
+      "entrada": {
+        "bio": "Bilingual | English & Español",
+        "idioma_publica": "0 es / 20 en"
+      },
+      "esperado": {
+        "P-Q14_max": [
+          1,
+          "E1"
+        ]
+      }
+    },
+    {
+      "id": "sen_18",
+      "cita": "comentarios de seguidores preguntando si califican",
+      "esperado": {
+        "P-Q12": [
+          2,
+          "E1"
+        ],
+        "nota": "texto de terceros: maximo 2"
+      }
+    },
+    {
+      "id": "sen_19",
+      "cita": "Won an Airbnb gift card at the office raffle!",
+      "esperado": {
+        "invers": false,
+        "nota": "correccion A8"
+      }
+    }
+  ],
+  "s6_cuentas": [
+    {
+      "cuenta": "@titleist",
+      "esperado": "otro (marca de golf), NO lender"
+    },
+    {
+      "cuenta": "@providencetitlecompany",
+      "esperado": "title"
+    },
+    {
+      "cuenta": "@creditbyana_ejemplo",
+      "esperado": "credit_repair"
+    },
+    {
+      "cuenta": "@youragent_ejemplo",
+      "esperado": "agente, NO lender"
+    },
+    {
+      "cuenta": "carlo_ejemplo",
+      "esperado": "NO lender (contiene 'lo_' por subcadena)"
+    },
+    {
+      "cuenta": "@ejemploloans",
+      "empresa": "Supreme Mortgage (PA)",
+      "esperado": "lender/verificar; NO excluir por subcadena 'supreme': solo NMLS 2129 excluye"
+    }
+  ],
+  "parseo_seguidores": [
+    {
+      "entrada": "1.234",
+      "esperado": 1234
+    },
+    {
+      "entrada": "12,5K",
+      "esperado": 12500
+    },
+    {
+      "entrada": "12.5K",
+      "esperado": 12500
+    },
+    {
+      "entrada": "1,2 M",
+      "esperado": 1200000
+    },
+    {
+      "entrada": "",
+      "esperado": null
+    }
+  ]
+}
