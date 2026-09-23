@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Mesa de trabajo · Homesí</title>
+<title>HomeSí Prospector</title>
 <!--
   La paleta viene PORTADA de commercial-activity, no escrita aca. Ver la
   cabecera de tokens.css: si hay que actualizarla se vuelve a bajar el archivo.
@@ -57,9 +57,9 @@ html, body { height: 100% }
 <body>
 <header class="hub-header">
   <span class="marca"></span>
-  <h1>Mesa de trabajo</h1>
+  <h1>HomeSí Prospector</h1>
   <span class="sub" id="estadoGlobal">cargando…</span>
-  <span class="sub">Homesí · PACS-H</span>
+  <span class="sub">PACS-H</span>
 </header>
 
 <div class="wrap">
@@ -155,7 +155,9 @@ function pintarLista(){
 
 function abrir(id){
   SEL = FILAS.find(f => f.id === id);
-  TAB = 'mercados';
+  /* Abre por la LECTURA, que es lo que se mira primero. Capturar es una
+     acción; leer es para lo que se abre una ficha. */
+  TAB = 'lectura';
   pintarLista();
   pintarFicha();
 }
@@ -164,22 +166,31 @@ function abrir(id){
 /* `Model Match` YA no está deshabilitada: no necesita el motor, sólo lee
    `parseado` de la base y lo muestra. Las otras siguen apagadas porque su
    contenido sí se consume del motor de Python. */
+/* `Dossier A–G` y `Secuencia 60 días` siguen apagadas, y NO por el motor:
+   nadie ha verificado que existan los recursos que el copy promete. Hasta que
+   eso pase, cada toque que prometa un recurso va marcado recurso_sin_verificar
+   y la secuencia no sale. */
 const PESTANAS = [
-  ['lectura','Lectura del perfil',false],
-  ['calculo','Cómo se calculó',false],
+  ['lectura','Lectura del perfil',true],
+  ['calculo','Cómo se calculó',true],
   ['mm','Model Match',true],
   ['mercados','Mercados',true],
   ['ig','Instagram',false],
   ['dossier','Dossier A–G',false],
   ['seq','Secuencia 60 días',false],
 ];
+const PORQUE_APAGADA = {
+  ig: 'el scraper corre aparte; la carga a la base todavía no',
+  dossier: 'nadie verificó que existan los recursos que el copy promete',
+  seq: 'no sale hasta que los recursos estén verificados',
+};
 
 function pintarFicha(){
   if(!SEL){ $('#detalle').innerHTML = '<div class="vacio">Elegí un realtor.</div>'; return }
   const tabs = PESTANAS.map(([k,t,activa]) =>
     `<button class="tab" role="tab" aria-selected="${TAB===k}" data-tab="${k}"
       ${activa?'':'disabled'}
-      title="${activa?'':'todavía no: el contenido se consume del motor de Python'}">${t}</button>`
+      title="${activa?'':esc(PORQUE_APAGADA[k]||'todavía no')}">${t}</button>`
   ).join('');
   $('#detalle').innerHTML = `
     <h1>${esc(SEL.nombre_completo)}</h1>
@@ -193,6 +204,131 @@ function pintarFicha(){
   });
   if(TAB === 'mercados') vMercados();
   if(TAB === 'mm') vModelMatch();
+  if(TAB === 'lectura' || TAB === 'calculo') vLectura(TAB);
+}
+
+/* ══ LECTURA DEL PERFIL · y CÓMO SE CALCULÓ ════════════════════════════════
+ * La misma información a dos profundidades: arriba lo que se lee, abajo de
+ * dónde salió. Se piden en una sola llamada para que no puedan discrepar.
+ */
+const VEREDICTO_BADGE = {
+  'es nuestro cliente':            ['mql', '✓'],
+  'no es nuestro cliente':         ['excluido', '⛔'],
+  'fricción que podemos resolver': ['bloqueado', '▲'],
+  'señal de alerta':               ['excluido', '⚠'],
+  'neutro':                        ['sin-evaluar', '▣'],
+};
+
+async function vLectura(cual){
+  $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
+  try{
+    const d = await api('/api/lectura?realtor_id=' + encodeURIComponent(SEL.id));
+    LECTURA = d;
+    $('#cuerpo').innerHTML = cual === 'lectura' ? vistaLectura(d) : vistaCalculo(d);
+  }catch(e){
+    $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+let LECTURA = null;
+
+function vistaLectura(d){
+  /* El caso más frecuente va PRIMERO y como titular, no como nota al pie. */
+  const sd = d.sin_dolor ? `
+    <div class="banner">
+      <div class="seccion">El caso más frecuente del lote</div>
+      <div style="font-size:15px;font-weight:700;line-height:1.45">${esc(d.sin_dolor.titular)}</div>
+      <div class="pista" style="margin-top:10px">${esc(d.sin_dolor.cuerpo)}</div>
+    </div>
+    <div class="tarjeta">
+      <div class="seccion">Por dónde abrir</div>
+      <h2>${esc(d.sin_dolor.apertura)}</h2>
+      <p class="sub">Es la pregunta del lender, y va igual en todas: cierra la
+        categoría vacía en el 100% de las filas.</p>
+      <div style="margin-top:10px">
+        <span class="badge bloqueado"><i>▲</i>cola de ${esc(d.sin_dolor.cola)}</span>
+        <span class="badge sin-evaluar"><i>▣</i>rama: ${esc(d.sin_dolor.rama)}</span>
+      </div>
+      <div class="seccion" style="margin-top:14px">Lo que falta conseguir</div>
+      <ul class="lista">${d.sin_dolor.falta.map(f =>
+        `<li>${esc(f)}</li>`).join('')}</ul>
+    </div>` : '';
+
+  const lecturas = (d.lecturas||[]).map(l => {
+    const [clase, icono] = VEREDICTO_BADGE[l.bueno_o_malo] || ['sin-evaluar','▣'];
+    return `<div class="tarjeta">
+      <div class="seccion">${esc(l.titulo)}</div>
+      <span class="badge ${clase}"><i>${icono}</i>${esc(l.bueno_o_malo)}</span>
+      ${l.afirma ? '' : '<span class="badge sin-evaluar"><i>?</i>no afirma: pregunta</span>'}
+      <p style="margin:12px 0 0;font-size:13px;line-height:1.6;color:var(--slate-800)">
+        ${esc(l.que_dice_del_borrower)}</p>
+      <div class="seccion" style="margin-top:14px">Qué hacer</div>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:var(--navy);font-weight:600">
+        ${esc(l.que_hacer)}</p>
+    </div>`;
+  }).join('');
+
+  const zona = d.perfil_de_la_zona ? `
+    <div class="tarjeta">
+      <div class="seccion">A quién le vende · ${esc(d.perfil_de_la_zona.donde || '')}</div>
+      <p style="margin:6px 0 0;font-size:13px;line-height:1.65">
+        ${esc(d.perfil_de_la_zona.texto)}</p>
+      <p class="sub" style="margin-top:10px">Describe a los compradores de la
+        zona, no al realtor.${d.tiene_census ? '' : ' Sin Census del condado todavía.'}</p>
+    </div>` : '';
+
+  return sd + lecturas + zona ||
+    '<div class="tarjeta pista">Nada que leer todavía para este realtor.</div>';
+}
+
+function vistaCalculo(d){
+  const ev = d.evaluacion;
+  if(!ev) return `<div class="tarjeta">
+    <div class="seccion">Cómo se calculó</div>
+    <span class="badge sin-evaluar"><i>▣</i>sin evaluar</span>
+    <p class="sub" style="margin-top:8px">Este realtor no tiene evaluación
+      vigente en <code>v_evaluacion_actual</code>.</p></div>`;
+
+  const lista = (xs, vacio) => (xs && xs.length)
+    ? `<ul class="lista">${xs.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
+    : `<p class="sub">${vacio}</p>`;
+
+  return `
+    <div class="tarjeta">
+      <div class="seccion">Diagnóstico</div>
+      <div class="grid2" style="margin-top:10px">
+        <div><span class="pista">dolor primario</span><br>
+          <b style="color:var(--navy)">${esc(ev.dolor_primario || '—')}</b></div>
+        <div><span class="pista">gating</span><br>
+          <b style="color:var(--navy)">${esc(ev.gating_qualifier || '—')}</b>
+          <span class="num">${ev.gating_intensidad ?? ''}</span></div>
+        <div><span class="pista">apertura</span><br>
+          <b style="color:var(--navy)">${esc(ev.apertura || '—')}</b></div>
+        <div><span class="pista">reglas</span><br>
+          <code>${esc(ev.version_reglas || '')}</code></div>
+      </div>
+    </div>
+    <div class="tarjeta">
+      <div class="seccion">Dolores secundarios</div>
+      ${lista(ev.dolores_secundarios, 'ninguno')}
+      <div class="seccion" style="margin-top:14px">Moduladores</div>
+      ${lista(ev.moduladores, 'ninguno')}
+    </div>
+    <div class="tarjeta">
+      <div class="seccion">La cadena de evidencia de cada lectura</div>
+      <p class="sub">Una lectura sin su evidencia es una opinión.</p>
+      <ul class="lista" style="margin-top:10px">${(d.lecturas||[]).map(l =>
+        `<li><b>${esc(l.titulo)}</b><br><code>${esc(l.evidencia)}</code></li>`
+      ).join('') || '<li class="pista">sin contrastes calculados</li>'}</ul>
+    </div>
+    <div class="tarjeta">
+      <div class="seccion">Lo que NO se pudo evaluar</div>
+      <p class="sub">Campos ausentes y reglas que quedaron sin decidir. Es lo
+        que separa «no cumple» de «no lo pudimos mirar».</p>
+      ${lista(ev.campos_ausentes, 'ningún campo ausente')}
+      <div class="seccion" style="margin-top:14px">Reglas no evaluadas</div>
+      <p class="num" style="font-size:18px;font-weight:800;color:var(--navy)">
+        ${(ev.no_evaluadas||[]).length}</p>
+    </div>`;
 }
 
 /* ══ LA CONFIRMACIÓN ═══════════════════════════════════════════════════════

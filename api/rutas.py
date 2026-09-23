@@ -36,7 +36,8 @@ from captura.protocolo import (  # noqa: E402
 )
 
 CAMPOS_LISTA = ("id,nombre_completo,brokerage,estado,email_principal,"
-                "telefono_e164,unidades_ano,sf_lead_id,sin_llave_dura")
+                "telefono_e164,unidades_ano,sf_lead_id,sin_llave_dura,"
+                "condado_fips")
 TOPE = 300
 
 #: Con que etiqueta entra cada dato de contacto de Model Match.
@@ -697,10 +698,147 @@ def capturas(params: dict) -> tuple[int, dict]:
     return 200, {"capturas": salida, "total": len(salida)}
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+
+def lectura(params: dict) -> tuple[int, dict]:
+    """La ficha de un realtor EN PALABRAS, con su cadena de evidencia.
+
+    Devuelve las dos pestañas de una vez -- `Lectura del perfil` y `Como se
+    calculo`-- porque son la misma informacion a dos profundidades, y partirlas
+    en dos peticiones las dejaria poder discrepar.
+    """
+    from motor.contrastes import mix_de_programa
+    from motor.lectura import (
+        leer_canal_tpo,
+        leer_mix_fha,
+        leer_perfil_del_comprador,
+    )
+    from motor.sin_dolor import copy_sin_dolor
+
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+
+    cod, filas, _ = leer(
+        "realtors",
+        "?select=%s&id=eq.%s" % (CAMPOS_LISTA, urllib.parse.quote(realtor_id)))
+    if cod >= 400 or not filas:
+        return (cod if cod >= 400 else 404), {"error": "realtor no encontrado"}
+    realtor = filas[0]
+
+    # La evaluacion VIGENTE, nunca la tabla: `count(*)` sobre append-only
+    # cuenta corridas, no personas.
+    _c, evs, _ = leer(
+        "v_evaluacion_actual",
+        "?select=dolor_primario,dolores_secundarios,moduladores,apertura,"
+        "gating_qualifier,gating_intensidad,confianza,campos_ausentes,"
+        "no_evaluadas,version_reglas,evaluado_en"
+        "&realtor_id=eq.%s" % urllib.parse.quote(realtor_id))
+    ev = (evs or [None])[0]
+
+    # El perfil y los mercados de sus capturas vivas.
+    _c, crudas, _ = leer(
+        "v_capturas_modelmatch_current",
+        "?select=parseado,geografia_etiqueta,geografia_nivel,estado"
+        "&parseado->>realtor_id=eq.%s" % urllib.parse.quote(realtor_id))
+    perfiles, mercados = [], []
+    for f in crudas or []:
+        p = f.get("parseado") or {}
+        if p.get("perfil"):
+            perfiles.append(p["perfil"])
+        if p.get("metricas"):
+            mercados.append({
+                "nivel": f.get("geografia_nivel") or p.get("nivel"),
+                "estado": f.get("estado"),
+                "etiqueta": (f.get("geografia_etiqueta")
+                             or p.get("etiqueta_geografica")),
+                "metricas": p["metricas"]})
+    unido = unir_perfiles(perfiles)
+    mercados.sort(key=lambda m: (m["nivel"] != "estado", m["etiqueta"] or ""))
+
+    nombre = (realtor.get("nombre_completo") or "").strip()
+    if nombre.isupper():
+        nombre = nombre.title()
+
+    # El Census del condado donde opera, si lo hay.
+    censo = None
+    if realtor.get("condado_fips"):
+        _c, cc, _ = leer("census_condados",
+                         "?select=nombre,variables&condado_fips=eq.%s"
+                         % urllib.parse.quote(realtor["condado_fips"]))
+        if cc:
+            censo = (cc[0].get("variables") or {}).get("_derivadas")
+
+    lecturas = []
+    mix = unido.get("loan_mix_buyer") or {}
+    for c in mix_de_programa(mix, mercados, tipo="FHA"):
+        lec = leer_mix_fha(c, nombre)
+        lecturas.append({"titulo": "Mix de programa · %s" % c.geografia,
+                         "que_dice_del_borrower": lec.que_dice_del_borrower,
+                         "bueno_o_malo": lec.bueno_o_malo,
+                         "que_hacer": lec.que_hacer,
+                         "evidencia": lec.evidencia, "afirma": lec.afirma})
+
+    canal = next((m for m in mercados if (m["metricas"] or {}).get(
+        "loan_channel")), None)
+    if canal:
+        lec = leer_canal_tpo(
+            unido.get("tpo_pct"), canal["metricas"].get("loan_channel"),
+            nombre, canal["etiqueta"] or "su mercado",
+            canal["metricas"].get("fallout"))
+        lecturas.append({"titulo": "Canal · %s" % canal["etiqueta"],
+                         "que_dice_del_borrower": lec.que_dice_del_borrower,
+                         "bueno_o_malo": lec.bueno_o_malo,
+                         "que_hacer": lec.que_hacer,
+                         "evidencia": lec.evidencia, "afirma": lec.afirma})
+
+    # El perfil se lee del condado DOMINANTE, no del primero alfabetico. Para
+    # Armando eso es Solano (5 unidades) y no Alameda (1): describir la zona
+    # donde casi no opera es describir a otra gente.
+    perfil_zona = None
+    if mercados:
+        dominante = None
+        if censo is not None and realtor.get("condado_fips"):
+            _c, nc, _ = leer("census_condados",
+                             "?select=nombre&condado_fips=eq.%s"
+                             % urllib.parse.quote(realtor["condado_fips"]))
+            if nc:
+                corto = (nc[0].get("nombre") or "").split(" County")[0]
+                dominante = next(
+                    (x for x in mercados
+                     if (x["etiqueta"] or "").lower() == corto.lower()), None)
+        m = (dominante
+             or next((x for x in mercados if x["nivel"] == "condado"),
+                     mercados[0]))
+        perfil_zona = {"donde": m["etiqueta"],
+                       "texto": leer_perfil_del_comprador(
+                           m["metricas"], censo, m["etiqueta"] or "la zona")}
+
+    sin_dolor = None
+    if not (ev or {}).get("dolor_primario"):
+        c = copy_sin_dolor(realtor,
+                           nombre_estado=ESTADOS.get(realtor.get("estado")))
+        sin_dolor = {"titular": c.titular, "cuerpo": c.cuerpo,
+                     "apertura": c.apertura, "cola": c.cola, "rama": c.rama,
+                     "falta": list(c.falta)}
+
+    return 200, {
+        "realtor": {**realtor, "nombre_mostrado": nombre,
+                    "estado_nombre": ESTADOS.get(realtor.get("estado"))},
+        "evaluacion": ev,
+        "lecturas": lecturas,
+        "perfil_de_la_zona": perfil_zona,
+        "sin_dolor": sin_dolor,
+        "mercados": len(mercados),
+        "tiene_census": censo is not None,
+    }
+
+
 #: ruta -> (funcion, metodo)
 RUTAS = {
     "/api/realtors": (realtors, "GET"),
     "/api/geografias": (geografias, "GET"),
     "/api/capturas": (capturas, "GET"),
+    "/api/lectura": (lectura, "GET"),
     "/api/guardar": (guardar, "POST"),
 }
