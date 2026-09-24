@@ -325,6 +325,73 @@ def test_una_hipotesis_viene_marcada_como_hipotesis():
     assert "No sabemos si" in r["texto"]
 
 
+# ══ 7 · PRODUCCIÓN: los LOs bajo cada lender y el orden del loan mix ════════
+
+def test_los_LOs_se_buscan_con_el_nombre_AGRUPADO_del_lender():
+    """El conteo dice «Guaranteed Rate» y la fila «Guaranteed Rate Inc».
+
+    Comparando el nombre crudo, los cuatro lenders con sufijo societario
+    salían sin un solo LO y el único con detalle era «Peoples Bank», que es el
+    que no lleva sufijo. No fallaba nada: la caja se titula «Lenders y LOs» y
+    mostraba lenders sin LOs, que se lee como que el dato no existe.
+    """
+    from api.rutas import _los_del_lender
+
+    # En el orden en que llegan de verdad: de la más nueva a la más vieja.
+    filas = [
+        {"lado": "compra", "lender": "Guaranteed Rate Inc",
+         "lo_nombre": "Brian Dombrowski", "fecha": "2026-07-30", "tasa": None},
+        {"lado": "compra", "lender": "Guaranteed Rate, Inc.",
+         "lo_nombre": "Fabian Viera", "fecha": "2026-04-03", "tasa": None},
+        {"lado": "compra", "lender": "Guaranteed Rate Inc",
+         "lo_nombre": "Fabian Viera", "fecha": "2026-03-19", "tasa": None},
+        {"lado": "venta", "lender": "Guaranteed Rate Inc",
+         "lo_nombre": "Nadie De Este Lado", "fecha": "2026-05-05",
+         "tasa": None},
+    ]
+    d = _los_del_lender(filas, "Guaranteed Rate")
+    assert d == "Fabian Viera (19 mar y 3 abr) · Brian Dombrowski (30 jul)", d
+    # El lado vendedor no entra: la caja es de los buyers de ella.
+    assert "Nadie" not in d
+
+
+def test_el_rate_solo_acompana_al_lender_de_UNA_sola_operacion():
+    """Con una operación el rate es un dato; con cinco sería un promedio."""
+    from api.rutas import _los_del_lender
+
+    una = [{"lado": "compra", "lender": "Angel Oak Mortgage Solutions Llc",
+            "lo_nombre": "Mason Sorrels", "fecha": "2026-02-17",
+            "tasa": 7.62}]
+    assert (_los_del_lender(una, "Angel Oak Mortgage Solutions")
+            == "Mason Sorrels (17 feb) · rate 7,62 %")
+
+    dos = una + [{"lado": "compra", "lender": "Angel Oak Mortgage Solutions",
+                  "lo_nombre": "Otra Persona", "fecha": "2026-03-01",
+                  "tasa": 6.1}]
+    assert "rate" not in _los_del_lender(dos, "Angel Oak Mortgage Solutions")
+
+
+def test_el_loan_mix_va_de_mayor_a_menor_y_Pendiente_al_final():
+    """El orden ES la lectura: una barra sin ordenar obliga a leer números."""
+    from api.rutas import _loan_mix
+
+    filas = _loan_mix(
+        {"Conventional": 5, "HE": 1, "FHA": 2},
+        {"cash_segun_mm": 9, "cash_provisional": 1})
+    assert [f["tipo"] for f in filas] == [
+        "Cash", "Conventional", "FHA", "Home Equity", "Pendiente"], filas
+    # `HE` no se entiende sola; `Pendiente` no es un tipo de préstamo, es que
+    # Model Match todavía no lo sabe, así que va último aunque empate.
+    assert filas[-1] == {"tipo": "Pendiente", "n": 1}
+
+
+def test_sin_cash_no_se_muestra_una_barra_de_cero():
+    from api.rutas import _loan_mix
+
+    filas = _loan_mix({"FHA": 2}, {"cash_segun_mm": 0, "cash_provisional": 0})
+    assert filas == [{"tipo": "FHA", "n": 2}], filas
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

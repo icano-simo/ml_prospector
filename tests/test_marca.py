@@ -192,8 +192,13 @@ def test_no_hay_identificadores_declarados_dos_veces_en_la_misma_funcion():
         html = fh.read()
 
     script = html.split("<script>")[-1].split("</script>")[0]
-    # Se parte por `function nombre(`, que es como esta escrito todo el archivo.
-    trozos = re.split(r"\nfunction\s+(\w+)\s*\(", script)
+    # Se parte por `function nombre(` Y por `async function nombre(`. Sin el
+    # `async` las vistas --que son todas async-- caian dentro del trozo de la
+    # funcion anterior, asi que dos `const mia` en DOS vistas distintas se
+    # contaban como uno repetido en la misma: un falso positivo. Y al reves,
+    # lo que esta prueba busca de verdad --un `const` repetido en el MISMO
+    # scope-- no se miraba en ninguna vista.
+    trozos = re.split(r"\n(?:async\s+)?function\s+(\w+)\s*\(", script)
     problemas = []
     for i in range(1, len(trozos), 2):
         nombre, cuerpo = trozos[i], trozos[i + 1]

@@ -30,6 +30,7 @@ from captura.cajas import (  # noqa: E402
 )
 from captura.pertenencia import comprobar  # noqa: E402
 from motor.evaluar import VERSION_REGLAS  # noqa: E402
+from motor.fechas import dia_y_mes, fecha_legible  # noqa: E402
 from motor.veredicto import puede_contactarse  # noqa: E402
 from captura.trampas import es_de_la_casa, share_de_la_casa  # noqa: E402
 from captura.parser_mm import (  # noqa: E402
@@ -41,6 +42,7 @@ from captura.parser_mm import (  # noqa: E402
 from captura.transacciones import (  # noqa: E402
     NUNCA_SE_GUARDAN,
     crudo_redactado,
+    nombre_de_lender,
     parsear_transacciones,
 )
 from captura.transacciones import resumen as resumen_de_transacciones  # noqa: E402
@@ -346,7 +348,12 @@ def ficha_v3(params: dict) -> tuple[int, dict]:
         # 1 · quién es y contacto
         "quien_es": {
             "nombre": realtor.get("nombre_completo"),
-            "iniciales": iniciales(realtor.get("nombre_completo")),
+            # El de la captura, cuando lo hay: Isabella confirmó al capturar
+            # que es la misma persona, así que su forma manda sobre la del
+            # volcado del libro.
+            "nombre_mm": (perfil or {}).get("nombre"),
+            "iniciales": iniciales((perfil or {}).get("nombre")
+                                   or realtor.get("nombre_completo")),
             "brokerage": realtor.get("brokerage"),
             "estado": ESTADOS.get(realtor.get("estado")) or realtor.get("estado"),
             "unidades_ano": realtor.get("unidades_ano"),
@@ -502,7 +509,12 @@ def _ficha_solo_codigo(base: dict) -> dict:
 
     return {
         "cabecera": {
-            "nombre": q.get("nombre"), "iniciales": q.get("iniciales"),
+            # El nombre de la CAPTURA, no el del libro. El libro los trae en
+            # mayúsculas --«ANA OSORIO»-- porque es un volcado, y Model Match
+            # trae el que ella usa. En una ficha que el BD lee antes de llamar,
+            # gritar el nombre es la primera cosa que se nota.
+            "nombre": q.get("nombre_mm") or q.get("nombre"),
+            "iniciales": q.get("iniciales"),
             "meta": " · ".join(x for x in (q.get("brokerage"), q.get("estado"))
                                if x),
             "contactos": [
@@ -535,13 +547,9 @@ def _ficha_solo_codigo(base: dict) -> dict:
             "trimestres_nota": _nota_de_trimestres(filas),
             "loan_mix_titulo": ("Loan type de sus %d buys" % c["total"]
                                 if c.get("total") else "Loan type de sus buys"),
-            "loan_mix": ([{"tipo": k, "n": n}
-                          for k, n in (r.get("loan_mix_compra") or {}).items()]
-                         + [{"tipo": "Cash", "n": c.get("cash_segun_mm") or 0}]
-                         + ([{"tipo": "Pendiente",
-                              "n": c.get("cash_provisional")}]
-                            if c.get("cash_provisional") else [])),
-            "lenders": [{"lender": k, "n": n, "detalle": ""}
+            "loan_mix": _loan_mix(r.get("loan_mix_compra") or {}, c),
+            "lenders": [{"lender": k, "n": n,
+                         "detalle": _los_del_lender(filas, k)}
                         for k, n in (r.get("lenders_compra") or {}).items()],
             "operaciones": filas,
         }),
@@ -549,7 +557,7 @@ def _ficha_solo_codigo(base: dict) -> dict:
             None if not ig else
             "Instagram · @%s%s" % (ig.get("handle") or "—",
                                    (" · leído el %s"
-                                    % str(ig.get("leido_en") or "")[:10])
+                                    % fecha_legible(ig.get("leido_en")))
                                    if ig.get("leido_en") else ""))},
         "fuentes": _texto_de_fuentes(base.get("fuentes") or {}),
         # `{item, motivo, texto_visible}`: el pie muestra el item corto y cada
@@ -558,6 +566,74 @@ def _ficha_solo_codigo(base: dict) -> dict:
         # distinto de la maqueta, que nombra el estado.
         "pendientes": _pendientes_visibles(base, prod),
     }
+
+
+#: Cómo se llaman los tipos de préstamo cuando alguien los lee. Model Match
+#: abrevia; la maqueta los escribe. `HE` es la única que no se entiende sola.
+_NOMBRE_DEL_TIPO = {"HE": "Home Equity"}
+
+
+def _loan_mix(mix: dict, compras: dict) -> list[dict]:
+    """El reparto de tipos de préstamo, de mayor a menor y `Pendiente` al final.
+
+    Salía en el orden en que el parser encontró los tipos --Conventional, HE,
+    FHA, Cash-- y la maqueta lo muestra ordenado. En una lista de barras el
+    orden ES la lectura: sin ordenar hay que recorrer los números para ver cuál
+    manda, que es justo lo que la barra venía a evitar.
+
+    `Pendiente` va último aunque tenga más que otro: no es un tipo de préstamo,
+    es que Model Match todavía no lo sabe.
+    """
+    filas = [{"tipo": _NOMBRE_DEL_TIPO.get(k, k), "n": n}
+             for k, n in (mix or {}).items()]
+    if compras.get("cash_segun_mm"):
+        filas.append({"tipo": "Cash", "n": compras["cash_segun_mm"]})
+    filas.sort(key=lambda f: -f["n"])
+    if compras.get("cash_provisional"):
+        filas.append({"tipo": "Pendiente", "n": compras["cash_provisional"]})
+    return filas
+
+
+def _los_del_lender(filas: list[dict], lender: str) -> str:
+    """«Fabian Viera (19 mar y 3 abr) · Brian Dombrowski (30 jul)».
+
+    El título de esa caja dice «Lenders y LOs de sus buyers» y el campo
+    `detalle` iba en blanco: la ficha prometía los LOs y mostraba solo el
+    conteo. El dato estaba --cada operación trae su `lo_nombre`-- y lo que
+    faltaba era juntarlo.
+
+    El rate se añade solo cuando el lender aparece UNA vez y la operación lo
+    trae: con una sola operación el rate es un dato de esa operación, y es lo
+    que delata un non-QM. Con cinco sería un promedio que nadie pidió.
+
+    La fila se busca con `nombre_de_lender`, que es con lo que se CONTÓ. El
+    conteo dice «Guaranteed Rate» y la fila dice «Guaranteed Rate Inc»:
+    comparando el nombre crudo, cuatro de los cinco lenders se quedaban sin
+    LO y el único que salía era «Peoples Bank», que es el que no lleva sufijo.
+    Un fallo que se ve como un dato que falta, no como un error.
+    """
+    suyas = [f for f in filas
+             if nombre_de_lender(f.get("lender")) == nombre_de_lender(lender)
+             and f.get("lado") != "venta"]
+    # Las operaciones llegan de la más nueva a la más vieja, que es como se
+    # leen en una tabla y NO como se cuenta una relación: «Fabian Viera (3 abr
+    # y 19 mar)» se lee al revés. Dentro de cada LO, las fechas en orden; y los
+    # LOs, por la primera vez que aparecen.
+    por_lo: dict[str, list[str]] = {}
+    for f in suyas:
+        quien = (f.get("lo_nombre") or "").strip()
+        if not quien or not f.get("fecha"):
+            continue
+        por_lo.setdefault(quien, []).append(f["fecha"])
+    partes = []
+    for quien, cuando in sorted(por_lo.items(), key=lambda kv: min(kv[1])):
+        dias = [d for d in (dia_y_mes(x) for x in sorted(cuando)) if d]
+        partes.append("%s (%s)" % (quien, " y ".join(dias)) if dias else quien)
+    texto = " · ".join(partes)
+    if len(suyas) == 1 and suyas[0].get("tasa") is not None:
+        tasa = str(suyas[0]["tasa"]).replace(".", ",")
+        texto = (texto + " · " if texto else "") + "rate %s %%" % tasa
+    return texto
 
 
 def _nota_de_trimestres(filas: list[dict]) -> str | None:
@@ -570,7 +646,7 @@ def _nota_de_trimestres(filas: list[dict]) -> str | None:
     if not fechas:
         return None
     return ("* Trimestres incompletos: los datos empiezan el %s y llegan hasta "
-            "el %s." % (fechas[0], fechas[-1]))
+            "el %s." % (fecha_legible(fechas[0]), fecha_legible(fechas[-1])))
 
 
 def _pendientes_visibles(base: dict, prod: dict | None) -> list[dict]:
@@ -607,11 +683,11 @@ def _texto_de_fuentes(f: dict) -> str:
     partes = []
     if f.get("model_match"):
         partes.append("Model Match (capturado el %s)"
-                      % str(f["model_match"])[:10])
+                      % fecha_legible(f["model_match"]))
     if f.get("instagram"):
-        partes.append("Instagram (leído el %s)" % str(f["instagram"])[:10])
+        partes.append("Instagram (leído el %s)" % fecha_legible(f["instagram"]))
     if f.get("evaluado_en"):
-        partes.append("diagnóstico del %s" % str(f["evaluado_en"])[:10])
+        partes.append("diagnóstico del %s" % fecha_legible(f["evaluado_en"]))
     return " · ".join(partes)
 
 
@@ -1777,11 +1853,21 @@ def guardar(d: dict) -> tuple[int, dict]:
     tx_parseado = None
     texto_tx = (d.get("transacciones") or "").strip()
     if texto_tx:
-        nombre_del_realtor = ficha_del_realtor.get("nombre_completo")
+        # EL NOMBRE DE LA CAPTURA, no el del libro. El libro dice «XOCHIL
+        # ESCOBAR» y Model Match «Xochil Wendy Escobar»: sus 37 operaciones
+        # quedaron sin lado, y sin que nada fallara, porque «sin lado» es un
+        # estado legítimo. Al capturar se confirmó que es la misma persona, así
+        # que la forma de la captura manda.
+        nombre_del_realtor = ((perfil or {}).get("nombre")
+                              if isinstance(perfil, dict) else None)
         tx_parseado, _fallo_tx = _parsear(
             lambda t: parsear_transacciones(t, realtor=nombre_del_realtor,
                                             capturado_en=ahora),
             texto_tx, "Transactions")
+        if isinstance(tx_parseado, dict) and tx_parseado.get("nombre_usado") \
+                != nombre_del_realtor:
+            avisos.append("Transactions · %s"
+                          % tx_parseado.get("por_que_ese_nombre"))
         # EL CRUDO DE ESTA SECCION VA REDACTADO, y es la unica que lo hace.
         #
         # El pegado trae el nombre del comprador, el del vendedor y la calle de

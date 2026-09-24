@@ -369,14 +369,56 @@ def test_sin_pie_no_se_afirma_que_estan_todas():
     assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
 
 
-def test_sin_el_nombre_del_realtor_no_hay_lado_ni_veredicto():
-    """El lado sale de en qué columna aparece su nombre. No se adivina."""
-    from motor.veredicto import PENDIENTE, puede_contactarse
+def test_sin_nombre_el_respaldo_lo_deduce_de_la_propia_tabla():
+    """En su tabla de transacciones, el agente que sale en casi todas es él.
 
+    Antes esto dejaba las 25 sin lado. Y «sin lado» es un estado legítimo, así
+    que no fallaba nada: la ficha salía sin producción y nadie sabía por qué.
+    """
     p = parsear_transacciones(REAL, realtor=None, capturado_en=CAPTURADO)
-    assert p["sin_lado"] == 25
-    assert p["completa"] is False
-    assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
+    assert p["nombre_usado"] == REALTOR
+    assert p["sin_lado"] == 0
+    assert "no aparece en ninguna fila" in p["por_que_ese_nombre"]
+    assert "25 de 25" in p["por_que_ese_nombre"]
+
+
+def test_el_nombre_de_la_captura_manda_sobre_el_de_la_base():
+    """La base dice «XOCHIL ESCOBAR» y Model Match «Xochil Wendy Escobar».
+
+    Son la misma persona --se confirmó al capturar-- pero el de la base no
+    calza con ninguna columna de agente, y con él las 37 operaciones quedaban
+    sin lado.
+    """
+    otro = REAL.replace("Agente Titular", "Xochil Wendy Escobar")
+    # Con el de la CAPTURA: calza.
+    p = parsear_transacciones(otro, realtor="Xochil Wendy Escobar",
+                              capturado_en=CAPTURADO)
+    assert p["nombre_usado"] == "Xochil Wendy Escobar"
+    assert p["sin_lado"] == 0
+    assert p["por_que_ese_nombre"] == "el nombre de la captura de Model Match"
+
+    # Con el de la BASE: no calza, y el respaldo lo rescata diciendo cuál usó.
+    q = parsear_transacciones(otro, realtor="XOCHIL ESCOBAR",
+                              capturado_en=CAPTURADO)
+    assert q["nombre_usado"] == "Xochil Wendy Escobar"
+    assert q["sin_lado"] == 0
+    assert "XOCHIL ESCOBAR" in q["por_que_ese_nombre"]
+
+
+def test_el_respaldo_NO_elige_si_ningun_agente_domina():
+    """El control. Sin él, «el respaldo siempre encuentra a alguien» sería
+    cierto y elegiría al primer agente de una tabla que no es suya."""
+    from captura.transacciones import _celdas_por_fila, nombre_que_manda
+
+    filas = [list(f) for f in _celdas_por_fila(REAL)]
+    # Cada fila con un agente distinto: ninguno llega al 90 %.
+    for i, f in enumerate(filas):
+        f[18] = "Agente %d" % i
+        f[19] = "Otro %d" % i
+        f[20] = "No Co Agent"
+    nombre, motivo = nombre_que_manda(filas, propuesto="NO CALZA")
+    assert nombre == "NO CALZA"
+    assert "ningún agente sale" in motivo
 
 
 # ══════════════════════════════════════════════════════════════════════════════

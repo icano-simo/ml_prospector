@@ -15,10 +15,43 @@
   'use strict';
 
   function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
-      return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
-              "'": '&#39;'}[c];
-    });
+    return legible(String(s == null ? '' : s))
+      .replace(/[&<>"']/g, function (c) {
+        return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
+                "'": '&#39;'}[c];
+      });
+  }
+
+  /* Las fechas ISO y los teléfonos E.164 que vienen DENTRO de un texto.
+   *
+   * El motivo del veredicto se escribió cuando se evaluó al realtor y se
+   * guardó tal cual: «hay que volver a capturar Transactions después del
+   * 2026-10-19». Arreglar el motor arregla los veredictos que se escriban de
+   * hoy en adelante, no los cuatro mil que ya están guardados, y volver a
+   * evaluar producción para cambiar el formato de una fecha no es algo que se
+   * haga.
+   *
+   * Así que se traduce al mostrarlo. Va dentro de `esc` a propósito: es el
+   * único sitio por el que pasa TODO texto, y una lista de campos a los que
+   * acordarse de aplicárselo se desactualiza sola. Lo exporta `fichaV3Utils`
+   * porque las otras pestañas de la app tienen el mismo problema y una segunda
+   * implementación acabaría diciendo otra cosa.
+   *
+   * Tres casos, en orden, y el orden importa:
+   *   · `2026-09-23T14:05` -> `23 sep 2026 14:05`, con la hora intacta;
+   *   · `2026-10-19` suelta -> `19 oct 2026`;
+   *   · `+17733625798` -> `(773) 362-5798`.
+   *
+   * Lo que NO se toca: `2026-09-24-v2`, que es el nombre de la versión del
+   * prompt y no una fecha. De ahí los `(?<![\d-])` / `(?![\d:T-])`. */
+  function legible(s) {
+    if (!s) return s;
+    return String(s)
+      .replace(/(?<![\d-])(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2})(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?/g,
+        function (_, d, h) { return fecha(d) + ' ' + h; })
+      .replace(/(?<![\d-])\d{4}-\d{2}-\d{2}(?![\d:T-])/g,
+        function (t) { return fecha(t); })
+      .replace(/(?<!\d)\+1(\d{3})(\d{3})(\d{4})(?!\d)/g, '($1) $2-$3');
   }
 
   /* `2026-03-11` se muestra como 11 mar 2026, no como 10.
@@ -27,21 +60,39 @@
    * en hora local --Colombia es UTC-5-- sale el día anterior. Toda la ficha
    * está llena de fechas de closings y de posts, así que el error no era una:
    * eran todas, siempre un día antes, y siempre plausible. */
+  /* Los meses, escritos y no pedidos al navegador.
+     `toLocaleDateString('es', {month:'short'})` devuelve «sept» en Chrome, y
+     `motor/fechas.py` escribe «sep»: la misma fecha salía distinta según
+     quién la hubiera formateado, en la misma pantalla. La tabla es la de
+     `motor/fechas.py`. */
+  var MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun',
+               'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
   function fecha(iso) {
     if (!iso) return '';
     var s = String(iso);
     var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
     var d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(s);
     if (isNaN(d)) return s.slice(0, 10);
-    return d.toLocaleDateString('es', {day: 'numeric', month: 'short',
-                                       year: 'numeric'});
+    return d.getDate() + ' ' + MESES[d.getMonth()] + ' ' + d.getFullYear();
   }
 
+  /* `$5,3M` sin espacio y sin poder partirse. Con un espacio normal el KPI
+   * se cortaba en dos líneas --«$5,3» arriba y «M» abajo-- y un número
+   * partido a la mitad se lee mal antes de leerse bien. */
   function dinero(n) {
     if (n == null) return '—';
     if (n >= 1e6) return '$' + (n / 1e6).toFixed(1).replace('.', ',') + 'M';
     if (n >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
     return '$' + n;
+  }
+
+  /* Un teléfono se muestra como se marca, no como se guarda. `+17733625798`
+   * es el formato de comparación; el BD lee `(773) 362-5798`. */
+  function telefono(v) {
+    var s = String(v == null ? '' : v);
+    var m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(s.replace(/\s/g, ''));
+    return m ? '(' + m[1] + ') ' + m[2] + '-' + m[3] : s;
   }
 
   /* «Pendiente» SIEMPRE con su motivo. Sin motivo es un hueco con otro nombre:
@@ -94,16 +145,19 @@
     (c.contactos || []).forEach(function (x) {
       (contactos[x.canal] = contactos[x.canal] || []).push(x);
     });
+    /* `direccion` decía «Oficina», igual que `oficina`, así que la ficha
+       mostraba dos filas con la misma etiqueta y distinto contenido. */
     var ETIQUETA = {telefono: 'Teléfono', email: 'Email', oficina: 'Oficina',
-                    direccion: 'Oficina', instagram: 'Instagram', web: 'Web',
-                    otro: 'Otro'};
+                    direccion: 'Dirección', instagram: 'Instagram',
+                    web: 'Web', otro: 'Otro'};
     var filas = Object.keys(contactos).map(function (k) {
       return '<div class="fila"><span class="k">' + esc(ETIQUETA[k] || k) +
         '</span><span class="v">' + contactos[k].map(function (x) {
           /* `difiere` significa que el dato está en UNA sola fuente y no
              coincide con el resto. Se dice, no se marca solo con un color: un
              color sin texto obliga a adivinar qué quiere decir. */
-          return '<span class="dato"><span class="val">' + esc(x.valor) +
+          return '<span class="dato"><span class="val">' +
+            esc(x.canal === 'telefono' ? telefono(x.valor) : x.valor) +
             '</span>' + (x.fuentes || []).map(function (f) {
               return '<span class="fuente' + (x.difiere ? ' dif' : '') + '">' +
                 esc(x.difiere ? 'Solo en ' + f.charAt(0).toLowerCase() +
@@ -227,16 +281,23 @@
       ? '<div class="dolores-wrap"><table class="dolores"><thead><tr>' +
         '<th>Dolor posible</th><th>Evidencia</th><th>Grado</th>' +
         '<th>Pregunta para validarlo</th></tr></thead><tbody>' +
+        /* `data-col` es el nombre de la columna pegado a la celda. En un panel
+         * angosto la tabla se apila --cada fila es un bloque-- y el encabezado
+         * de la tabla ya no está encima de nada, así que cada celda tiene que
+         * poder decir de qué columna es. Lo pinta el CSS con `attr(data-col)`
+         * y solo por debajo del corte. */
         (d.dolores || []).map(function (x) {
-          return '<tr><td>' + esc(x.dolor) + '</td><td>' +
-            esc(x.evidencia_texto) + '</td><td>' +
+          return '<tr><td data-col="Dolor posible">' + esc(x.dolor) +
+            '</td><td data-col="Evidencia">' +
+            esc(x.evidencia_texto) + '</td><td data-col="Grado">' +
             (x.grado || []).map(function (g, i) {
               /* `grado_detalle` va pegado al PRIMER grado: «Lo cuenta ella ·
                  1 caso». Es lo que distingue un caso contado de una serie. */
               return '<span class="grado ' + (CLASE[g] || 'hip') + '">' +
                 esc(g + (i === 0 && x.grado_detalle
                          ? ' · ' + x.grado_detalle : '')) + '</span>';
-            }).join(' ') + '</td><td>' + esc('«' + (x.pregunta || '') + '»') +
+            }).join(' ') + '</td><td data-col="Pregunta para validarlo">' +
+            esc('«' + (x.pregunta || '') + '»') +
             (x.nota_producto ? '<span class="s" style="display:block;' +
               'color:var(--ink3); font-size:12px">' + esc(x.nota_producto) +
               '</span>' : '') + '</td></tr>';
@@ -311,8 +372,15 @@
       '</header>' +
       '<div class="hechos" style="grid-template-columns:repeat(4,minmax(0,1fr))">' +
       kpis.map(function (x) {
+        /* El KPI llega escrito por el código y puede traer una fecha ISO --el
+           último closing-- o un importe. Ninguna de las dos se muestra cruda:
+           `2026-09-14` no es una fecha para leer, y `$5,3 M` con un espacio
+           normal se parte en dos líneas. */
+        var n = String(x.n);
+        if (/^\d{4}-\d{2}-\d{2}$/.test(n)) n = fecha(n);
+        n = n.replace(/\s/g, ' ');
         return '<div class="hecho"><div class="n">' +
-          String(x.n).replace(/\s\/\s(.+)$/, '<small> / $1</small>') +
+          n.replace(/ ?\/ ?(.+)$/, '<small> / $1</small>') +
           '</div><div class="l">' + esc(x.l) + '</div></div>';
       }).join('') + '</div>' +
       '<div class="grid" style="gap:22px"><div class="bloque">' +
@@ -370,7 +438,11 @@
     if (!(ops || []).length) return '';
     return '<details class="src"><summary>De dónde sale: sus ' + ops.length +
       ' transactions</summary><div class="tabla-wrap" style="margin-top:8px">' +
-      '<table><thead><tr><th>Closing</th><th>Side</th><th>Zona</th>' +
+      /* `ops` no pinta nada por sí sola: es la marca de que esta tabla se
+         apila en pantalla angosta, igual que la de dolores. La marca va en la
+         plantilla y no en el CSS porque es la plantilla la que sabe si las
+         celdas llevan `data-col`. */
+      '<table class="ops"><thead><tr><th>Closing</th><th>Side</th><th>Zona</th>' +
       '<th class="num">Sold</th><th>Loan</th><th>Lender · LO</th></tr></thead>' +
       '<tbody>' + ops.map(function (o) {
         var loan;
@@ -385,12 +457,15 @@
         } else {
           loan = '<span class="pend">Pendiente: MM no tiene el loan</span>';
         }
-        return '<tr><td>' + esc(fecha(o.fecha)) + '</td><td><span class="lado' +
+        return '<tr><td data-col="Closing">' + esc(fecha(o.fecha)) +
+          '</td><td data-col="Side"><span class="lado' +
           (o.lado === 'venta' ? ' venta' : '') + '">' +
-          (o.lado === 'venta' ? 'Listing' : 'Buy') + '</span></td><td>' +
+          (o.lado === 'venta' ? 'Listing' : 'Buy') +
+          '</span></td><td data-col="Zona">' +
           esc((o.zip || '') + (o.ciudad ? ' · ' + o.ciudad : '')) +
-          '</td><td class="num">' + dinero(o.precio) + '</td><td>' + loan +
-          '</td><td>' + esc(o.lender || '—') +
+          '</td><td class="num" data-col="Sold">' + dinero(o.precio) +
+          '</td><td data-col="Loan">' + loan +
+          '</td><td data-col="Lender · LO">' + esc(o.lender || '—') +
           (o.lo_nombre ? '<span class="s">' + esc(o.lo_nombre) + '</span>' : '') +
           '</td></tr>';
       }).join('') + '</tbody></table></div>' +
@@ -439,8 +514,15 @@
       }).join('') +
       (ig.comentarios ? '<h3 style="margin-top:6px">Comentarios de posibles ' +
         'clientes</h3><p style="font-size:14px; color:var(--ink2)">' +
-        (ig.comentarios.hay_clientes ? '' :
-          '<b style="color:var(--ink)">No encontramos ninguno.</b> ') +
+        /* El «No encontramos ninguno.» lo pone la plantilla en negrita, pero
+           el texto que escribe Cowork puede empezar por la misma frase, y
+           entonces se lee dos veces seguidas. Se pone solo si no está ya:
+           quitarlo del todo dejaría sin titular a las fichas donde la IA no lo
+           escribe, y pedírselo al prompt no protege de la ficha ya guardada. */
+        (ig.comentarios.hay_clientes ||
+         /^no encontramos ninguno/i.test(String(ig.comentarios.texto || '')
+                                         .trim())
+          ? '' : '<b style="color:var(--ink)">No encontramos ninguno.</b> ') +
         esc(ig.comentarios.texto) + '</p><div class="chips">' +
         (ig.comentarios.chips || []).map(function (c) {
           return '<span class="chip">' + esc(c) + '</span>';
@@ -490,17 +572,59 @@
       '</p></footer>';
   }
 
-  function render(d) {
-    d = d || {};
-    return '<div class="wrap">' +
+  /* TODAS las clases salen con `fv3-`, y se prefijan AQUÍ y no en cada
+   * plantilla de cadena.
+   *
+   * Hay unas sesenta clases repartidas en diez funciones. Prefijarlas a mano
+   * es acordarse sesenta veces, y la que se olvide no va a fallar: va a heredar
+   * el estilo que la app le dé a ese nombre, que es exactamente cómo se rompió
+   * --`.grid`, `.mod`, `.veredicto`, `.fila`, `.chip` y `.persona` existen en
+   * las dos hojas-- y se ve raro sin decir por qué.
+   *
+   * Una sola pasada al final no se puede olvidar. */
+  function prefijar(html) {
+    return html.replace(/class="([^"]*)"/g, function (_, clases) {
+      return 'class="' + clases.trim().split(/\s+/).filter(Boolean)
+        .map(function (c) {
+          return c.indexOf('fv3-') === 0 ? c : 'fv3-' + c;
+        }).join(' ') + '"';
+    });
+  }
+
+  /* La cabecera que pone la APP: cuándo se redactó la ficha, con qué versión,
+   * el aviso de datos nuevos y el botón de pedir.
+   *
+   * Vivía FUERA de `.fv3-raiz`, en una tarjeta de la app, y por eso lo primero
+   * que se veía al abrir la ficha estaba en la tipografía de la app y lo de
+   * abajo en la de la maqueta. Aquí dentro hereda la de la ficha, que es lo
+   * único que hace que «una sola familia de fuentes» sea cierto y no una
+   * aspiración. El botón usa `.copiar`, que la maqueta ya define con
+   * `font:inherit`. */
+  function cabeceraApp(d) {
+    if (!d._cabecera_version && !d._boton_pedir && !d._aviso_datos) return '';
+    return '<div style="display:grid; gap:8px; justify-items:start">' +
       (d._cabecera_version
         ? '<p class="version">' + esc(d._cabecera_version) + '</p>' : '') +
+      (d._aviso_datos
+        ? '<p class="version" style="color:var(--warn); font-weight:600">' +
+          esc(d._aviso_datos) + '</p>' : '') +
+      (d._boton_pedir
+        ? '<button class="copiar" id="btnPedir" type="button">' +
+          esc(d._boton_pedir) + '</button>' : '') +
+      '</div>';
+  }
+
+  function render(d) {
+    d = d || {};
+    return prefijar('<div class="raiz"><div class="wrap">' +
+      cabeceraApp(d) +
       quienEs(d) + veredicto(d) + porQueElla(d) + dolores(d) + conversar(d) +
       produccion(d) + instagram(d) + contexto(d) + fuentes(d) +
-      '</div>';
+      '</div></div>');
   }
 
   global.renderFichaV3 = render;
   global.fichaV3Utils = {esc: esc, fecha: fecha, dinero: dinero,
-                         pendiente: pendiente};
+                         pendiente: pendiente, telefono: telefono,
+                         legible: legible};
 })(typeof window !== 'undefined' ? window : globalThis);
