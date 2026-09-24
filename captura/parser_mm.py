@@ -218,6 +218,13 @@ def parsear_mercado(crudo: str) -> dict:
     else:
         o["location"] = None
 
+    # LA VENTANA DEL BLOQUE, que es suya y no la del perfil: Market Insight
+    # tiene su propio selector de periodo. Sin ella, `pacs.mercados` guardaba
+    # `rango_desde` y `rango_hasta` en NULL en TODAS las filas, y la ficha no
+    # podia decir de que periodo es el benchmark que esta comparando.
+    m_ventana = re.search(r"Last\s+(\d+)\s+Months", plano, re.I)
+    o["ventana_meses"] = int(m_ventana.group(1)) if m_ventana else None
+
     o["status"] = _g(plano, r"Market Status:\s*([^\n\U0001F525]+)")
     o["applications"] = _n(plano, r"Applications\s*(?:\(i\))?\s*([+\-]?[\d.]+)%")
     o["approvals"] = _n(plano, r"Approvals\s*(?:\(i\))?\s*([+\-]?[\d.]+)%")

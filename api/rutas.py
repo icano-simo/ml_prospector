@@ -40,6 +40,7 @@ from captura.parser_mm import (  # noqa: E402
 )
 from captura.transacciones import (  # noqa: E402
     NUNCA_SE_GUARDAN,
+    crudo_redactado,
     parsear_transacciones,
 )
 from captura.transacciones import resumen as resumen_de_transacciones  # noqa: E402
@@ -135,8 +136,9 @@ def lote_vigente(filas: list) -> tuple[list, dict]:
 MINIMO_CAMPOS_PARA_PROMOVER = 5
 
 
-def promover_a_mercados(filas: list[dict], lote: str,
-                        ahora: str) -> tuple[list[dict], list[str]]:
+def promover_a_mercados(filas: list[dict], lote: str, ahora: str,
+                        ventana_meses: int | None = None
+                        ) -> tuple[list[dict], list[str]]:
     """Los Market Signals de una captura -> la biblioteca de benchmarks.
 
     Por que ocurre AL GUARDAR y no en un paso aparte
@@ -198,13 +200,165 @@ def promover_a_mercados(filas: list[dict], lote: str,
                     % (donde, str(exc).split("\n")[0], campos))
                 continue
 
+        # LA VENTANA DEL BENCHMARK. Estaba en NULL en todas las filas porque
+        # nadie la escribia: `pacs.mercados` tiene las dos columnas desde el
+        # principio. Sin ellas la ficha compara al realtor contra un mercado
+        # sin poder decir de que periodo es -- y «FHA 14,1%» de hace catorce
+        # meses y de hace tres no son el mismo numero.
+        #
+        # Sale de la ventana que declara EL BLOQUE (`Last N Months` de Market
+        # Insight, que tiene su propio selector) y, si no la trae, de la del
+        # perfil. Si no hay ninguna, quedan en NULL: una ventana inventada se
+        # guarda igual de bien que una correcta.
+        meses = metricas.get("ventana_meses") or ventana_meses
+        desde = hasta = None
+        if meses:
+            try:
+                hasta = dt.date.fromisoformat(str(ahora)[:10])
+                desde = _restar_meses(hasta, int(meses))
+            except (TypeError, ValueError):
+                desde = hasta = None
+
         salida.append({
             "upload_batch_id": lote, "uploaded_at": ahora,
             "condado_fips": condado_fips, "estado": estado, "nivel": nivel,
             "fuente": "modelmatch", "metricas": metricas,
             "capturado_en": ahora,
+            "rango_desde": desde.isoformat() if desde else None,
+            "rango_hasta": hasta.isoformat() if hasta else None,
         })
     return salida, fallos
+
+
+def _restar_meses(d: "dt.date", meses: int) -> "dt.date":
+    """`d` menos N meses, sin dependencias. El dia se recorta al fin de mes."""
+    total = (d.year * 12 + (d.month - 1)) - meses
+    ano, mes = divmod(total, 12)
+    mes += 1
+    if mes == 12:
+        ultimo = 31
+    else:
+        ultimo = (dt.date(ano + (mes == 12), (mes % 12) + 1, 1)
+                  - dt.timedelta(days=1)).day
+    return dt.date(ano, mes, min(d.day, ultimo))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LA BIBLIOTECA YA TIENE ESTE MERCADO
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Un benchmark de condado no es del realtor: es del condado. Pedirle a quien
+# captura que pegue Cook por cuarta vez en un dia es pedirle cuatro veces el
+# mismo dato, y cada pegado es una oportunidad de ponerlo en la caja
+# equivocada. Sobre 25 capturas eso son 175 oportunidades.
+#
+# Un perfil individual expira; un benchmark no -- pero tampoco es eterno, y por
+# eso hay un corte. A los 30 dias la caja deja de resolverse sola y pasa a
+# OFRECER las dos opciones, que es distinto de exigir y distinto de decidir.
+
+#: Por debajo de esto, la caja no pide pegar. Por encima, ofrece.
+DIAS_BENCHMARK_FRESCO = 30
+
+
+def mercados_en_biblioteca(params: dict) -> tuple[int, dict]:
+    """¿Cuáles de estas geografías ya están en `pacs.mercados`, y de cuándo?
+
+    Recibe `estado` y `condados` (separados por `|`). Devuelve una entrada por
+    geografía con su estado: `fresco`, `viejo` o `no_esta`.
+
+    NO decide por nadie: `viejo` trae los dos caminos y la pantalla pregunta.
+    """
+    from geo.fips import FipsNoResuelto
+    from geo.fips import cargar as cargar_fips
+    from geo.fips import resolver
+
+    estado = normalizar_estado((params.get("estado") or "").strip())
+    condados = [c.strip() for c in (params.get("condados") or "").split("|")
+                if c.strip()]
+    if not estado:
+        return 400, {"error": "falta el estado"}
+
+    # Se pide TODO de una vez: una consulta por condado son 25 idas y vueltas
+    # desde el navegador y la pantalla se queda en blanco mientras tanto.
+    cod, filas, _ = leer(
+        "mercados",
+        "?select=id,nivel,estado,condado_fips,capturado_en,rango_desde,"
+        "rango_hasta,metricas->>campos,upload_batch_id"
+        "&estado=eq.%s&order=capturado_en.desc&limit=2000"
+        % urllib.parse.quote(estado))
+    if cod >= 400:
+        return cod, {"error": "supabase", "detalle": filas}
+
+    # La MAS NUEVA por geografia. La tabla es append-only, así que hay varias.
+    por_geo: dict = {}
+    for f in filas or []:
+        clave = (f["nivel"], f.get("condado_fips") or "")
+        por_geo.setdefault(clave, f)
+
+    # De qué realtor salió cada lote, para poder decirlo.
+    lotes = sorted({f["upload_batch_id"] for f in por_geo.values()})
+    de_quien: dict = {}
+    if lotes:
+        _c, caps, _ = leer(
+            "capturas_modelmatch",
+            "?select=upload_batch_id,realtor_id&upload_batch_id=in.(%s)"
+            "&alcance=eq.perfil" % ",".join(lotes))
+        ids = sorted({c["realtor_id"] for c in (caps or []) if c.get("realtor_id")})
+        nombres = {}
+        if ids:
+            _c, rs, _ = leer("realtors", "?select=id,nombre_completo&id=in.(%s)"
+                             % ",".join(ids))
+            nombres = {r["id"]: r["nombre_completo"] for r in (rs or [])}
+        for c in caps or []:
+            de_quien.setdefault(c["upload_batch_id"],
+                                nombres.get(c.get("realtor_id")))
+
+    tabla = None
+    hoy = dt.datetime.now(dt.timezone.utc)
+
+    def _entrada(nivel, etiqueta, fips):
+        f = por_geo.get((nivel, fips or ""))
+        if not f:
+            return {"nivel": nivel, "etiqueta": etiqueta, "condado_fips": fips,
+                    "estado_biblioteca": "no_esta"}
+        dias = None
+        try:
+            cuando = dt.datetime.fromisoformat(
+                str(f["capturado_en"]).replace("Z", "+00:00"))
+            dias = (hoy - cuando).days
+        except (TypeError, ValueError):
+            pass
+        return {
+            "nivel": nivel, "etiqueta": etiqueta, "condado_fips": fips,
+            "estado_biblioteca": ("no_esta" if dias is None else
+                                  "fresco" if dias < DIAS_BENCHMARK_FRESCO
+                                  else "viejo"),
+            "mercado_id": f["id"], "capturado_en": f["capturado_en"],
+            "dias": dias, "campos": f.get("campos"),
+            "rango_desde": f.get("rango_desde"),
+            "rango_hasta": f.get("rango_hasta"),
+            "con_quien": de_quien.get(f["upload_batch_id"]),
+        }
+
+    salida = [_entrada("estado", estado, None)]
+    for nombre in condados:
+        fips = None
+        try:
+            if tabla is None:
+                tabla = cargar_fips()
+            fips = resolver(estado, nombre, tabla)[0]
+        except FipsNoResuelto:
+            # Sin FIPS no se puede buscar en la biblioteca, y tampoco se puede
+            # promover: la caja tiene que pedir el pegado igual.
+            salida.append({"nivel": "condado", "etiqueta": nombre,
+                           "condado_fips": None,
+                           "estado_biblioteca": "no_esta",
+                           "sin_fips": True})
+            continue
+        salida.append(_entrada("condado", nombre, fips))
+
+    return 200, {"estado": estado, "dias_fresco": DIAS_BENCHMARK_FRESCO,
+                 "geografias": salida}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -505,6 +659,43 @@ def _en_orden(filas: list[dict]) -> list[dict]:
         f["parseado"].get("orden") or 0))
 
 
+def _mercados_enlazados(filas_de_captura: list) -> list[dict]:
+    """Los benchmarks que la captura tomó de la biblioteca en vez de pegarlos.
+
+    Devuelven la misma forma que un bloque pegado --`nivel`, `estado`,
+    `etiqueta`, `metricas`-- para que el contraste no distinga de dónde salió.
+    Que el contraste tuviera dos caminos sería la forma de que ahorrarse un
+    pegado cambiara un diagnóstico.
+    """
+    enlaces: list[dict] = []
+    for f in filas_de_captura or []:
+        enlaces.extend((f.get("parseado") or {}).get("mercados_enlazados") or [])
+    ids = sorted({e["mercado_id"] for e in enlaces if e.get("mercado_id")})
+    if not ids:
+        return []
+    cod, filas, _ = leer(
+        "mercados", "?select=id,nivel,estado,condado_fips,metricas,"
+                    "capturado_en,rango_desde,rango_hasta&id=in.(%s)"
+                    % ",".join(ids))
+    if cod >= 400:
+        return []
+    por_id = {m["id"]: m for m in (filas or [])}
+    salida = []
+    for e in enlaces:
+        m = por_id.get(e.get("mercado_id"))
+        if not m:
+            continue
+        salida.append({
+            "nivel": m.get("nivel"), "estado": m.get("estado"),
+            "etiqueta": e.get("etiqueta"), "metricas": m.get("metricas") or {},
+            "de_la_biblioteca": True,
+            "capturado_en": m.get("capturado_en"),
+            "rango_desde": m.get("rango_desde"),
+            "rango_hasta": m.get("rango_hasta"),
+        })
+    return salida
+
+
 def _resumen_tx_del_perfil(perfil_unido: dict) -> dict | None:
     """El resumen de Transactions del perfil unido, o `None` si no se pegó."""
     tx = (perfil_unido or {}).get("transacciones")
@@ -776,8 +967,17 @@ def guardar(d: dict) -> tuple[int, dict]:
     # ── el volcado repetido ──────────────────────────────────────────────────
     # El mismo perfil entro dos veces con un minuto de diferencia. Cada copia
     # cuenta como una captura mas en la biblioteca de geografias.
+    # Transactions entra en la huella, y se busca en las DOS vias por las que
+    # puede llegar: el campo suelto y la caja de la pantalla. Sin esto, volver
+    # a capturar el mismo Overview para AGREGAR la pestaña Transactions --que
+    # es exactamente el flujo: primero el perfil, despues la tabla-- salia como
+    # duplicado y se rechazaba.
+    tx_para_huella = (d.get("transacciones") or "").strip() or next(
+        (str(c.get("texto") or "") for c in (d.get("cajas") or [])
+         if c.get("tipo") == "transacciones"), "")
     partes_huella = [overview] + list(ms) + [d.get("originators") or "",
-                                             d.get("lenders") or ""]
+                                             d.get("lenders") or "",
+                                             tx_para_huella]
     huella = hashlib.sha256(
         "\n\u0000\n".join(partes_huella).encode("utf-8")).hexdigest()
     if not d.get("forzar"):
@@ -825,6 +1025,23 @@ def guardar(d: dict) -> tuple[int, dict]:
                 etiqueta=(estado if c.tipo == "estado" else c.etiqueta)))
             orden += 1
         sin_market_insight = condados_sin_market_insight(condados, cajas)
+        # Las cajas que la pantalla resolvió desde la biblioteca NO son «falta
+        # capturar»: su benchmark ya existe y el realtor queda enlazado a esa
+        # fila. Se sacan de la lista de faltantes por el mismo camino que las
+        # que vinieron en el Overview.
+        for m in (d.get("mercados_enlazados") or []):
+            eti = (m.get("etiqueta") or "").strip()
+            for c in cajas:
+                if (c.tipo in ("estado", "condado") and c.estado == "sin_pegar"
+                        and (c.etiqueta or "").strip() == eti):
+                    c.estado = "del_overview"
+                    c.aviso = ("ya está en la biblioteca, capturado el %s: no "
+                               "hace falta pegarlo"
+                               % str(m.get("capturado_en") or "")[:10])
+        enlazadas = {(m.get("etiqueta") or "").strip()
+                     for m in (d.get("mercados_enlazados") or [])}
+        sin_market_insight = [c for c in sin_market_insight
+                              if c.strip() not in enlazadas]
         for c in cajas:
             if c.aviso:
                 avisos_de_cajas.append(c.aviso)
@@ -942,7 +1159,25 @@ def guardar(d: dict) -> tuple[int, dict]:
             "sin ventana de Model Match: `Set Date Range` no viaja en el texto "
             "pegado. Sin ella no se puede anualizar la producción, que es el "
             "número que manda para la compuerta.")
-    agregar("overview", overview, alcance="perfil", extra={"perfil": perfil})
+    # Los mercados que NO se pegaron porque ya estaban en la biblioteca, con el
+    # id de la fila a la que queda enlazado este realtor. Va en el `parseado`
+    # del Overview y no en una tabla nueva: el enlace es del lote, y así se
+    # audita en el mismo sitio donde se audita todo lo demás de la captura.
+    #
+    # El contraste de mercado lo lee de aquí, así que un benchmark tomado de la
+    # biblioteca produce el MISMO contraste que uno pegado. Si produjera otro,
+    # ahorrar el pegado sería cambiar el resultado.
+    enlazados = [
+        {"etiqueta": (m.get("etiqueta") or "").strip(),
+         "nivel": m.get("nivel"), "condado_fips": m.get("condado_fips"),
+         "mercado_id": m.get("mercado_id"),
+         "capturado_en": m.get("capturado_en"),
+         "dias_al_enlazar": m.get("dias"), "campos": m.get("campos")}
+        for m in (d.get("mercados_enlazados") or [])
+        if m.get("mercado_id")]
+    agregar("overview", overview, alcance="perfil",
+            extra={"perfil": perfil,
+                   "mercados_enlazados": enlazados or None})
 
     for b in bloques:
         # El bloque del estado no tiene nombre de condado, asi que lleva el
@@ -995,8 +1230,19 @@ def guardar(d: dict) -> tuple[int, dict]:
             lambda t: parsear_transacciones(t, realtor=nombre_del_realtor,
                                             capturado_en=ahora),
             texto_tx, "Transactions")
-        agregar("transacciones", texto_tx, alcance="perfil",
-                extra={"perfil": {"transacciones": tx_parseado}})
+        # EL CRUDO DE ESTA SECCION VA REDACTADO, y es la unica que lo hace.
+        #
+        # El pegado trae el nombre del comprador, el del vendedor y la calle de
+        # cada operacion. De nada sirve que `pacs.transacciones` no tenga esas
+        # columnas si el texto entero queda al lado en `texto_crudo`, que es
+        # una columna que se lee, se exporta y se mira. Ver `crudo_redactado`.
+        agregar("transacciones", crudo_redactado(texto_tx), alcance="perfil",
+                extra={"perfil": {"transacciones": tx_parseado},
+                       "crudo_redactado": True,
+                       "por_que_redactado": (
+                           "el pegado de Transactions trae nombres de "
+                           "compradores y vendedores y la calle de cada "
+                           "vivienda (ECOA Regulation B)")})
         if isinstance(tx_parseado, dict) and tx_parseado.get("aviso"):
             avisos.append("Transactions · " + tx_parseado["aviso"])
         if isinstance(tx_parseado, dict) and tx_parseado.get("sin_lado"):
@@ -1200,7 +1446,10 @@ def guardar(d: dict) -> tuple[int, dict]:
     # ── LA BIBLIOTECA DE MERCADOS ────────────────────────────────────────────
     # Va DESPUES del crudo, por lo mismo que los contactos: si falla, el
     # volcado ya esta y se re-deriva. Pero su fallo se declara, no se calla.
-    mercados, fallos_promocion = promover_a_mercados(filas, lote, ahora)
+    mercados, fallos_promocion = promover_a_mercados(
+        filas, lote, ahora,
+        ventana_meses=(perfil_unido.get("ventana_meses") if
+                       isinstance(perfil_unido, dict) else None))
     for f in fallos_promocion:
         avisos.append("FALLO DE PROMOCION · " + f)
 
@@ -1973,6 +2222,11 @@ def dossier(params: dict) -> tuple[int, dict]:
                     "estado": f.get("estado"),
                     "etiqueta": f.get("geografia_etiqueta"),
                     "metricas": p["metricas"]})
+        # ── LOS MERCADOS TOMADOS DE LA BIBLIOTECA ───────────────────────────
+        # Un benchmark que no se pegó porque ya estaba tiene que producir el
+        # MISMO contraste que uno pegado. Si produjera otro, ahorrarle el
+        # pegado a quien captura sería cambiarle el resultado al diagnóstico.
+        mercados.extend(_mercados_enlazados(crudas))
         unido = unir_perfiles(perfiles)
         for c in mix_de_programa(unido.get("loan_mix_buyer") or {}, mercados,
                                  tipo="FHA"):
@@ -2154,6 +2408,7 @@ RUTAS = {
     "/api/realtors": (realtors, "GET"),
     "/api/geografias": (geografias, "GET"),
     "/api/leer_overview": (leer_overview, "POST"),
+    "/api/mercados_en_biblioteca": (mercados_en_biblioteca, "GET"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
     "/api/instagram": (instagram, "GET"),

@@ -570,6 +570,134 @@ def test_un_campo_prohibido_revienta_en_vez_de_filtrarse_en_silencio():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 11b · EL CRUDO QUE SE GUARDA VA REDACTADO
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Es la única sección del proyecto donde el crudo no se guarda tal cual. De
+# nada sirve que `pacs.transacciones` no tenga columnas para comprador,
+# vendedor ni calle si el pegado entero queda al lado en `texto_crudo`.
+
+#: El fixture con nombres INYECTADOS donde el anonimizado puso etiquetas. Si la
+#: prueba corriera sobre «Persona 1», pasaría por parecerse a una etiqueta.
+NOMBRES_INYECTADOS = (
+    REAL.replace("Persona 1\t", "Maria Gonzalez Perez\t")
+        .replace("Persona 2\t", "John Fitzgerald Smith\t")
+        .replace("101 Calle Ficticia", "4821 South Kolmar Avenue")
+        .replace("103 Calle Ficticia", "77 West Wacker Drive"))
+
+
+def test_el_crudo_redactado_no_deja_nombres_ni_calle():
+    """La prueba que pidió la revisión: con nombres inyectados, no queda ninguno."""
+    from captura.transacciones import crudo_redactado
+
+    assert "Maria Gonzalez Perez" in NOMBRES_INYECTADOS, "el fixture no inyectó"
+    red = crudo_redactado(NOMBRES_INYECTADOS)
+    for prohibido in ("Maria Gonzalez Perez", "John Fitzgerald Smith",
+                      "4821 South Kolmar Avenue", "77 West Wacker Drive",
+                      "Kolmar", "Wacker"):
+        assert prohibido not in red, prohibido
+    for i in range(1, 19):
+        assert "Persona %d" % i not in red, i
+
+
+def test_el_crudo_redactado_conserva_lo_que_hace_falta_para_re_derivar():
+    """El crudo existe para poder arreglar el parser y re-derivar.
+
+    Un crudo redactado que ya no se puede parsear no es un crudo: es un log.
+    """
+    from captura.transacciones import crudo_redactado
+
+    red = crudo_redactado(REAL)
+    p = parsear_transacciones(red, realtor=REALTOR, capturado_en=CAPTURADO)
+    assert p["leidas"] == 25
+    assert p["no_leidas"] == []
+    assert p["completa"] is True
+    # Y las cifras salen IGUALES que del pegado original.
+    assert resumen(p)["compras"] == _r()["compras"]
+    assert resumen(p)["lenders_compra"] == ESPERADO["lenders_compra"]
+    assert resumen(p)["zips_de_compra"]["60638"] == 3
+    assert [f["hash_fila"] for f in p["filas"]] == \
+        [f["hash_fila"] for f in _p()["filas"]]
+
+
+def test_el_crudo_redactado_conserva_ciudad_estado_y_zip():
+    """Se redacta la CALLE, no la geografía.
+
+    Sin el ZIP, un re-parseo perdería la respuesta a «dónde trabaja», que es un
+    dato que la tabla guarda igual por decisión tomada. La calle identifica una
+    vivienda; el ZIP no.
+    """
+    from captura.transacciones import REDACTADO, crudo_redactado
+
+    red = crudo_redactado(REAL)
+    assert "%s, Chicago, IL, 60633" % REDACTADO in red
+    assert "Calle Ficticia" not in red
+
+
+def test_la_api_guarda_el_crudo_redactado_y_no_el_pegado():
+    """La guarda tiene que estar en la ENTRADA, no solo en el destino."""
+    from captura.transacciones import crudo_redactado
+
+    guardado = crudo_redactado(NOMBRES_INYECTADOS)
+    # Lo que `agregar` recibe como `texto_crudo` es exactamente esto.
+    assert "Maria Gonzalez Perez" not in guardado
+    assert len(guardado) > 1000, "se redactó de más: no queda nada que parsear"
+
+
+def test_una_fila_que_no_se_leyo_se_redacta_entera():
+    """No se sabe qué celda es cuál, así que no se sabe cuál lleva un nombre."""
+    from captura.transacciones import REDACTADO, crudo_redactado
+
+    roto = _variante("Jul 30, 2026", "tipo", None, borrar=True)
+    roto = roto.replace("Persona 1", "Maria Gonzalez Perez")
+    red = crudo_redactado(roto)
+    assert "Maria Gonzalez Perez" not in red
+    assert ("\t".join([REDACTADO] * 20)) in red
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 11c · `no_leido` SE GUARDA, Y NO TUMBA LA CAPTURA
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_una_fila_no_leida_se_guarda_para_auditoria():
+    """El check de la migración no aceptaba `no_leido`, así que UNA fila mal
+    leída hacía fallar el insert de las 25 y la captura se quedaba sin
+    operaciones. Justo la fila que hay que poder auditar era la que no entraba.
+    """
+    from api.rutas import _filas_de_transacciones
+    from captura.transacciones import NO_LEIDO
+
+    p = _p(_variante("Jul 30, 2026", "prestamo", "—"))
+    fs = _filas_de_transacciones(p, "r-1", "lote-1", "2026-09-23T00:00:00Z")
+    assert len(fs) == 25
+    sin_leer = [f for f in fs if f["estado_prestamo"] == NO_LEIDO]
+    assert len(sin_leer) == 1
+    assert sin_leer[0]["fecha"] == "2026-07-30"
+
+
+def test_los_estados_que_el_check_de_la_migracion_tiene_que_aceptar():
+    """La lista del SQL y la del parser tienen que ser la misma.
+
+    Se lee del archivo de migración: si alguien agrega un estado en Python y
+    no en el check, el insert falla en producción y aquí no.
+    """
+    import re
+
+    from captura.transacciones import (CASH_PROVISIONAL, CASH_SEGUN_MM,
+                                       FINANCIADA, NO_LEIDO)
+
+    sql = open(os.path.join(RAIZ, "supabase",
+                            "migracion_18_transacciones.sql"),
+               encoding="utf-8").read()
+    m = re.search(r"tx_estado_prestamo_valido check \(\s*estado_prestamo in "
+                  r"\(([^)]*)\)", sql)
+    assert m, "no encontré el check en la migración 18"
+    en_sql = set(re.findall(r"'([a-z_]+)'", m.group(1)))
+    assert en_sql == {FINANCIADA, CASH_PROVISIONAL, CASH_SEGUN_MM, NO_LEIDO}, \
+        en_sql
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 12 · EL CAMINO COMPLETO
 # ══════════════════════════════════════════════════════════════════════════════
 
