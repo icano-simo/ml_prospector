@@ -64,18 +64,32 @@ def main(aplicar: bool) -> int:
             por_lote[lote]["filas"].append({"parseado": p, "estado": estado,
                                             "texto_crudo": ""})
 
-        # Lo que YA esta promovido, para no duplicar.
-        cur.execute("select distinct upload_batch_id from pacs.mercados")
-        ya = {str(r[0]) for r in cur.fetchall()}
+        # Lo que YA esta promovido, para no duplicar. POR GEOGRAFIA y no por
+        # lote: la version anterior saltaba el lote entero en cuanto tuviera
+        # una fila, y una promocion PARCIAL --el bloque del estado entro, el de
+        # DuPage no porque su FIPS no resolvia-- quedaba imposible de
+        # completar. El backfill decia «ya promovido» sobre un lote al que le
+        # faltaban 44 metricas.
+        cur.execute("""
+            select upload_batch_id, nivel, coalesce(estado, ''),
+                   coalesce(condado_fips, '')
+              from pacs.mercados
+        """)
+        ya = {(str(a), b, c, d) for a, b, c, d in cur.fetchall()}
 
         total, fallos_todos = [], []
         for lote, datos in por_lote.items():
-            if str(lote) in ya:
-                print("   %s · ya promovido, se salta" % str(lote)[:8])
-                continue
             ahora = datos["cuando"].isoformat()
             mercados, fallos = promover_a_mercados(datos["filas"], str(lote),
                                                    ahora)
+            antes = len(mercados)
+            mercados = [m for m in mercados
+                        if (str(lote), m["nivel"], m["estado"] or "",
+                            m["condado_fips"] or "") not in ya]
+            if antes and not mercados and not fallos:
+                print("   %s · sus %d geografias ya estan promovidas"
+                      % (str(lote)[:8], antes))
+                continue
             print("   %s · %d bloques -> %d filas de mercado%s"
                   % (str(lote)[:8], len(datos["filas"]), len(mercados),
                      "  FALLOS: %d" % len(fallos) if fallos else ""))
