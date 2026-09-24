@@ -1,0 +1,357 @@
+Search by address, agent, or originator...
+Property Address	
+Buyers	Sellers	
+Down Payment	
+Loan Officer	Employer	Broker	Lender	
+Buyer Agent	Listing Agent	Co-Listing Agent
+Sep 14, 2026	
+101 Calle Ficticia
+Chicago, IL, 60633
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$300K	$310K	
+Agente Titular
+Agente 1
+Agente 2
+Sep 9, 2026	
+102 Calle Ficticia
+Chicago, IL, 60608
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$235K	$235K	
+Agente 3
+Agente Titular
+Agente 4
+Jul 30, 2026	
+103 Calle Ficticia
+Elmwood Park, IL, 60707
+
+No Builder	Persona 1	—	Not Provided	$151K	$17K	
+Purchase
+Conventional
+6.55%	—	
+LO 1
+NMLS: 900001
+—	No Broker	
+Guaranteed Rate Inc
+$168K	—	
+Agente Titular
+Agente 5
+No Co Agent
+Jul 17, 2026	
+104 Calle Ficticia
+Chicago, IL, 60621
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$235K	$235K	
+Agente 6
+Agente Titular
+No Co Agent
+Jul 6, 2026	
+105 Calle Ficticia
+Chicago, IL, 60621
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$380K	$365K	
+Agente Titular
+Agente 7
+Agente 8
+Jun 29, 2026	
+106 Calle Ficticia
+Chicago, IL, 60610
+
+No Builder	Persona 2	Persona 3	Attorney	$224K	$56K	
+Purchase
+Conventional
+6.49%	—	
+LO 2
+NMLS: 900002
+Stonehaven Mortgage Incorporated
+NMLS: 901574
+No Broker	
+Stonehaven Mortgage Incorporated
+$280K	—	
+Agente Titular
+Agente 9
+No Co Agent
+Jun 26, 2026	
+107 Calle Ficticia
+Elmwood Park, IL, 60707
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$690K	$680K	
+Agente 10
+Agente Titular
+No Co Agent
+Jun 10, 2026	
+108 Calle Ficticia
+Chicago, IL, 60629
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$230K	$239K	
+Agente 11
+Agente Titular
+No Co Agent
+May 14, 2026	
+109 Calle Ficticia
+Chicago, IL, 60638
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$356K	$356K	
+Agente Titular
+Agente 12
+No Co Agent
+May 8, 2026	
+110 Calle Ficticia
+Chicago, IL, 60654
+
+No Builder	Persona 4	Persona 5	Chicago Title	$247K	$13K	
+Purchase
+Conventional
+6.62%	—	
+LO 3
+NMLS: 900003
+Zillow Home Loans, Llc
+NMLS: 10287
+No Broker	
+Zillow Home Loans Llc
+$260K	—	
+Agente Titular
+Agente 13
+No Co Agent
+May 7, 2026	
+111 Calle Ficticia
+Chicago, IL, 60629
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$236K	$236K	
+Agente Titular
+Agente 14
+No Co Agent
+Apr 27, 2026	
+112 Calle Ficticia
+Chicago, IL, 60638
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$340K	$340K	
+Agente Titular
+Agente 15
+No Co Agent
+Apr 3, 2026	
+113 Calle Ficticia
+Chicago, IL, 60608
+
+No Builder	Persona 6	—	Chicago Title	$8K	$213K	
+Purchase
+HE
+—	—	
+LO 4
+NMLS: 900004
+Guaranteed Rate, Inc.
+NMLS: 2611
+No Broker	
+Guaranteed Rate Inc
+$220K	—	
+Agente Titular
+Agente 16
+No Co Agent
+Mar 30, 2026	
+114 Calle Ficticia
+Chicago, IL, 60619
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$195K	$199K	
+Agente Titular
+Agente 17
+No Co Agent
+Mar 19, 2026	
+115 Calle Ficticia
+Chicago, IL, 60644
+
+No Builder	Persona 7	Persona 8	Attorney	$270K	$5K	
+Purchase
+FHA
+6.17%	—	
+LO 4
+NMLS: 900005
+Guaranteed Rate, Inc.
+NMLS: 2611
+No Broker	
+Guaranteed Rate Inc
+$275K	—	
+Agente Titular
+Agente 18
+No Co Agent
+Mar 12, 2026	
+116 Calle Ficticia
+Chicago, IL, 60616
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$292K	$275K	
+Agente Titular
+Agente 19
+No Co Agent
+Feb 17, 2026	
+117 Calle Ficticia
+Burbank, IL, 60459
+
+No Builder	Persona 9	Persona 10	Fidelity National Title	$472K	$118K	
+Purchase
+Conventional
+762.00%	—	
+LO 5
+NMLS: 900006
+Angel Oak Mortgage Solutions Llc
+NMLS: 1160240
+No Broker	
+Angel Oak Mortgage Solutions Llc
+$590K	—	
+Agente Titular
+Agente 20
+No Co Agent
+Jan 30, 2026	
+118 Calle Ficticia
+Chicago, IL, 60611
+
+No Builder	Persona 11	Persona 12	Attorney	$225K	$75K	
+Purchase
+Conventional
+5.50%	—	
+LO 6
+NMLS: 900007
+Peoples Bank
+NMLS: 512564
+No Broker	
+Peoples Bank
+$300K	—	
+Agente Titular
+Agente 21
+No Co Agent
+Jan 12, 2026	
+119 Calle Ficticia
+Chicago, IL, 60649
+
+No Builder	Persona 13	Persona 14	First American Title	$589K	$31K	
+Purchase
+Conventional
+687.00%	—	
+LO 7
+NMLS: 900008
+American Pacific Mortgage Corporation
+NMLS: 1850
+No Broker	
+American Pacific Mortgage Corp
+$620K	—	
+Agente 22
+Agente Titular
+No Co Agent
+Dec 22, 2025	
+120 Calle Ficticia
+Chicago, IL, 60624
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$310K	$289K	
+Agente 23
+Agente Titular
+No Co Agent
+Nov 10, 2025	
+121 Calle Ficticia
+Chicago, IL, 60619
+
+No Builder	Persona 15	Persona 16	Fidelity National Title	$309K	$6K	
+Purchase
+FHA
+6.62%	—	
+LO 8
+NMLS: 900009
+Zillow Home Loans, Llc
+NMLS: 10287
+No Broker	
+Zillow Home Loans Llc
+$315K	—	
+Agente Titular
+Agente 24
+Agente 25
+Nov 5, 2025	
+122 Calle Ficticia
+Chicago, IL, 60641
+
+No Builder	Persona 17	Persona 18	Attorney	$398K	$12K	
+Purchase
+Conventional
+6.87%	—	
+LO 9
+NMLS: 900010
+Neighborhood Loans, Inc.
+NMLS: 222982
+No Broker	
+Neighborhood Loans
+$410K	—	
+Agente 26
+Agente Titular
+No Co Agent
+Nov 3, 2025	
+123 Calle Ficticia
+Cicero, IL, 60804
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$505K	$500K	
+Agente Titular
+Agente 27
+No Co Agent
+Oct 17, 2025	
+124 Calle Ficticia
+Chicago, IL, 60638
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$120K	$125K	
+Agente Titular
+Agente 28
+No Co Agent
+Aug 4, 2025	
+125 Calle Ficticia
+Chicago, IL, 60629
+
+No Builder	—	—	—	
+Cash
+Cash
+—	—	—	—	—	—	—	—	$185K	$179K	
+Agente Titular
+Agente 7
+Agente 8
+Rows per page
+
+25
+25
+1 - 25 of 25
+$200K
+
+Search

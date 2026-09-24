@@ -1,11 +1,30 @@
-"""La pestaña Transactions: una fila por cierre, y lo que se deriva de ella.
+"""La pestaña Transactions, contra el PEGADO REAL.
 
-Los datos son inventados con la forma de una captura real, anonimizados. Las
-columnas `Buyers` y `Sellers` llevan nombres a propósito: la prueba que importa
-es que NO salen del parser.
+Por qué se rehizo este archivo entero
+-------------------------------------
+La primera versión probaba contra un fixture construido a mano con la forma que
+yo supuse: 21 celdas separadas por tabuladores, una fila por línea. Model Match
+no entrega eso. Entrega una MEZCLA -- la fecha con tabulador, la calle y la
+ciudad en dos líneas, cuatro columnas con tabuladores, los tres agentes en tres
+líneas-- y sobre el volcado real el parser daba 25 filas de una celda, 304
+líneas descartadas, todos los campos en null y las 25 operaciones contadas como
+cash. Con `completa: true`, porque lo único que miraba era el pie.
+
+Las 27 pruebas pasaban. Ninguna tocaba un pegado real, así que ninguna podía
+fallar por esto: **probaban que el parser sabe leer lo que yo creía que Model
+Match manda.**
+
+`fixtures/transactions_real.txt` es el volcado de verdad, anonimizado por
+Isabella --nombres de personas, calles y NMLS de los LOs reemplazados; los
+nombres de las empresas son los reales-- y `transactions_real_esperado.json` es
+lo que tiene que salir, verificado a mano contra las capturas de pantalla.
+
+Las variantes sintéticas se construyen MUTANDO UNA CELDA del volcado real, no
+escribiendo una fila nueva: así lo que se prueba sigue teniendo su forma.
 """
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -16,9 +35,13 @@ from captura.transacciones import (  # noqa: E402
     AMBOS,
     CASH_PROVISIONAL,
     CASH_SEGUN_MM,
+    COLUMNAS,
     COMPRA,
     FINANCIADA,
+    NO_LEIDO,
     VENTA,
+    _celdas_por_fila,
+    nombre_de_lender,
     normalizar_tasa,
     paginacion,
     parsear_transacciones,
@@ -26,111 +49,222 @@ from captura.transacciones import (  # noqa: E402
     share_buy_de_transacciones,
 )
 
-REALTOR = "ANA PRUEBA"
-CAPTURADO = "2026-09-23"
+FIXTURES = os.path.join(RAIZ, "tests", "fixtures")
+REALTOR = "Agente Titular"
+CAPTURADO = "2026-09-23T23:54:00+00:00"
 
-#: 21 columnas separadas por tabulador, en el orden confirmado.
-_C = "\t".join
+REAL = open(os.path.join(FIXTURES, "transactions_real.txt"),
+            encoding="utf-8").read()
+ESPERADO = json.load(open(os.path.join(FIXTURES,
+                                       "transactions_real_esperado.json"),
+                          encoding="utf-8"))
 
-
-def _fila(fecha, direccion, prestamo, enganche, tipo, tasa, lo, empleador,
-          lender, precio, ag_comprador, ag_listing, constructor="",
-          title="Chicago Title", proposito="Purchase", plazo="30 yr",
-          broker="", lista="", ag_colisting=""):
-    return _C([fecha, direccion, constructor, "COMPRADOR N", "VENDEDOR N",
-               title, prestamo, enganche, proposito, tipo, tasa, plazo, lo,
-               empleador, broker, lender, precio, lista, ag_comprador,
-               ag_listing, ag_colisting])
+#: Índices de las columnas que las variantes mutan, por nombre.
+_COL = {n: i for i, n in enumerate(COLUMNAS)}
 
 
-PEGADO = "\n".join([
-    # 1 · compra convencional
-    _fila("03/12/2026", "5321 S Long Ave, Chicago, IL, 60638",
-          "$228,000", "$57,000", "Conventional", "6.625%",
-          "Fabian Viera NMLS #123456", "Guaranteed Rate NMLS #2611",
-          "Guaranteed Rate", "$285,000", REALTOR, "OTRA AGENTE"),
-    # 2 · FHA: el enganche aparente es 1,8% porque el UFMIP va DENTRO
-    _fila("01/20/2026", "1440 S 58th Ct, Cicero, IL, 60804",
-          "$274,928", "$5,072", "FHA", "6.125%",
-          "Brian Dombrowski NMLS #654321", "Guaranteed Rate NMLS #2611",
-          "Guaranteed Rate", "$280,000", REALTOR, "OTRA AGENTE"),
-    # 3 · cash viejo: 449 días, Model Match ya no va a recibir nada
-    _fila("07/01/2025", "8102 S Kedzie Ave, Chicago, IL, 60629",
-          "Cash", "Cash", "", "", "", "", "", "$296,000", REALTOR,
-          "OTRA AGENTE"),
-    # 4 · cash de hace 9 días: TODAVÍA no hay datos de préstamo
-    _fila("09/14/2026", "3011 N Nordica Ave, Chicago, IL, 60634",
-          "Cash", "Cash", "", "", "", "", "", "$265,000", REALTOR,
-          "OTRA AGENTE"),
-    # 5 · venta financiada: ella es la listing agent
-    _fila("05/05/2026", "719 N 19th Ave, Melrose Park, IL, 60160",
-          "$310,000", "$40,000", "Conventional", "5.875%",
-          "OTRO LO NMLS #999111", "American Pacific NMLS #1850",
-          "American Pacific Mortgage", "$350,000", "OTRA AGENTE", REALTOR),
-    # 6 · la tasa en puntos base
-    _fila("02/17/2026", "2200 N Lincoln Park W, Chicago, IL, 60614",
-          "$472,000", "$118,000", "Non-QM", "762.00%",
-          "OTRO LO NMLS #777222", "Angel Oak NMLS #1160240",
-          "Angel Oak Mortgage Solutions", "$590,000", REALTOR, "OTRA AGENTE"),
-    # 7 · doble punta
-    _fila("04/03/2026", "5550 W 63rd St, Chicago, IL, 60638",
-          "$8,000", "$213,000", "HE", "8.25%",
-          "OTRO LO NMLS #333444", "Peoples Bank NMLS #512138",
-          "Peoples Bank", "$220,000", REALTOR, REALTOR),
-    # 8 · la suma no cuadra ni de lejos
-    _fila("06/11/2026", "412 W 25th Pl, Chicago, IL, 60616",
-          "$100,000", "$20,000", "Conventional", "6.00%",
-          "OTRO LO NMLS #555666", "Stonehaven NMLS #901",
-          "Stonehaven Mortgage", "$400,000", REALTOR, "OTRA AGENTE"),
-    "1 - 8 of 8",
-])
-
-#: La misma tabla pegada como UNA CELDA POR LÍNEA, que es la otra forma en que
-#: el portapapeles la entrega.
-PEGADO_EN_LINEAS = "\n".join(
-    l.replace("\t", "\n") for l in PEGADO.split("\n"))
-
-
-def _p(texto=PEGADO):
+def _p(texto=REAL):
     return parsear_transacciones(texto, realtor=REALTOR,
                                  capturado_en=CAPTURADO)
 
 
-# ══ 1 · LO QUE NO SE GUARDA ══════════════════════════════════════════════════
+def _r(texto=REAL):
+    return resumen(_p(texto))
 
-def test_los_nombres_de_compradores_y_vendedores_no_salen_del_parser():
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LAS VARIANTES · una celda del volcado real, cambiada
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _en_tabuladores(celdas_por_fila) -> str:
+    """Las filas, una por línea con tabuladores. Es el OTRO formato real.
+
+    Un pegado desde una hoja de cálculo llega así, y el parser tiene que dar lo
+    mismo por los dos caminos.
+    """
+    return "\n".join("\t".join(f) for f in celdas_por_fila) + "\nRows per page\n25\n1 - 25 of 25\n"
+
+
+def _variante(fecha: str, columna: str, valor, *, borrar=False) -> str:
+    """El volcado real con UNA celda cambiada, devuelto en formato tabulador.
+
+    `fecha` es la de la fila a tocar, tal como aparece («Jul 30, 2026»).
+    """
+    filas = [list(f) for f in _celdas_por_fila(REAL)]
+    tocadas = 0
+    for f in filas:
+        if f and f[0].strip() == fecha:
+            if borrar:
+                del f[_COL[columna]]
+            else:
+                f[_COL[columna]] = valor
+            tocadas += 1
+    assert tocadas == 1, "la variante tocó %d filas, no 1" % tocadas
+    return _en_tabuladores(filas)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 1 · EL VOLCADO REAL, CONTRA LO ESPERADO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_el_volcado_real_da_25_filas_de_21_celdas():
+    """La prueba que faltaba. 25 filas, 0 sin leer, 0 líneas descartadas."""
+    p = _p()
+    assert p["leidas"] == ESPERADO["leidas"]
+    assert p["no_leidas"] == []
+    assert p["lineas_descartadas"] == ESPERADO["lineas_descartadas"]
+    assert p["sin_lado"] == ESPERADO["sin_lado"]
+    for f in _celdas_por_fila(REAL):
+        assert len(f) == 21, (f[0], len(f))
+
+
+def test_completa_es_true_y_por_las_cuatro_razones():
+    """`completa` ya no mira solo el pie.
+
+    25 filas de una celda cada una son 25 filas, y el pie cuadraba. Con eso
+    decía True sobre un parseo en el que no se había leído un campo.
+    """
+    p = _p()
+    assert p["completa"] is ESPERADO["completa"]
+    assert p["por_que_no_completa"] == []
+    assert p["sin_estado_de_prestamo"] == 0
+    assert p["financiadas_sin_lender"] == 0
+    assert p["paginacion"]["total"] == 25
+
+
+def test_el_reparto_de_compras_y_ventas_es_el_verificado_a_mano():
+    r = _r()
+    for lado in ("compras", "ventas"):
+        for clave, valor in ESPERADO[lado].items():
+            assert r[lado][clave] == valor, (lado, clave, r[lado])
+
+
+def test_el_loan_mix_y_los_lenders_son_los_verificados_a_mano():
+    r = _r()
+    assert r["loan_mix_compra"] == ESPERADO["loan_mix_compra"]
+    assert r["lenders_compra"] == ESPERADO["lenders_compra"]
+    assert r["lenders_venta"] == ESPERADO["lenders_venta"]
+
+
+def test_los_lenders_se_agrupan_sin_el_sufijo_societario():
+    """«Guaranteed Rate Inc» y «Guaranteed Rate, Inc.» son el mismo lender.
+
+    Están en dos columnas del mismo volcado. Contarlos aparte parte el reparto
+    y hace que tres operaciones con el mismo lender parezcan tres lenders.
+    """
+    assert nombre_de_lender("Guaranteed Rate, Inc.") == "Guaranteed Rate"
+    assert nombre_de_lender("Guaranteed Rate Inc") == "Guaranteed Rate"
+    assert nombre_de_lender("Stonehaven Mortgage Incorporated") == \
+        "Stonehaven Mortgage"
+    assert nombre_de_lender("Zillow Home Loans, Llc") == "Zillow Home Loans"
+    assert nombre_de_lender("American Pacific Mortgage Corporation") == \
+        "American Pacific Mortgage"
+    # `bank` NO es sufijo societario: es parte del nombre.
+    assert nombre_de_lender("Peoples Bank") == "Peoples Bank"
+    assert nombre_de_lender("—") == "—"
+    assert nombre_de_lender("") is None
+
+
+def test_las_pendientes_y_sus_fechas_de_recaptura():
+    r = _r()
+    got = [{k: p[k] for k in ("fecha", "lado", "recapturar_despues_de")}
+           for p in r["pendientes_de_prestamo"]]
+    assert got == ESPERADO["pendientes_de_prestamo"]
+
+
+def test_los_zips_el_precio_mediano_y_el_volumen():
+    r = _r()
+    for zip_, n in ESPERADO["zips_de_compra_top"].items():
+        assert r["zips_de_compra"][zip_] == n, zip_
+    assert r["precio_mediano_compra"] == ESPERADO["precio_mediano_compra"]
+    assert r["volumen_compra"] == ESPERADO["volumen_compra"]
+    assert r["volumen_venta"] == ESPERADO["volumen_venta"]
+
+
+def test_los_importes_abreviados_se_leen_con_su_sufijo():
+    """El volcado real trae TODOS los importes como `$151K`.
+
+    Sin el sufijo, «$300K» entraba como 300 dólares. Un precio de vivienda de
+    tres cifras no revienta nada: se guarda, se promedia y sale en la ficha.
+    """
+    f = next(x for x in _p()["filas"] if x["fecha"] == "2026-07-30")
+    assert f["prestamo"] == 151000.0
+    assert f["enganche"] == 17000.0
+    assert f["precio"] == 168000.0
+
+
+def test_la_fila_del_30_de_julio_entera():
+    """Employer viene como «—» con Lender puesto: `lender_nmls` queda en null
+    y la compuerta usa el nombre completo del Lender."""
+    f = next(x for x in _p()["filas"] if x["fecha"] == "2026-07-30")
+    for clave, valor in ESPERADO["fila_2026-07-30"].items():
+        assert f[clave] == valor, (clave, f[clave], valor)
+    assert f["lender_agrupado"] == "Guaranteed Rate"
+
+
+def test_la_tasa_en_puntos_base_del_volcado_real():
+    ao = [f for f in _p()["filas"]
+          if (f.get("lender_agrupado") or "").startswith("Angel Oak")]
+    assert len(ao) == 1
+    assert ao[0]["tasa"] == ESPERADO["tasa_angel_oak"]
+
+
+def test_ninguna_fila_real_dispara_el_aviso_de_suma():
+    assert _r()["avisos_de_suma"] == ESPERADO["avisos_de_suma"]
+
+
+def test_el_veredicto_del_volcado_real():
+    from motor.veredicto import puede_contactarse
+
+    v = puede_contactarse({"transacciones": _p()})
+    assert v.estado == ESPERADO["veredicto"], v.a_dict()
+    assert v.evidencia["unidades_de_la_casa"] == ESPERADO["unidades_de_la_casa"]
+
+
+def test_los_dos_formatos_dan_los_mismos_hashes():
+    """El mismo volcado, mezclado y en tabuladores, tiene que dar lo mismo.
+
+    Con el fixture REAL y no con uno construido: la versión anterior de esta
+    prueba comparaba dos renderizados de una forma que Model Match no usa.
+    """
+    a = _p()
+    b = _p(_en_tabuladores(_celdas_por_fila(REAL)))
+    assert b["leidas"] == 25 and b["no_leidas"] == []
+    assert [f["hash_fila"] for f in a["filas"]] == \
+        [f["hash_fila"] for f in b["filas"]]
+    assert resumen(a)["compras"] == resumen(b)["compras"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 2 · LO QUE NO SE GUARDA
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_los_nombres_de_las_partes_no_salen_del_parser():
     """ECOA Regulation B: la única forma segura de no inferir origen por
     apellido es no tener el apellido.
 
-    Se leen para ubicar las demás columnas y se tiran en el acto. La prueba
-    mira el JSON entero, no los campos de a uno: un campo nuevo que los
-    arrastre tiene que hacerla fallar.
+    El volcado real trae `Persona 1` … `Persona 18` en las columnas Buyers y
+    Sellers. Se leen para ubicar las demás y se tiran en el acto.
     """
-    import json
+    entero = json.dumps(_p(), ensure_ascii=False)
+    assert "Persona 1" in REAL, "el fixture ya no trae nombres: la prueba no prueba"
+    for i in range(1, 19):
+        assert "Persona %d" % i not in entero, i
+    for f in _p()["filas"]:
+        assert "_compradores" not in f and "_vendedores" not in f
 
+
+def test_la_calle_no_sale_y_el_zip_si():
+    assert "Calle Ficticia" in REAL
     p = _p()
-    entero = json.dumps(p, ensure_ascii=False)
-    assert "COMPRADOR N" not in entero
-    assert "VENDEDOR N" not in entero
-    for f in p["filas"]:
-        assert "_compradores" not in f
-        assert "_vendedores" not in f
+    assert "Calle Ficticia" not in json.dumps(p, ensure_ascii=False)
+    f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
+    assert (f["ciudad"], f["estado"], f["zip"]) == ("Elmwood Park", "IL", "60707")
 
 
-def test_la_direccion_se_reduce_a_ciudad_y_zip():
-    """La calle identifica una vivienda. El ZIP alcanza para saber dónde opera."""
-    import json
-
-    p = _p()
-    assert "5321 S Long Ave" not in json.dumps(p)
-    f = p["filas"][0]
-    assert f["ciudad"] == "Chicago"
-    assert f["estado"] == "IL"
-    assert f["zip"] == "60638"
-    assert "direccion" not in f and "calle" not in f
-
-
-# ══ 2 · LA TASA ══════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# 3 · LA TASA
+# ══════════════════════════════════════════════════════════════════════════════
 
 def test_762_por_ciento_es_7_coma_62():
     """No existe una hipoteca residencial al 762%. Tampoco al 25.
@@ -139,21 +273,16 @@ def test_762_por_ciento_es_7_coma_62():
     órdenes de magnitud.
     """
     assert normalizar_tasa("762.00%") == 7.62
-    assert normalizar_tasa("6.625%") == 6.625
-    assert normalizar_tasa("5.5") == 5.5
-    assert normalizar_tasa("662.50%") == 6.625
+    assert normalizar_tasa("687.00%") == 6.87
+    assert normalizar_tasa("6.55%") == 6.55
     assert normalizar_tasa("") is None
     assert normalizar_tasa("—") is None
     assert normalizar_tasa("0%") is None
 
 
-def test_la_tasa_normalizada_llega_a_la_fila():
-    p = _p()
-    non_qm = next(f for f in p["filas"] if f["tipo"] == "Non-QM")
-    assert non_qm["tasa"] == 7.62
-
-
-# ══ 3 · CASH NO QUIERE DECIR EFECTIVO ════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# 4 · CASH NO QUIERE DECIR EFECTIVO, Y LO QUE NO SE LEYÓ NO ES CASH
+# ══════════════════════════════════════════════════════════════════════════════
 
 def test_cash_de_hace_nueve_dias_es_provisional():
     """Model Match: «Considered Cash until mortgage details are received».
@@ -161,206 +290,149 @@ def test_cash_de_hace_nueve_dias_es_provisional():
     Decir «pagó en efectivo» de una compra de hace nueve días es afirmar algo
     que Model Match avisa que todavía no sabe.
     """
-    p = _p()
-    f = next(x for x in p["filas"] if x["fecha"] == "2026-09-14")
+    f = next(x for x in _p()["filas"] if x["fecha"] == "2026-09-14")
     assert f["estado_prestamo"] == CASH_PROVISIONAL
     assert f["dias_desde_cierre"] == 9
     assert f["recapturar_despues_de"] == "2026-10-19"
 
 
 def test_cash_de_hace_mas_de_cinco_semanas_es_cash_segun_model_match():
-    p = _p()
-    f = next(x for x in p["filas"] if x["fecha"] == "2025-07-01")
+    f = next(x for x in _p()["filas"] if x["fecha"] == "2025-08-04")
     assert f["estado_prestamo"] == CASH_SEGUN_MM
-    assert f["dias_desde_cierre"] == 449
     assert f["recapturar_despues_de"] is None
 
 
-def test_sin_fecha_legible_no_se_afirma_cash():
-    """El estado que no afirma nada es `provisional`, y ahí se queda."""
-    fila = _C(["sin fecha", "x, Chicago, IL, 60638"] + [""] * 19)
-    p = parsear_transacciones(fila + "\n1 - 0 of 0", realtor=REALTOR,
-                              capturado_en=CAPTURADO)
-    # Sin fecha en la columna 1 la línea ni siquiera es una fila.
-    assert p["leidas"] == 0
-    assert p["lineas_descartadas"] == 1
+def test_una_celda_de_prestamo_vacia_es_NO_LEIDO_y_nunca_cash():
+    """El agujero que daba el falso `ok`.
 
-
-# ══ 4 · EL LADO SALE DE LA COLUMNA, NO DE UN CONTEO ══════════════════════════
-
-def test_el_lado_sale_de_en_que_columna_esta_su_nombre():
-    p = _p()
-    por_fecha = {f["fecha"]: f for f in p["filas"]}
-    assert por_fecha["2026-03-12"]["lado"] == COMPRA
-    assert por_fecha["2026-05-05"]["lado"] == VENTA
-    assert por_fecha["2026-04-03"]["lado"] == AMBOS
-
-
-def test_la_contraparte_es_el_agente_del_otro_lado():
-    p = _p()
-    f = next(x for x in p["filas"] if x["fecha"] == "2026-03-12")
-    assert f["agente_contraparte"] == "OTRA AGENTE"
-
-
-def test_sin_el_nombre_del_realtor_el_lado_queda_declarado_en_None():
-    """No se adivina. Una fila sin lado se cuenta aparte y se dice."""
-    p = parsear_transacciones(PEGADO, realtor=None, capturado_en=CAPTURADO)
-    assert all(f["lado"] is None for f in p["filas"])
-    assert p["sin_lado"] == len(p["filas"])
-
-
-# ══ 5 · LAS DOS FORMAS DE PEGAR ══════════════════════════════════════════════
-
-def test_una_celda_por_linea_da_lo_mismo_que_con_tabuladores():
-    """El portapapeles entrega la tabla de las dos formas según de dónde salga.
-
-    Preguntárselo a quien captura es pedirle que sepa algo que no puede ver.
+    Un loan que no se leyó se convertía en cash, y con eso las operaciones de
+    la casa desaparecían del conteo que decide la exclusión. `cash_*` exige que
+    la celda diga literalmente `Cash`.
     """
-    a = _p(PEGADO)
-    b = _p(PEGADO_EN_LINEAS)
-    assert a["leidas"] == b["leidas"] == 8
-    assert [f["hash_fila"] for f in a["filas"]] == [
-        f["hash_fila"] for f in b["filas"]]
-
-
-# ══ 6 · LA PAGINACIÓN ════════════════════════════════════════════════════════
-
-def test_el_pie_dice_cuantas_son():
-    assert paginacion("1 - 25 of 25")["total"] == 25
-    assert paginacion("Showing 1 to 25 of 137")["total"] == 137
-    assert paginacion("1-25 of 1,204")["total"] == 1204
-
-
-def test_si_faltan_paginas_no_se_da_el_calculo_por_completo():
-    """25 de 137 y calcular el mix es publicar un porcentaje de una quinta parte."""
-    p = parsear_transacciones(PEGADO.replace("1 - 8 of 8", "1 - 8 of 137"),
-                              realtor=REALTOR, capturado_en=CAPTURADO)
-    assert p["faltan_paginas"] is True
+    p = _p(_variante("Jul 30, 2026", "prestamo", "—"))
+    f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
+    assert f["estado_prestamo"] == NO_LEIDO
+    assert f["estado_prestamo"] not in (CASH_SEGUN_MM, CASH_PROVISIONAL)
     assert p["completa"] is False
-    assert "faltan páginas" in p["aviso"]
+    assert any("loan o cash" in r for r in p["por_que_no_completa"])
+
+
+def test_una_fila_con_una_celda_de_menos_no_se_lee_y_bloquea():
+    """Rellenar una fila corta corre todas las columnas desde donde falta.
+
+    La tasa entra en el plazo, el lender en el Sold Amount, y el resultado sale
+    plausible. 21 celdas exactas o no se lee.
+    """
+    p = _p(_variante("Jul 30, 2026", "tipo", None, borrar=True))
+    assert p["leidas"] == 24
+    assert len(p["no_leidas"]) == 1
+    assert p["no_leidas"][0]["celdas"] == 20
+    assert p["completa"] is False
+    assert any("1 filas sin leer" in r for r in p["por_que_no_completa"])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 5 · SIN LECTURA COMPLETA NO HAY `ok`
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_una_fila_sin_leer_deja_el_veredicto_en_pendiente():
+    """Es la corrección que importa: un parseo a medias daba `ok`.
+
+    Un realtor con operaciones de Supreme en la fila que no se leyó habría
+    salido contactable. Es un falso negativo de la compuerta de exclusión.
+    """
+    from motor.veredicto import PENDIENTE, puede_contactarse
+
+    p = _p(_variante("Jul 30, 2026", "tipo", None, borrar=True))
+    v = puede_contactarse({"transacciones": p})
+    assert v.estado == PENDIENTE, v.a_dict()
+    assert "No se pudo leer Transactions" in v.motivo
+    assert "1 filas sin leer" in v.motivo
+    assert v.evidencia["filas_sin_leer"] == 1
+
+
+def test_con_paginas_de_menos_tampoco_hay_veredicto():
+    from motor.veredicto import PENDIENTE, puede_contactarse
+
+    p = _p(REAL.replace("1 - 25 of 25", "1 - 25 of 137"))
+    assert p["faltan_paginas"] is True
+    assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
 
 
 def test_sin_pie_no_se_afirma_que_estan_todas():
     """`None` y no `True`: sin el pie no se puede confirmar."""
-    p = parsear_transacciones(PEGADO.replace("1 - 8 of 8", ""),
-                              realtor=REALTOR, capturado_en=CAPTURADO)
+    from motor.veredicto import PENDIENTE, puede_contactarse
+
+    p = _p(REAL.replace("1 - 25 of 25", ""))
     assert p["completa"] is None
-    assert p["faltan_paginas"] is False
-    assert "no se encontró el pie" in p["aviso"]
+    assert any("pie" in r for r in p["por_que_no_completa"])
+    assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
 
 
-# ══ 7 · LA SUMA COMO CONTROL DE FILA ═════════════════════════════════════════
+def test_sin_el_nombre_del_realtor_no_hay_lado_ni_veredicto():
+    """El lado sale de en qué columna aparece su nombre. No se adivina."""
+    from motor.veredicto import PENDIENTE, puede_contactarse
 
-def test_la_suma_que_no_cuadra_avisa_y_la_fila_se_guarda_igual():
-    """Avisa, no descarta: una fila mal leída que se tira desaparece del
-    denominador y nadie la echa de menos."""
-    p = _p()
-    f = next(x for x in p["filas"] if x["fecha"] == "2026-06-11")
-    assert f["aviso_suma"] is not None
-    assert "-70,0%" in f["aviso_suma"] or "-70.0%" in f["aviso_suma"]
-    assert f in p["filas"]
+    p = parsear_transacciones(REAL, realtor=None, capturado_en=CAPTURADO)
+    assert p["sin_lado"] == 25
+    assert p["completa"] is False
+    assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
 
 
-def test_el_fha_con_ufmip_dentro_del_prestamo_no_avisa():
-    """El enganche aparente es 1,8%; recalculado es el mínimo de 3,5%.
+# ══════════════════════════════════════════════════════════════════════════════
+# 6 · LA COMPUERTA DE EXCLUSIÓN, CON LAS TRES VARIANTES
+# ══════════════════════════════════════════════════════════════════════════════
 
-    No es señal de DPA, y la suma cuadra porque Model Match calcula el Down
-    Payment como precio menos préstamo.
-    """
-    p = _p()
-    f = next(x for x in p["filas"] if x["tipo"] == "FHA")
-    assert f["aviso_suma"] is None
-    assert round(100.0 * f["enganche"] / f["precio"], 1) == 1.8
+def test_everett_financial_con_nmls_2129_en_el_employer_excluye():
+    from motor.veredicto import EXCLUIDO, puede_contactarse
 
-
-# ══ 8 · LO QUE SE DERIVA ═════════════════════════════════════════════════════
-
-def test_cash_y_financiadas_se_cuentan_NUNCA_se_restan():
-    """Restar del total convierte cualquier fila mal leída en una categoría
-    inventada que nadie revisa."""
-    r = resumen(_p())
-    c = r["compras"]
-    assert c["total"] == 7          # 6 compras + la doble punta
-    assert c[FINANCIADA] == 5
-    assert c[CASH_SEGUN_MM] == 1
-    assert c[CASH_PROVISIONAL] == 1
-    assert c[FINANCIADA] + c[CASH_SEGUN_MM] + c[CASH_PROVISIONAL] == c["total"]
+    p = _p(_variante("Jul 30, 2026", "empleador",
+                     "Everett Financial, Inc. NMLS: 2129"))
+    f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
+    assert f["lender_nmls"] == "2129"
+    assert f["de_la_casa"] is True
+    v = puede_contactarse({"transacciones": p})
+    assert v.estado == EXCLUIDO, v.a_dict()
 
 
-def test_el_loan_mix_sale_del_grano_y_solo_de_las_financiadas():
-    r = resumen(_p())
-    assert r["loan_mix_compra"] == {"Conventional": 2, "FHA": 1, "HE": 1,
-                                    "Non-QM": 1}
+def test_supreme_lending_en_el_lender_con_employer_vacio_excluye():
+    """Sin NMLS, la decisión la toma el nombre COMPLETO del Lender."""
+    from motor.veredicto import EXCLUIDO, puede_contactarse
 
-
-def test_los_lenders_van_por_lado():
-    r = resumen(_p())
-    assert r["lenders_compra"]["Guaranteed Rate"] == 2
-    assert "American Pacific Mortgage" not in r["lenders_compra"]
-    assert r["lenders_venta"]["Peoples Bank"] == 1
-
-
-def test_los_zips_de_compra_contestan_donde_trabaja():
-    r = resumen(_p())
-    assert r["zips_de_compra"]["60638"] == 2
-
-
-def test_las_compras_pendientes_traen_su_fecha_de_recaptura():
-    """Una de esas compras puede terminar financiada por la casa."""
-    r = resumen(_p())
-    p = r["pendientes_de_prestamo"]
-    assert len(p) == 1
-    assert p[0]["fecha"] == "2026-09-14"
-    assert p[0]["recapturar_despues_de"] == "2026-10-19"
-
-
-def test_el_share_buy_sale_del_conteo_de_operaciones():
-    """7 compras y 2 ventas contando la doble punta en las dos."""
-    r = resumen(_p())
-    assert r["ventas"]["total"] == 2
-    assert share_buy_de_transacciones(r) == round(7 / 9.0, 4)
-    assert share_buy_de_transacciones(None) is None
-    assert share_buy_de_transacciones({"compras": {"total": 0},
-                                       "ventas": {"total": 0}}) is None
-
-
-# ══ 9 · LA COMPUERTA, DESDE EL GRANO ═════════════════════════════════════════
-
-CON_LA_CASA = PEGADO.replace(
-    "Stonehaven NMLS #901\t\tStonehaven Mortgage",
-    "Everett Financial Inc NMLS #2129\t\tSupreme Lending")
-
-
-def test_una_sola_operacion_con_la_casa_se_ve_en_el_grano():
-    p = parsear_transacciones(CON_LA_CASA, realtor=REALTOR,
-                              capturado_en=CAPTURADO)
-    r = resumen(p)
-    assert r["unidades_de_la_casa"] == 1
-    assert "Supreme Lending" in r["lenders_de_la_casa"]
-
-
-def test_el_nmls_2129_basta_aunque_el_nombre_no_diga_supreme():
-    fila = _fila("03/12/2026", "1 Main St, Chicago, IL, 60638",
-                 "$200,000", "$50,000", "Conventional", "6.5%",
-                 "ALGUIEN NMLS #1", "Una Empresa Cualquiera NMLS #2129",
-                 "Una Empresa Cualquiera", "$250,000", REALTOR, "OTRA")
-    p = parsear_transacciones(fila + "\n1 - 1 of 1", realtor=REALTOR,
-                              capturado_en=CAPTURADO)
-    assert p["filas"][0]["de_la_casa"] is True
+    p = _p(_variante("Jul 30, 2026", "lender", "Supreme Lending"))
+    f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
+    assert f["empleador"] is None
+    assert f["lender_nmls"] is None
+    assert f["de_la_casa"] is True
+    assert puede_contactarse({"transacciones": p}).estado == EXCLUIDO
 
 
 def test_supreme_mortgage_no_es_supreme_lending():
     """El riesgo va en la dirección cara: excluir a quien sí podemos atender."""
-    fila = _fila("03/12/2026", "1 Main St, Chicago, IL, 60638",
-                 "$200,000", "$50,000", "Conventional", "6.5%",
-                 "ALGUIEN NMLS #1", "Supreme Mortgage Corp NMLS #77",
-                 "Supreme Mortgage Corp", "$250,000", REALTOR, "OTRA")
-    p = parsear_transacciones(fila + "\n1 - 1 of 1", realtor=REALTOR,
-                              capturado_en=CAPTURADO)
-    assert p["filas"][0]["de_la_casa"] is False
+    from motor.veredicto import OK, puede_contactarse
+
+    p = _p(_variante("Jul 30, 2026", "lender", "Supreme Mortgage Corp"))
+    f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
+    assert f["de_la_casa"] is False
+    assert puede_contactarse({"transacciones": p}).estado == OK
 
 
-# ══ 10 · EL HASH DE FILA ═════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# 7 · EL LADO, LA CONTRAPARTE Y EL HASH
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_el_lado_sale_de_en_que_columna_esta_su_nombre():
+    por_fecha = {f["fecha"]: f for f in _p()["filas"]}
+    assert por_fecha["2026-09-14"]["lado"] == COMPRA
+    assert por_fecha["2026-09-09"]["lado"] == VENTA
+    assert {f["lado"] for f in _p()["filas"]} <= {COMPRA, VENTA, AMBOS}
+
+
+def test_la_contraparte_es_el_agente_del_otro_lado():
+    f = next(x for x in _p()["filas"] if x["fecha"] == "2026-09-14")
+    assert f["lado"] == COMPRA
+    assert f["agente_contraparte"] == "Agente 1"
+
 
 def test_el_hash_no_cambia_cuando_una_cash_pasa_a_financiada():
     """Es LA MISMA operación actualizada, no una fila nueva.
@@ -368,109 +440,80 @@ def test_el_hash_no_cambia_cuando_una_cash_pasa_a_financiada():
     Si el monto entrara en la huella, volver a capturar después de que Model
     Match reciba los datos duplicaría la operación y doblaría el denominador.
     """
-    cash = _fila("09/14/2026", "3011 N Nordica Ave, Chicago, IL, 60634",
-                 "Cash", "Cash", "", "", "", "", "", "$265,000", REALTOR,
-                 "OTRA AGENTE")
-    luego = _fila("09/14/2026", "3011 N Nordica Ave, Chicago, IL, 60634",
-                  "$212,000", "$53,000", "Conventional", "6.25%",
-                  "ALGUIEN NMLS #1", "Un Lender NMLS #2", "Un Lender",
-                  "$265,000", REALTOR, "OTRA AGENTE")
-    a = parsear_transacciones(cash, realtor=REALTOR, capturado_en=CAPTURADO)
-    b = parsear_transacciones(luego, realtor=REALTOR, capturado_en=CAPTURADO)
-    assert a["filas"][0]["hash_fila"] == b["filas"][0]["hash_fila"]
-    assert a["filas"][0]["estado_prestamo"] == CASH_PROVISIONAL
-    assert b["filas"][0]["estado_prestamo"] == FINANCIADA
+    antes = _p()
+    despues = _p(_variante("Sep 14, 2026", "prestamo", "$240K"))
+    a = next(x for x in antes["filas"] if x["fecha"] == "2026-09-14")
+    b = next(x for x in despues["filas"] if x["fecha"] == "2026-09-14")
+    assert a["estado_prestamo"] == CASH_PROVISIONAL
+    assert b["estado_prestamo"] == FINANCIADA
+    assert a["hash_fila"] == b["hash_fila"]
 
 
-def test_dos_operaciones_distintas_no_comparten_hash():
-    p = _p()
-    hashes = [f["hash_fila"] for f in p["filas"]]
-    assert len(set(hashes)) == len(hashes)
+def test_las_25_operaciones_tienen_hash_distinto():
+    hashes = [f["hash_fila"] for f in _p()["filas"]]
+    assert len(set(hashes)) == 25
 
 
-# ══ 11 · LA COMPUERTA LEE EL GRANO ═══════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# 8 · LA PAGINACIÓN Y EL PIE
+# ══════════════════════════════════════════════════════════════════════════════
 
-def _perfil(texto=PEGADO):
-    return {"transacciones": parsear_transacciones(
-        texto, realtor=REALTOR, capturado_en=CAPTURADO)}
-
-
-def test_sin_operaciones_con_la_casa_el_veredicto_es_ok_y_cuenta_el_cash():
-    """Las «compras sin originador» dejan de ser una ausencia: son cash."""
-    from motor.veredicto import OK, puede_contactarse
-
-    v = puede_contactarse(_perfil())
-    assert v.estado == OK, v.a_dict()
-    e = v.evidencia
-    assert e["grano"] == "transacción"
-    assert e["compras_totales"] == 7
-    assert e["compras_financiadas"] == 5
-    assert e["compras_cash_segun_mm"] == 1
-    assert e["unidades_de_la_casa"] == 0
+def test_el_pie_dice_cuantas_son():
+    assert paginacion(REAL)["total"] == 25
+    assert paginacion("Showing 1 to 25 of 137")["total"] == 137
+    assert paginacion("1-25 of 1,204")["total"] == 1204
 
 
-def test_una_operacion_con_la_casa_excluye_desde_el_grano():
-    from motor.veredicto import EXCLUIDO, puede_contactarse
+def test_el_dolar_suelto_del_pie_no_entra_como_celda():
+    """Después de «Rows per page» hay un «$200K» que no es de ninguna fila.
 
-    v = puede_contactarse(_perfil(CON_LA_CASA))
-    assert v.estado == EXCLUIDO, v.a_dict()
-    assert "Supreme Lending" in v.motivo
-    assert v.evidencia["unidades_de_la_casa"] == 1
-
-
-def test_con_paginas_de_menos_no_hay_veredicto():
-    """25 filas de 137 no son un veredicto: son una quinta parte de uno."""
-    from motor.veredicto import PENDIENTE, puede_contactarse
-
-    v = puede_contactarse(_perfil(PEGADO.replace("1 - 8 of 8", "1 - 8 of 137")))
-    assert v.estado == PENDIENTE, v.a_dict()
-    assert "a medias" in v.motivo
-
-
-def test_las_compras_pendientes_salen_en_el_veredicto_con_su_fecha():
-    """«1 compra del 14 sep todavía sin datos de préstamo», y cuándo volver."""
-    from motor.veredicto import puede_contactarse
-
-    v = puede_contactarse(_perfil())
-    assert "2026-10-19" in v.motivo
-    assert len(v.evidencia["compras_pendientes_de_prestamo"]) == 1
-
-
-def test_transactions_manda_sobre_el_reparto_del_overview():
-    """El Overview es un resumen. Cuando hay grano, el grano.
-
-    El control importa: el mismo perfil SIN Transactions cae en el camino
-    viejo, así que la diferencia es la pestaña y no otra cosa.
+    Sin cortar ahí se pegaba a la última operación y la dejaba en 22 celdas.
     """
-    from motor.veredicto import OK, PENDIENTE, puede_contactarse
+    assert "$200K" in REAL.split("Rows per page")[1]
+    assert len(_celdas_por_fila(REAL)) == 25
+    assert len(_celdas_por_fila(REAL)[-1]) == 21
 
-    p = _perfil()
-    p["orig_buyer"] = []          # el Overview no trae reparto
-    assert puede_contactarse(p).estado == OK
-    assert puede_contactarse({"orig_buyer": []}).estado == PENDIENTE
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 9 · LO QUE SE DERIVA, Y LO QUE NO SE RESTA
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_cash_y_financiadas_se_cuentan_NUNCA_se_restan():
+    """Restar del total convierte cualquier fila mal leída en una categoría
+    inventada que nadie revisa."""
+    c = _r()["compras"]
+    assert (c[FINANCIADA] + c[CASH_SEGUN_MM] + c[CASH_PROVISIONAL]
+            + c[NO_LEIDO]) == c["total"]
+
+
+def test_el_share_buy_sale_del_conteo_de_operaciones():
+    r = _r()
+    assert share_buy_de_transacciones(r) == round(18 / 25.0, 4)
+    assert share_buy_de_transacciones(None) is None
+    assert share_buy_de_transacciones({"compras": {"total": 0},
+                                       "ventas": {"total": 0}}) is None
 
 
 def test_el_share_buy_del_motor_prefiere_el_grano():
-    """Side Focus dice «3 buy / 0 sell» y las operaciones dicen 7 de 9."""
+    """Side Focus dice una cosa y las operaciones dicen otra."""
     from supabase.correr_motor import share_del_lado_comprador
 
-    p = _perfil()
-    p.update({"sf_buy": 3, "sf_sell": 0})
-    assert share_del_lado_comprador(p) == round(7 / 9.0, 4)
+    p = {"transacciones": _p(), "sf_buy": 3, "sf_sell": 0}
+    assert share_del_lado_comprador(p) == round(18 / 25.0, 4)
     # Sin Transactions, Side Focus. No se pierde la fuente: se ordena.
     assert share_del_lado_comprador({"sf_buy": 3, "sf_sell": 0}) == 1.0
-    # Y con páginas de menos no se calcula ninguna de las dos desde el grano.
-    p2 = _perfil(PEGADO.replace("1 - 8 of 8", "1 - 8 of 137"))
-    p2.update({"sf_buy": 3, "sf_sell": 0})
+    # Y con la lectura incompleta no se calcula desde el grano.
+    p2 = {"transacciones": _p(REAL.replace("1 - 25 of 25", "1 - 25 of 137")),
+          "sf_buy": 3, "sf_sell": 0}
     assert share_del_lado_comprador(p2) == 1.0
 
 
-def test_sin_transactions_la_ficha_lo_dice_y_no_calcula_cash_por_diferencia():
-    """19 compras y 14 con originador: 5 sin identificar, NO 5 cash.
+# ══════════════════════════════════════════════════════════════════════════════
+# 10 · SIN TRANSACTIONS, LA FICHA LO DICE
+# ══════════════════════════════════════════════════════════════════════════════
 
-    Restar y llamarlo cash inventa una categoría que nadie midió y que sale con
-    la misma cara que una medida. La ficha dice qué falta y qué pegar.
-    """
+def test_sin_transactions_la_ficha_lo_dice_y_no_calcula_cash_por_diferencia():
+    """19 compras y 14 con originador: 5 sin identificar, NO 5 cash."""
     from motor.veredicto import OK, puede_contactarse
 
     v = puede_contactarse({
@@ -482,41 +525,38 @@ def test_sin_transactions_la_ficha_lo_dice_y_no_calcula_cash_por_diferencia():
     assert v.evidencia["grano"] == "resumen del Overview"
     assert v.evidencia["compras_sin_originador_identificado"] == 5
     assert "Transactions" in v.motivo
-    # Y en ningún sitio se dice que esas 5 fueron cash.
     assert "cash" not in v.evidencia
-    assert "compras_cash_segun_mm" not in v.evidencia
 
 
 def test_con_transactions_el_veredicto_deja_de_decir_que_falta():
     """El control: el aviso tiene que APAGARSE cuando el dato llega."""
     from motor.veredicto import puede_contactarse
 
-    v = puede_contactarse(_perfil())
+    v = puede_contactarse({"transacciones": _p()})
     assert v.evidencia.get("falta_transactions") is None
     assert v.evidencia["grano"] == "transacción"
 
 
-# ══ 12 · LA GUARDA REDUNDANTE ANTES DE ESCRIBIR ══════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# 11 · LA GUARDA REDUNDANTE ANTES DE ESCRIBIR
+# ══════════════════════════════════════════════════════════════════════════════
 
 def test_las_filas_que_van_a_la_base_no_llevan_nombres_ni_calle():
     from api.rutas import _filas_de_transacciones
 
-    fs = _filas_de_transacciones(_p(), "r-1", "lote-1",
-                                 "2026-09-23T00:00:00Z")
-    assert len(fs) == 8
+    fs = _filas_de_transacciones(_p(), "r-1", "lote-1", "2026-09-23T00:00:00Z")
+    assert len(fs) == 25
+    entero = json.dumps(fs, ensure_ascii=False)
+    for i in range(1, 19):
+        assert "Persona %d" % i not in entero, i
+    assert "Calle Ficticia" not in entero
     for f in fs:
-        assert "_compradores" not in f and "_vendedores" not in f
         assert "direccion" not in f and "calle" not in f
         assert f["realtor_id"] == "r-1"
-    assert fs[0]["hash_fila"]
 
 
 def test_un_campo_prohibido_revienta_en_vez_de_filtrarse_en_silencio():
-    """Un filtro callado deja el mismo bug vivo para el campo siguiente.
-
-    Es la guarda redundante: el parser ya no los devuelve y la lista blanca ya
-    los dejaría fuera. Esta es la tercera vuelta, y es la que se ve.
-    """
+    """Un filtro callado deja el mismo bug vivo para el campo siguiente."""
     from api.rutas import _filas_de_transacciones
 
     p = _p()
@@ -524,13 +564,46 @@ def test_un_campo_prohibido_revienta_en_vez_de_filtrarse_en_silencio():
     try:
         _filas_de_transacciones(p, "r-1", "lote-1", "2026-09-23T00:00:00Z")
     except ValueError as exc:
-        assert "buyers" in str(exc)
-        assert "ECOA" in str(exc)
+        assert "buyers" in str(exc) and "ECOA" in str(exc)
         return
     raise AssertionError("escribió una fila con el nombre del comprador")
 
 
-# ══ 13 · LO QUE EL OVERVIEW NO LEÍA ══════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════════════
+# 12 · EL CAMINO COMPLETO
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_la_caja_de_transactions_entra_como_las_demas():
+    from captura.cajas import LEIDO, SIN_PEGAR, cajas_desde, resumen_de_cajas
+
+    cajas = cajas_desde({"cajas": [
+        {"clave": "trx", "tipo": "transacciones", "etiqueta": "Transactions",
+         "texto": REAL},
+        {"clave": "lend", "tipo": "lenders", "etiqueta": "Lenders"}]})
+    assert cajas[0].estado == LEIDO
+    assert cajas[1].estado == SIN_PEGAR
+    assert "Transactions" not in resumen_de_cajas(cajas)["faltan"]
+    assert "Lenders" in resumen_de_cajas(cajas)["faltan"]
+
+
+def test_unir_perfiles_lleva_las_transacciones_hasta_el_veredicto():
+    """El camino real: la re-evaluación solo mira `parseado.perfil`."""
+    from captura.parser_mm import unir_perfiles
+    from motor.veredicto import OK, puede_contactarse
+
+    unido = unir_perfiles([
+        {"nombre": "ALGUIEN", "buyer_units": 18.0, "orig_buyer": []},
+        {"transacciones": _p()}])
+    assert unido["buyer_units"] == 18.0
+    assert unido["transacciones"]["leidas"] == 25
+    v = puede_contactarse(unido)
+    assert v.estado == OK
+    assert v.evidencia["grano"] == "transacción"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 13 · LO QUE EL OVERVIEW NO LEÍA
+# ══════════════════════════════════════════════════════════════════════════════
 
 CABECERA = """Agents
 ALGUIEN DE PRUEBA
@@ -574,43 +647,6 @@ def test_los_LOs_por_lado_se_leen_de_la_cabecera():
     assert p["los_buyer"] == 7
     assert p["los_seller"] == 2
     assert (p["sf_buy"], p["sf_sell"]) == (18, 7)
-
-
-# ══ 14 · EL CAMINO COMPLETO, POR DONDE PASA DE VERDAD ════════════════════════
-
-def test_la_caja_de_transactions_entra_como_las_demas():
-    from captura.cajas import LEIDO, SIN_PEGAR, cajas_desde, resumen_de_cajas
-
-    cajas = cajas_desde({"cajas": [
-        {"clave": "trx", "tipo": "transacciones", "etiqueta": "Transactions",
-         "texto": PEGADO},
-        {"clave": "lend", "tipo": "lenders", "etiqueta": "Lenders"}]})
-    assert cajas[0].estado == LEIDO
-    assert cajas[1].estado == SIN_PEGAR
-    # Y una caja sin pegar sale en «faltan», que es lo que la ficha muestra.
-    assert "Transactions" not in resumen_de_cajas(cajas)["faltan"]
-    assert "Lenders" in resumen_de_cajas(cajas)["faltan"]
-
-
-def test_unir_perfiles_lleva_las_transacciones_hasta_el_veredicto():
-    """El camino real: la re-evaluación solo mira `parseado.perfil`.
-
-    Guardar el parseado en otra llave del jsonb lo dejaría en la base y fuera
-    del motor, que es como este proyecto ya perdió Instagram durante semanas.
-    """
-    from captura.parser_mm import unir_perfiles
-    from motor.veredicto import OK, puede_contactarse
-
-    del_overview = {"nombre": "ALGUIEN", "buyer_units": 18.0, "orig_buyer": []}
-    de_transacciones = {"transacciones": parsear_transacciones(
-        PEGADO, realtor=REALTOR, capturado_en=CAPTURADO)}
-
-    unido = unir_perfiles([del_overview, de_transacciones])
-    assert unido["buyer_units"] == 18.0
-    assert unido["transacciones"]["leidas"] == 8
-    v = puede_contactarse(unido)
-    assert v.estado == OK
-    assert v.evidencia["grano"] == "transacción"
 
 
 def _correr():

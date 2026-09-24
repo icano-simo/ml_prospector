@@ -1,0 +1,69 @@
+{
+ "_nota": "Resultado esperado de parsear 2_fixture_transactions_real_anonimizado.txt con realtor='Agente Titular' y capturado_en='2026-09-23T23:54:00+00:00'. Verificado a mano contra las capturas de pantalla de Model Match. Los nombres de lender se comparan normalizados (sin 'Inc', 'Llc', 'Corp', comas ni puntos): 'Guaranteed Rate Inc' = 'Guaranteed Rate, Inc.' = 'Guaranteed Rate'.",
+ "leidas": 25,
+ "lineas_descartadas": 0,
+ "sin_lado": 0,
+ "completa": true,
+ "compras": {
+  "total": 18,
+  "financiada": 8,
+  "cash_segun_mm": 9,
+  "cash_provisional": 1
+ },
+ "ventas": {
+  "total": 7,
+  "financiada": 2,
+  "cash_segun_mm": 4,
+  "cash_provisional": 1
+ },
+ "loan_mix_compra": {
+  "Conventional": 5,
+  "FHA": 2,
+  "HE": 1
+ },
+ "lenders_compra": {
+  "Guaranteed Rate": 3,
+  "Zillow Home Loans": 2,
+  "Stonehaven Mortgage": 1,
+  "Angel Oak Mortgage Solutions": 1,
+  "Peoples Bank": 1
+ },
+ "lenders_venta": {
+  "American Pacific Mortgage": 1,
+  "Neighborhood Loans": 1
+ },
+ "pendientes_de_prestamo": [
+  {
+   "fecha": "2026-09-14",
+   "lado": "compra",
+   "recapturar_despues_de": "2026-10-19"
+  },
+  {
+   "fecha": "2026-09-09",
+   "lado": "venta",
+   "recapturar_despues_de": "2026-10-14"
+  }
+ ],
+ "zips_de_compra_top": {
+  "60638": 3,
+  "60629": 2,
+  "60619": 2
+ },
+ "precio_mediano_compra": 286000,
+ "volumen_compra": 5317000,
+ "volumen_venta": 2730000,
+ "tasa_angel_oak": 7.62,
+ "fila_2026-07-30": {
+  "tipo": "Conventional",
+  "prestamo": 151000,
+  "enganche": 17000,
+  "precio": 168000,
+  "empleador": null,
+  "lender": "Guaranteed Rate Inc",
+  "lender_nmls": null,
+  "estado_prestamo": "financiada"
+ },
+ "avisos_de_suma": [],
+ "unidades_de_la_casa": 0,
+ "veredicto": "ok"
+}

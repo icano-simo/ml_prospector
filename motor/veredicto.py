@@ -192,14 +192,29 @@ def puede_contactarse(perfil: dict | None, *,
                         max(p.get("recapturar_despues_de") or ""
                             for p in pendientes) or "cierre + 35 días"))
 
-        faltan = (perfil.get("transacciones") or {}).get("faltan_paginas")
-        if faltan:
+        # NO SE PUDO LEER ENTERA -> PENDIENTE, y no hay `ok` que valga.
+        #
+        # Antes solo miraba el pie de paginacion, y el pie cuadraba: 25 filas
+        # de una celda cada una son 25 filas. Con eso un parseo en el que no se
+        # leyo un solo campo salia `ok` -- que es un FALSO NEGATIVO de la
+        # compuerta: un realtor con operaciones de Supreme habria pasado.
+        #
+        # `completa` exige las cuatro: el pie cuadra, 0 filas sin leer, 0
+        # operaciones sin lado, y toda financiada con lender. Cualquiera que
+        # falte deja el veredicto en pendiente.
+        tx_crudo = perfil.get("transacciones") or {}
+        if tx_crudo.get("completa") is not True:
+            sin_leer = len(tx_crudo.get("no_leidas") or [])
+            razones = list(tx_crudo.get("por_que_no_completa") or [])
+            if not razones:
+                razones = ["%d filas sin leer" % sin_leer]
             return Veredicto(
                 estado=PENDIENTE,
-                motivo=("la pestaña Transactions está pegada a medias: %s"
-                        % (perfil["transacciones"].get("aviso") or
-                           "faltan páginas")),
-                evidencia=evidencia)
+                motivo=("No se pudo leer Transactions: %s. Sin la pestaña "
+                        "entera no se puede decir que ninguna de sus "
+                        "operaciones pasó por la casa." % "; ".join(razones)),
+                evidencia=dict(evidencia, filas_sin_leer=sin_leer,
+                               por_que_no_completa=razones))
 
         if tx["unidades_de_la_casa"] > UNIDADES_MINIMAS_PARA_EXCLUIR:
             quienes = ", ".join(tx["lenders_de_la_casa"]) or "la casa"
