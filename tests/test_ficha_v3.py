@@ -392,6 +392,42 @@ def test_sin_cash_no_se_muestra_una_barra_de_cero():
     assert filas == [{"tipo": "FHA", "n": 2}], filas
 
 
+# ══ 11 · LO QUE SE APAGA ES LA PARTE, NO LA PESTAÑA ══════════════════════════
+
+def test_el_bloque_que_no_pasa_deja_su_motivo_en_el_hueco():
+    """Un bloque que desaparece se lee como que no había nada que decir."""
+    from api.rutas import _solo_lo_valido
+
+    salida = _solo_lo_valido(
+        {"A": {"texto": "Quién es."}, "D": {"texto": "La hipótesis."}},
+        {"D": ["AFIRMA sin una activación de intensidad 3 y grado E0"]})
+    assert salida["A"] == {"texto": "Quién es."}
+    assert salida["D"] == {
+        "_pendiente": ["AFIRMA sin una activación de intensidad 3 y grado E0"]}
+
+
+def test_un_problema_de_la_seccion_entera_apaga_la_seccion():
+    from api.rutas import _solo_lo_valido
+
+    salida = _solo_lo_valido({"A": {"texto": "Quién es."}},
+                             {"": ["el realtor está excluido"]})
+    assert salida == {"_pendiente": ["el realtor está excluido"]}
+
+
+def test_el_toque_apagado_conserva_su_numero_y_su_dia_de_PACS():
+    """Y el día sale de PACS, no del texto: el día pudo ser lo que falló."""
+    from api.rutas import _secuencia_valida
+    from motor.secuencia import DIAS_PACS
+
+    seq = {"toques": [{"n": 1, "dia": 0, "texto": "Hola."},
+                      {"n": 2, "dia": 99, "texto": "Te mando la guía."}]}
+    salida = _secuencia_valida(seq, {"toques[1]": ["promete material"]},
+                               DIAS_PACS)
+    assert salida["toques"][0]["texto"] == "Hola."
+    assert salida["toques"][1] == {"n": 2, "dia": 3,
+                                   "_pendiente": ["promete material"]}
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]
