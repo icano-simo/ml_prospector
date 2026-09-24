@@ -421,6 +421,171 @@ def ficha_v3(params: dict) -> tuple[int, dict]:
     }
 
 
+def ficha_v3_completa(params: dict) -> tuple[int, dict]:
+    """La ficha con la forma del esquema: código + IA validada.
+
+    La app VALIDA AL LEER, y no solo confía en que Cowork validó antes de
+    escribir. Dos motivos: el paquete cambia --una ficha válida ayer puede
+    citar una transacción que hoy se re-capturó-- y una validación que solo
+    corre del lado del que produce el texto es una promesa, no una guarda.
+
+    Una sección que no pasa se apaga sola y las de código se muestran igual.
+    Nunca se muestra un texto sin validar, y nunca se pierde lo comprobado.
+    """
+    from motor.validar_ficha import secciones_con_problema, validar
+
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+    rid = urllib.parse.quote(realtor_id)
+
+    cod, base = ficha_v3(params)          # las secciones de código
+    if cod >= 400:
+        return cod, base
+
+    _c, paqs, _ = leer("v_paquete_ficha",
+                       "?select=paquete,hash_paquete&realtor_id=eq.%s" % rid)
+    paquete = (paqs or [{}])[0].get("paquete") or {}
+    _c, fichas, _ = leer(
+        "v_ficha_ia_actual",
+        "?select=json,generada_en,generada_por,version_prompt,hash_paquete"
+        "&realtor_id=eq.%s" % rid)
+    redactada = (fichas or [None])[0]
+
+    ficha = _ficha_solo_codigo(base)
+    redaccion: dict = {}
+    if redactada:
+        problemas = validar(redactada.get("json") or {}, paquete)
+        malas = secciones_con_problema(problemas)
+        # Se mezcla lo que SÍ pasó, sección por sección.
+        for clave, valor in (redactada.get("json") or {}).items():
+            if clave in malas:
+                continue
+            if isinstance(valor, dict) and isinstance(ficha.get(clave), dict):
+                ficha[clave] = {**ficha[clave], **valor}
+            else:
+                ficha[clave] = valor
+        ficha["_no_validas"] = malas
+        redaccion = {
+            "generada_en": redactada.get("generada_en"),
+            "generada_por": redactada.get("generada_por"),
+            "version_prompt": redactada.get("version_prompt"),
+            "problemas": problemas,
+            "secciones_apagadas": sorted(malas),
+            # No se esconde la ficha vieja: se marca. Una ficha vieja bien
+            # marcada es útil; una ficha vieja sin marcar es una mentira con
+            # fecha.
+            "desactualizada": bool(
+                paquete.get("hash_paquete")
+                and redactada.get("hash_paquete") != paquete["hash_paquete"]),
+        }
+
+    return 200, {"ficha": ficha, "redaccion": redaccion,
+                 "hay_paquete": bool(paquete)}
+
+
+def _ficha_solo_codigo(base: dict) -> dict:
+    """Las secciones `escribe: codigo`, con la forma del esquema de la ficha."""
+    q = base.get("quien_es") or {}
+    prod = base.get("produccion") or {}
+    r = (prod or {}).get("resumen") or {}
+    c = r.get("compras") or {}
+    v = r.get("ventas") or {}
+    ig = base.get("instagram") or {}
+    filas = (prod or {}).get("filas") or []
+
+    return {
+        "cabecera": {
+            "nombre": q.get("nombre"), "iniciales": q.get("iniciales"),
+            "meta": " · ".join(x for x in (q.get("brokerage"), q.get("estado"))
+                               if x),
+            "contactos": [
+                {"canal": x["canal"], "valor": x["valor"],
+                 "fuentes": x["fuentes"], "difiere": x["una_sola_fuente"]}
+                for x in (q.get("contactos") or [])],
+        },
+        "veredicto": {"estado": (base.get("veredicto") or {}).get("estado"),
+                      "texto": (base.get("veredicto") or {}).get("motivo")},
+        "salesforce": base.get("salesforce") or {},
+        "por_que_ella": {"prioridad": "Pendiente"},
+        "produccion": (None if not prod else {
+            "kpis": [
+                {"n": "%s / %s" % (c.get("total") or 0, v.get("total") or 0),
+                 "l": "buys / listings"},
+                {"n": _mm_dinero(r.get("volumen_compra")),
+                 "l": "buy side · %s listing side"
+                      % _mm_dinero(r.get("volumen_venta"))},
+                {"n": _mm_dinero(r.get("precio_mediano_compra")),
+                 "l": "median purchase price"},
+                {"n": (filas[0].get("fecha") if filas else "—"),
+                 "l": "último closing"},
+            ],
+            "trimestres": [{"t": t["etiqueta"], "n": t["n"],
+                            "parcial": t["parcial"]}
+                           for t in (prod.get("trimestres") or [])],
+            "loan_mix": ([{"tipo": k, "n": n}
+                          for k, n in (r.get("loan_mix_compra") or {}).items()]
+                         + [{"tipo": "Cash", "n": c.get("cash_segun_mm") or 0}]
+                         + ([{"tipo": "Pendiente",
+                              "n": c.get("cash_provisional")}]
+                            if c.get("cash_provisional") else [])),
+            "lenders": [{"lender": k, "n": n, "detalle": ""}
+                        for k, n in (r.get("lenders_compra") or {}).items()],
+            "operaciones": filas,
+        }),
+        "instagram": {"encabezado": (
+            None if not ig else
+            "Instagram · @%s%s" % (ig.get("handle") or "—",
+                                   (" · leído el %s"
+                                    % str(ig.get("leido_en") or "")[:10])
+                                   if ig.get("leido_en") else ""))},
+        "fuentes": _texto_de_fuentes(base.get("fuentes") or {}),
+        "pendientes": base.get("falta_en_la_ficha") or [],
+    }
+
+
+def _mm_dinero(n):
+    if not n:
+        return "—"
+    if n >= 1e6:
+        return "$%s M" % ("%.1f" % (n / 1e6)).replace(".", ",")
+    return "$%dK" % round(n / 1e3)
+
+
+def _texto_de_fuentes(f: dict) -> str:
+    partes = []
+    if f.get("model_match"):
+        partes.append("Model Match (capturado el %s)"
+                      % str(f["model_match"])[:10])
+    if f.get("instagram"):
+        partes.append("Instagram (leído el %s)" % str(f["instagram"])[:10])
+    if f.get("evaluado_en"):
+        partes.append("diagnóstico del %s" % str(f["evaluado_en"])[:10])
+    return " · ".join(partes)
+
+
+def pedir_ficha(d: dict) -> tuple[int, dict]:
+    """El botón «Pedir actualización». Encola al realtor para que Cowork lo tome.
+
+    Es una cola y no una columna en `realtors` porque se pide varias veces y
+    hay que poder ver quién lo pidió y cuándo.
+    """
+    realtor_id = (d.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+    _c, paqs, _ = leer("v_paquete_ficha", "?select=hash_paquete&realtor_id=eq.%s"
+                       % urllib.parse.quote(realtor_id))
+    cod, det, _ = escribir("fichas_ia_pendientes", [{
+        "realtor_id": realtor_id,
+        "pedida_por": (d.get("pedida_por") or "pantalla"),
+        "motivo": (d.get("motivo") or "pedido desde la ficha"),
+        "hash_paquete": (paqs or [{}])[0].get("hash_paquete"),
+    }], devolver=False)
+    if cod >= 400:
+        return cod, {"error": "no se pudo encolar", "detalle": det}
+    return 200, {"encolado": True}
+
+
 def _instagram_para_la_ficha(ig: dict) -> dict | None:
     """Lo que Instagram aporta, PASADO POR LA COMPUERTA DE PERFIL.
 
@@ -587,6 +752,18 @@ def realtors(params: dict) -> tuple[int, dict]:
     texto = (params.get("q") or "").strip()
     estado = (params.get("estado") or "").strip()
     con_mm = (params.get("mm") or "").strip()
+
+    # Un solo realtor por id. Lo pide el ENLACE DIRECTO: la lista trae 300 de
+    # 4.249, así que buscar el id entre los cargados fallaría justo para quien
+    # no aparece en la primera página, que es casi todo el mundo.
+    uno = (params.get("id") or "").strip()
+    if uno:
+        cod, filas, _ = leer(
+            "realtors", "?select=%s&id=eq.%s"
+            % (CAMPOS_LISTA, urllib.parse.quote(uno)))
+        if cod >= 400:
+            return cod, {"error": "supabase", "detalle": filas}
+        return 200, {"realtors": filas or [], "total": len(filas or [])}
 
     partes = ["select=" + CAMPOS_LISTA, "order=nombre_completo.asc",
               "limit=%d" % TOPE]
@@ -2630,6 +2807,8 @@ RUTAS = {
     "/api/leer_overview": (leer_overview, "POST"),
     "/api/mercados_en_biblioteca": (mercados_en_biblioteca, "GET"),
     "/api/ficha": (ficha_v3, "GET"),
+    "/api/ficha_v3": (ficha_v3_completa, "GET"),
+    "/api/pedir_ficha": (pedir_ficha, "POST"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
     "/api/instagram": (instagram, "GET"),

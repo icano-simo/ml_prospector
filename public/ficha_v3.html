@@ -1,0 +1,59 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Ficha v3 · plantilla</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="ficha_v3.css">
+
+<!--
+  La plantilla sola, para la ACEPTACIÓN VISUAL.
+
+  Renderiza el JSON que se le pase y nada más. Se compara con la maqueta a 1200
+  y a 400 px: si las dos capturas coinciden sección por sección, la plantilla
+  es la maqueta. Si no, la diferencia se ve y se arregla aquí, no se discute.
+
+  Dos formas de cargarlo:
+    · `?json=<url>` — para el golden en local;
+    · `window.FICHA = {...}` antes de este script — para las pruebas.
+
+  No habla con la base. Es a propósito: esta página existe para medir la
+  plantilla, y si leyera de la base mediría también la base.
+-->
+<div id="ficha"></div>
+
+<script src="ficha_v3.js"></script>
+<script>
+(function () {
+  function pintar(d) {
+    document.getElementById('ficha').innerHTML = window.renderFichaV3(d);
+    var b = document.getElementById('btnCopiar');
+    if (b) b.addEventListener('click', function () {
+      var p = document.querySelector('#msg p');
+      var t = p ? p.innerText.trim() : '';
+      function ok() {
+        b.textContent = 'Copiado';
+        setTimeout(function () { b.textContent = 'Copiar SMS'; }, 1800);
+      }
+      try { navigator.clipboard.writeText(t).then(ok, ok); } catch (e) { ok(); }
+    });
+  }
+
+  if (window.FICHA) { pintar(window.FICHA); return; }
+
+  var url = new URLSearchParams(location.search).get('json');
+  if (!url) {
+    document.getElementById('ficha').innerHTML =
+      '<div class="wrap"><p class="muestra">Pasá <code>?json=&lt;url&gt;</code> ' +
+      'o definí <code>window.FICHA</code>.</p></div>';
+    return;
+  }
+  fetch(url).then(function (r) { return r.json(); }).then(pintar)
+    .catch(function (e) {
+      document.getElementById('ficha').innerHTML =
+        '<div class="wrap"><p class="muestra">No pude leer ' + url + ': ' +
+        e.message + '</p></div>';
+    });
+})();
+</script>

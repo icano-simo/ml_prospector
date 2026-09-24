@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ficha del realtor v3",
+  "description": "Cada campo dice quién lo escribe: 'codigo' (lo llena la app desde la base) o 'ia' (lo escribe Claude). Solo los campos 'ia' van en el JSON Schema de la llamada a la API. Toda frase de IA lleva 'evidencias': ids del paquete.",
+  "$defs": {
+    "frase": {
+      "type": "object", "escribe": "ia",
+      "required": ["texto", "evidencias"],
+      "properties": {
+        "texto": {"type": "string"},
+        "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    },
+    "cita": {
+      "type": "object", "escribe": "ia",
+      "required": ["texto_literal", "fecha", "nota", "evidencias"],
+      "properties": {
+        "texto_literal": {"type": "string", "description": "Copiado exacto del post; el validador lo busca dentro de la evidencia citada."},
+        "fecha": {"type": "string", "format": "date"},
+        "nota": {"type": "string"},
+        "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      }
+    }
+  },
+  "type": "object",
+  "properties": {
+    "cabecera": {
+      "properties": {
+        "nombre": {"escribe": "codigo"},
+        "meta": {"escribe": "codigo", "description": "REALTOR® · brokerage · team · zona"},
+        "iniciales": {"escribe": "codigo"},
+        "bio": {"$ref": "#/$defs/frase", "description": "4-5 oraciones: años, idioma (solo si ella lo dice), dónde compra (ZIPs de Transactions), qué muestra en IG."},
+        "bio_evidencias_visibles": {"type": "array", "items": {"$ref": "#/$defs/cita"}, "description": "El 'De dónde sale' de la bio."},
+        "contactos": {"escribe": "codigo", "description": "[{canal, valor, fuentes[], difiere}]"}
+      }
+    },
+    "veredicto": {"escribe": "codigo", "description": "estado, texto y pendientes de loan (Transactions <35 días). La IA NO lo toca."},
+    "salesforce": {"escribe": "codigo", "description": "Lead, Owner, Status, Lead Source, creado, actividades clasificadas, o 'Pendiente'."},
+    "por_que_ella": {
+      "properties": {
+        "prioridad": {"escribe": "codigo", "description": "'Pendiente' hasta que haya puntaje validado."},
+        "razones": {"type": "array", "minItems": 3, "maxItems": 3, "items": {
+          "type": "object", "required": ["titulo", "texto", "evidencias"],
+          "properties": {"titulo": {"type": "string"}, "texto": {"type": "string"}, "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1}}
+        }, "escribe": "ia"}
+      }
+    },
+    "dolores": {"type": "array", "minItems": 2, "maxItems": 5, "escribe": "ia", "items": {
+      "type": "object", "required": ["dolor", "evidencia_texto", "grado", "pregunta", "evidencias"],
+      "properties": {
+        "dolor": {"type": "string"},
+        "evidencia_texto": {"type": "string"},
+        "grado": {"type": "array", "items": {"enum": ["Dato", "Lo cuenta ella", "Hipótesis", "Hipótesis el porqué"]}, "minItems": 1},
+        "pregunta": {"type": "string"},
+        "nota_producto": {"type": ["string", "null"], "description": "Productos posibles, siempre con [Confirmar con producto]."},
+        "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "qualifier_pacs": {"type": ["string", "null"], "description": "P-Q01, etc., si sale de una activación PACS-H."}
+      }
+    }},
+    "mensaje": {"escribe": "ia", "type": "object",
+      "required": ["sms", "largo_es", "largo_en", "canal", "preguntas", "objecion"],
+      "properties": {
+        "sms": {"$ref": "#/$defs/frase", "description": "2-3 líneas, español con cierre en inglés, <=320 caracteres, gancho = algo que ella publicó."},
+        "largo_es": {"$ref": "#/$defs/frase"},
+        "largo_en": {"$ref": "#/$defs/frase"},
+        "canal": {"$ref": "#/$defs/frase", "description": "Teléfono que usa hoy (según fuentes) y por qué no el otro."},
+        "preguntas": {"type": "array", "minItems": 3, "maxItems": 5, "items": {"$ref": "#/$defs/frase"}},
+        "objecion": {"$ref": "#/$defs/frase"}
+      }
+    },
+    "produccion": {
+      "properties": {
+        "lede": {"$ref": "#/$defs/frase", "escribe": "ia"},
+        "kpis": {"escribe": "codigo"}, "trimestres": {"escribe": "codigo"}, "loan_mix": {"escribe": "codigo"},
+        "nota_loan_mix": {"$ref": "#/$defs/frase", "escribe": "ia", "description": "p.ej. FHA con 3,5% mínimo, HE con $213K down"},
+        "lenders": {"escribe": "codigo"},
+        "lo_que_significa": {"$ref": "#/$defs/frase", "escribe": "ia"},
+        "operaciones": {"escribe": "codigo", "description": "Tabla, plegada por defecto."}
+      }
+    },
+    "instagram": {
+      "properties": {
+        "encabezado": {"escribe": "codigo", "description": "handle, fecha de lectura"},
+        "lede": {"$ref": "#/$defs/frase", "escribe": "ia"},
+        "a_quien_le_habla": {"type": "array", "maxItems": 4, "escribe": "ia", "items": {
+          "type": "object", "required": ["titulo", "cita"],
+          "properties": {"titulo": {"type": "string"}, "cita": {"$ref": "#/$defs/cita"}}
+        }},
+        "nota_listings": {"$ref": "#/$defs/frase", "escribe": "ia"},
+        "idioma": {"$ref": "#/$defs/frase", "escribe": "ia"},
+        "que_cuenta_de_sus_clientes": {"type": "array", "maxItems": 3, "escribe": "ia", "items": {"$ref": "#/$defs/cita"}},
+        "comentarios": {"escribe": "ia", "type": "object", "required": ["hay_clientes", "texto", "chips"],
+          "properties": {"hay_clientes": {"type": "boolean"}, "texto": {"type": "string"}, "chips": {"type": "array", "items": {"type": "string"}, "maxItems": 3}, "evidencias": {"type": "array", "items": {"type": "string"}}}}
+      }
+    },
+    "contexto": {"escribe": "ia", "properties": {
+      "mercado_resumen": {"$ref": "#/$defs/frase"}, "mercado_texto": {"$ref": "#/$defs/frase"},
+      "census_resumen": {"$ref": "#/$defs/frase"}, "census_texto": {"$ref": "#/$defs/frase"}
+    }},
+    "fuentes": {"escribe": "codigo"},
+    "pendientes": {"escribe": "codigo", "description": "Lista con motivo: puntaje, LO asignado, Census por ZIP, seguidores..."}
+  }
+}
