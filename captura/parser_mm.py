@@ -892,6 +892,21 @@ def parsear_perfil(crudo: str) -> dict:
         txt, r"Seller Side Relationships",
         r"Geography|Top Builders|Market Signals")
     o["tab_orig"] = _tabla_originadores(txt)
+
+    # «Total Originators 0» es Model Match DECLARANDO que no hay, no una
+    # ausencia. Es la misma informacion que la casilla de la pantalla, dicha
+    # por la fuente -- y sin leerla, una captura completa que dice cero queda
+    # como «falta capturar» para siempre.
+    #
+    # Es el caso de Aaron Gaston: su captura trae la seccion entera y dice 0, y
+    # el veredicto salia `pendiente_modelmatch` pidiendo que se pegara algo que
+    # ya estaba pegado.
+    m_tot = re.search(r"Total Originators\s+(\d+)", txt, re.I)
+    if m_tot:
+        o["total_originators_declarado"] = int(m_tot.group(1))
+        if int(m_tot.group(1)) == 0:
+            o["sin_originadores_declarado"] = True
+            o["declarado_por"] = "Model Match: «Total Originators 0»"
     # MEDIDA, no declarada: el dict fijo de antes decia "volumen" sobre
     # porcentajes de unidades y nada fallaba.
     o["wallet_share_base"] = {
