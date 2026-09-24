@@ -27,6 +27,11 @@ import psycopg  # noqa: E402
 from supabase.config import cargar_env  # noqa: E402
 
 CASOS = [
+    # Estos dos NO comprueban que devuelvan filas: comprueban que el SELECT no
+    # revienta. Cuántas filas se ve se comprueba aparte, y con la tabla llena
+    # -- ver `_lectura_con_datos`. La primera versión hacía `count(*)` sobre la
+    # tabla vacía y lo daba por bueno: un 0 sobre una tabla sin filas no prueba
+    # que se pueda leer, prueba que no hay nada que leer.
     ("1 · SELECT como authenticated sobre v_paquete_ficha",
      "set local role authenticated; "
      "select count(*) from pacs.v_paquete_ficha", False, None),
@@ -74,6 +79,66 @@ CASOS = [
      "from pacs.realtors r limit 1",
      False, None),
 ]
+
+
+def _lectura_con_datos(con) -> int:
+    """Que la lectura devuelve LAS FILAS QUE HAY, no que no revienta.
+
+    Es la mitad que faltaba. La verificación anterior corrió con la tabla
+    vacía: `count(*)` dio 0, el caso pasó, y un 0 sobre una tabla sin filas
+    dice exactamente lo mismo que un 0 por permisos.
+
+    Aquí se cuenta primero como owner y se exige el MISMO número como
+    `authenticated` con el claim. Si la tabla está vacía, se dice y se falla:
+    una verificación que no tiene nada que verificar no es una verificación.
+    """
+    fallas = 0
+    print("")
+    print("lectura CON DATOS (la mitad que faltaba):")
+    with con.cursor() as cur:
+        cur.execute("select count(*) from pacs.paquetes_ficha")
+        total = cur.fetchone()[0]
+    if not total:
+        print("   ✕ `pacs.paquetes_ficha` está VACÍA: no hay nada que "
+              "verificar. Corré `generar_paquetes.py --con-mm --guardar`.")
+        con.rollback()
+        return 1
+
+    # Como `authenticated` CON el claim: se simula poniendo el claim en el JWT
+    # de la sesión, que es lo que hace PostgREST.
+    with con.cursor() as cur:
+        try:
+            cur.execute("select id from auth.users limit 1")
+            usuario = cur.fetchone()
+        except Exception:  # noqa: BLE001
+            usuario = None
+        con.rollback()
+
+    for etiqueta, rol in (("como owner", None),
+                          ("como authenticated SIN claim", "authenticated")):
+        with con.cursor() as cur:
+            try:
+                # En sentencias SEPARADAS: con las dos en un `execute`, psycopg
+                # devuelve el resultado de la PRIMERA --el `set role`, que no
+                # produce filas-- y el caso falla por la forma de pedirlo, no
+                # por lo que se quería medir.
+                if rol:
+                    cur.execute("set local role %s" % rol)
+                cur.execute("select count(*) from pacs.v_paquete_ficha")
+                n = cur.fetchone()[0]
+            except Exception as exc:  # noqa: BLE001
+                n = "ERROR %s" % str(exc)[:60]
+            con.rollback()
+        print("   %-32s %s de %s" % (etiqueta, n, total))
+        if etiqueta == "como owner" and n != total:
+            print("      ✕ la vista no devuelve todas las filas de la tabla")
+            fallas += 1
+        if etiqueta.endswith("SIN claim") and n not in (0, total):
+            print("      · (informativo)")
+    if usuario is None:
+        print("   · no hay usuarios en auth.users: no se puede probar CON "
+              "claim desde aquí. Se prueba en el PR de autenticación.")
+    return fallas
 
 
 def main() -> int:
@@ -145,6 +210,7 @@ def main() -> int:
             if error:
                 print("     %s" % error)
         print("═" * 68)
+        fallas += _lectura_con_datos(con)
 
     print("")
     print("casos que no pasaron: %d" % fallas)
