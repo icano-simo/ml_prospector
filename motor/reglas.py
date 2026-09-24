@@ -199,7 +199,24 @@ REGLAS: tuple[Regla, ...] = (
     ),
     Regla(
         id="P-Q01-2", qualifier="P-Q01", familia="P", intensidad=2, grado="E1",
-        texto="su bio menciona un programa de gobierno o down payment assistance",
+        # DECIA «su bio menciona un programa de gobierno o down payment
+        # assistance», y la bio no es la fuente de ninguno de los dos campos.
+        #
+        # `ev2_fha_gob` llega por DOS caminos: la columna `ev2: fha_gob` del
+        # libro v3 --cuya derivacion no esta documentada-- y `menciona_fha` de
+        # Instagram, que cuenta menciones en los CAPTIONS, no en la bio. Lo
+        # mismo `ev2_dpa_enganche`.
+        #
+        # El caso que lo destapo: una realtor con este dolor primario cuya
+        # unica mencion de FHA es un post que enumera tipos de financing --
+        # «Cash • Financing (conventional, FHA, VA, USDA) • Seller
+        # Financing»-- que no es posicionarse en un programa de gobierno.
+        #
+        # Un texto que nombra una fuente equivocada es peor que uno vago: el BD
+        # lo repite en la llamada, la realtor no reconoce su bio, y lo que se
+        # cae no es la frase sino la credibilidad de todo lo demas.
+        texto="FHA o down payment assistance, marcados en el libro v3 o "
+              "mencionados en su muro",
         campos=("ev2_fha_gob", "ev2_dpa_enganche"),
         condicion=lambda r: _o(_b(r, "ev2_fha_gob"), _b(r, "ev2_dpa_enganche")),
         gancho="P-082",

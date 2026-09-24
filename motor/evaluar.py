@@ -39,7 +39,13 @@ from pacs.guardas import (
 #: y cierra la apertura hipotecaria en <= 1, y P-Q14 sale del idioma medido del
 #: muro y deja la bio sola en 1/E1. Una evaluación de antes y una de después no
 #: son comparables en esos dos números, y sin la versión nadie podría saberlo.
-VERSION_REGLAS = "2026.09.23-compuertas"
+#: `-fuente-real` no cambia ninguna condición: cambia lo que P-Q01-2 DICE. El
+#: texto anterior nombraba la bio, y ninguno de sus dos campos sale de la bio.
+#: Sube igual, porque el `texto` es lo que el BD lee en la ficha y lo repite en
+#: la llamada -- y una evaluación guardada con la frase vieja no es la misma
+#: que una guardada con la nueva, aunque el qualifier y la intensidad
+#: coincidan.
+VERSION_REGLAS = "2026.09.24-fuente-real"
 
 
 def huella_del_catalogo() -> str:

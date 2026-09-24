@@ -51,6 +51,19 @@ create table if not exists pacs.sf_lead_estado (
     -- true, así que la condición de actividad lo clasificaría como un BD y la
     -- ficha diría «ya tiene dueño» sobre todos los leads sin dueño.
     owner_es_integracion boolean not null default false,
+    -- El área del owner, cuando es una persona. Decide el TEXTO del sello, no
+    -- si hay dueño: `Recruiting` sigue siendo un dueño.
+    --
+    -- Maria Guerrero (005Qg000009lvyfIAA) es el caso que lo motiva: posee
+    -- 47.553 leads, más que `sf integrations`, y por volumen parecía un
+    -- usuario de enrutamiento. Es Recruiter Manager, Corporate; sus leads son
+    -- de reclutamiento (MMI 30.551, Recruitment Base Digital 6.322) y ninguno
+    -- es `Realtors Base Digital`. NO es de integración.
+    --
+    -- Si aparece como dueña de un lead de realtor, el sello va en ámbar y dice
+    -- «ya tiene dueño: Maria Guerrero (Recruiting)»: es un dueño real, y el BD
+    -- tiene que saber que viene de reclutamiento y no de prospección.
+    owner_area      text,
 
     -- Las últimas 5 Tasks, ya derivadas. Sin Subject.
     -- [{"fecha": "2026-07-31", "subtipo": "Task", "origen": "sms_campana"}]
@@ -86,7 +99,7 @@ select distinct on (s.sf_lead_id)
     s.id, s.capturado_en, s.sf_lead_id, s.realtor_id,
     s.status, s.lead_source, s.creado_en, s.es_convertido, s.ultima_actividad,
     s.owner_id, s.owner_nombre, s.owner_activo, s.owner_es_integracion,
-    s.actividades
+    s.owner_area, s.actividades
 from pacs.sf_lead_estado s
 order by s.sf_lead_id, s.capturado_en desc, s.uploaded_at desc;
 
