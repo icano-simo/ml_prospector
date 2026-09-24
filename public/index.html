@@ -19,6 +19,9 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="homesi.css">
+<!-- La plantilla de la ficha v3, extraída de la maqueta tal cual. Sus clases
+     están namespaceadas bajo `.wrap` y no chocan con las de la app. -->
+<link rel="stylesheet" href="ficha_v3.css">
 <style>
 /*
  * Solo el armazon de DOS COLUMNAS, que es propio de esta pantalla. Todo lo
@@ -86,6 +89,10 @@ html, body { height: 100% }
 <div class="velo" id="velo"></div>
 <aside class="panel" id="panel"></aside>
 
+<!-- El renderer de la ficha v3. Es el MISMO archivo que usa `ficha_v3.html`
+     para la aceptación visual: si fueran dos, la aceptación mediría uno y la
+     app mostraría el otro. -->
+<script src="ficha_v3.js"></script>
 <script>
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"]/g,
@@ -156,13 +163,39 @@ function pintarLista(){
     el.onclick = () => abrir(el.dataset.id));
 }
 
-function abrir(id){
+function abrir(id, tab){
   SEL = FILAS.find(f => f.id === id);
-  /* Abre por la LECTURA, que es lo que se mira primero. Capturar es una
-     acción; leer es para lo que se abre una ficha. */
-  TAB = 'lectura';
+  /* Abre por la FICHA, que es el orden que revisaron Isabella y un BD.
+     Capturar es una acción; leer es para lo que se abre una ficha. */
+  TAB = tab || 'ficha';
+  /* El enlace directo: se puede pegar en un mensaje y abre a esta persona.
+     Sin esto, «mirá la ficha de Ana» son tres pasos y una búsqueda. */
+  try{
+    const u = new URL(location.href);
+    u.searchParams.set('realtor_id', id);
+    u.searchParams.set('tab', TAB);
+    history.replaceState(null, '', u);
+  }catch(e){ /* en file:// no hay URL que actualizar, y no importa */ }
   pintarLista();
   pintarFicha();
+}
+
+/* Abre lo que pida `?realtor_id=…&tab=…` aunque no esté en la lista visible.
+   La lista trae 300 de 4.249, así que buscar el id entre los cargados fallaría
+   justo para quien no aparece en la primera página -- que es casi todo el
+   mundo. */
+async function abrirDesdeLaURL(){
+  const p = new URLSearchParams(location.search);
+  const id = (p.get('realtor_id') || '').trim();
+  if(!id) return false;
+  if(!FILAS.find(f => f.id === id)){
+    try{
+      const d = await api('/api/realtors?id=' + encodeURIComponent(id));
+      if((d.realtors || []).length) FILAS = FILAS.concat(d.realtors);
+    }catch(e){ /* si no se puede, `abrir` deja SEL en null y se ve el vacío */ }
+  }
+  abrir(id, p.get('tab') || 'ficha');
+  return true;
 }
 
 /* ── ficha ────────────────────────────────────────────────────────────── */
@@ -178,6 +211,7 @@ const PESTANAS = [
      Primero quién es y cómo se le escribe; el motor queda plegado en «Cómo se
      calculó», que es donde vive lo que al BD no le sirve para hablar. */
   ['ficha','Ficha',true],
+  ['ficha_datos','Ficha (solo datos)',true],
   ['lectura','Lectura del perfil',true],
   ['calculo','Cómo se calculó',true],
   ['mm','Model Match',true],
@@ -205,7 +239,8 @@ function pintarFicha(){
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
     TAB = b.dataset.tab; pintarFicha();
   });
-  if(TAB === 'ficha') vFicha();
+  if(TAB === 'ficha') vFichaV3();
+  if(TAB === 'ficha_datos') vFicha();
   if(TAB === 'mercados') vMercados();
   if(TAB === 'mm') vModelMatch();
   if(TAB === 'lectura' || TAB === 'calculo') vLectura(TAB);
@@ -651,6 +686,56 @@ function seccionContexto(d){
       <p class="sub" style="margin-top:6px">${chipPendiente(d.census.pendiente)}</p>
     </details>
   </div>`;
+}
+
+/* ── LA FICHA v3, con la plantilla de la maqueta ───────────────────────────
+ *
+ * Las secciones de código las llena la app; las de IA salen de la ficha que
+ * escribió Cowork, y SOLO si pasaron el validador. La cabecera dice cuándo se
+ * redactó y con qué versión, y si el paquete cambió desde entonces lo avisa en
+ * vez de esconder la ficha: una ficha vieja bien marcada es útil, una ficha
+ * vieja sin marcar es una mentira con fecha. */
+async function vFichaV3(){
+  $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando la ficha…</div>';
+  try{
+    const d = await api('/api/ficha_v3?realtor_id=' + encodeURIComponent(SEL.id));
+    const r = d.redaccion || {};
+    const aviso = r.desactualizada
+      ? `<div class="avi">Hay datos nuevos: ficha pendiente de actualizar.
+          Se sigue mostrando la del ${esc(String(r.generada_en||'').slice(0,10))}.</div>`
+      : '';
+    const cabecera = r.generada_en
+      ? `<div class="tarjeta" style="margin-bottom:12px">
+          <span class="pista">Ficha redactada el
+            ${esc(String(r.generada_en).slice(0,10))} ·
+            ${esc(r.version_prompt || '')} · por ${esc(r.generada_por || '')}</span>
+          <button class="btn sec" id="btnPedir" style="margin-left:12px"
+            >Pedir actualización</button></div>`
+      : `<div class="tarjeta" style="margin-bottom:12px">
+          <span class="pista">Todavía no hay ficha redactada para este realtor.
+            Las secciones de datos se muestran igual.</span>
+          <button class="btn sec" id="btnPedir" style="margin-left:12px"
+            >Pedir que se redacte</button></div>`;
+    $('#cuerpo').innerHTML = cabecera + aviso + window.renderFichaV3(d.ficha);
+    const bp = $('#btnPedir');
+    if(bp) bp.onclick = async () => {
+      bp.disabled = true; bp.textContent = 'pidiendo…';
+      try{
+        await api('/api/pedir_ficha', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({realtor_id: SEL.id})});
+        bp.textContent = 'Pedida';
+      }catch(e){ bp.textContent = 'no se pudo: ' + e.message; }
+    };
+    const bc = $('#btnCopiar');
+    if(bc) bc.onclick = () => {
+      const p = document.querySelector('#msg p');
+      navigator.clipboard.writeText(p ? p.innerText.trim() : '')
+        .then(() => { bc.textContent = 'Copiado'; }, () => {});
+    };
+  }catch(e){
+    $('#cuerpo').innerHTML = `<div class="tarjeta err">${esc(e.message)}</div>`;
+  }
 }
 
 async function vFicha(){
@@ -1747,7 +1832,8 @@ let t = null;
 $('#q').oninput = () => { clearTimeout(t); t = setTimeout(cargarLista, 280) };
 $('#fEstado').onchange = cargarLista;
 $('#fMM').onchange = cargarLista;
-cargarLista().then(() => $('#estadoGlobal').textContent = '');
+cargarLista()
+  .then(() => { $('#estadoGlobal').textContent = ''; return abrirDesdeLaURL(); });
 </script>
 </body>
 </html>
