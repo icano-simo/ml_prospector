@@ -77,6 +77,16 @@
     return m ? null : true;
   }
 
+  /* El texto largo de un pendiente, por su `item`. Lo escribe el código, así
+     que la sección que lo muestra no tiene que repetirlo -- y cuando cambie
+     («con licencia en Illinois»), cambia en un solo sitio. */
+  function _pendienteDe(d, item) {
+    var p = (d.pendientes || []).find(function (x) {
+      return x && x.item === item;
+    });
+    return p ? (p.texto_visible || p.motivo || '') : '';
+  }
+
   /* ── 1 · Quién es ─────────────────────────────────────────────────────── */
   function quienEs(d) {
     var c = d.cabecera || {};
@@ -141,7 +151,9 @@
     return '<section class="veredicto" aria-label="Veredicto">' +
       '<span class="sello">' + esc(SELLO[v.estado] || '▲ Sin veredicto') +
       '</span><p class="porque">' + esc(v.texto || v.motivo || '') + '</p>' +
-      '<div class="sf"><b>Salesforce</b>' + sfCuerpo + '</div></section>';
+      '<div class="sf"><b>Salesforce</b>' + sfCuerpo +
+      deDondeSale(sf.de_donde_sale ? [sf.de_donde_sale] : []) +
+      '</div></section>';
   }
 
   /* ── 3 · Por qué ella ─────────────────────────────────────────────────── */
@@ -149,15 +161,34 @@
     var p = d.por_que_ella || {};
     var cuerpo = ok(d, 'por_que_ella')
       ? '<ol class="razones">' + (p.razones || []).map(function (r) {
+          /* `de_donde_sale` puede traer prosa, citas o las dos. La prosa va
+             primero: es lo que el BD lee de un vistazo. */
+          var dd = r.de_donde_sale || r.de_donde;
+          var items = [];
+          if (dd && typeof dd === 'string') items.push(dd);
+          else if (dd) {
+            if (dd.texto) items.push(dd.texto);
+            (dd.citas || []).forEach(function (c) { items.push(c); });
+          }
           return '<li><h3>' + esc(r.titulo) + '</h3><p>' + esc(r.texto) +
-            '</p>' + deDondeSale(r.de_donde ? [r.de_donde] : []) + '</li>';
+            '</p>' + deDondeSale(items) + '</li>';
         }).join('') + '</ol>'
       : noValido((d._no_validas || {}).por_que_ella);
+    /* La prioridad la escribe el CÓDIGO y se pinta tal cual: poner aquí un
+       valor por defecto en mayúscula fue lo que hizo que la plantilla dijera
+       «Prioridad: Pendiente» donde la maqueta dice «pendiente». */
+    /* El texto sale del pendiente «puntaje», que es donde el código lo
+       escribe entero («Prioridad: pendiente»). Componerlo aquí a partir de un
+       valor suelto fue lo que dejó «Prioridad: Pendiente» con mayúscula. */
+    var prio = _pendienteDe(d, 'puntaje');
+    if (!prio) {
+      var v = p.prioridad;
+      if (v && typeof v === 'object') v = v.pendiente;
+      prio = 'Prioridad: ' + (v || 'pendiente');
+    }
     return '<section class="porque-ella" aria-label="Por qué ella">' +
       '<div class="prioridad"><h2 style="font-size:21px">Por qué ella</h2>' +
-      '<span class="pendiente">Prioridad: ' +
-      esc((p.prioridad && p.prioridad.pendiente) ? 'pendiente' :
-          (p.prioridad || 'pendiente')) + '</span></div>' + cuerpo +
+      '<span class="pendiente">' + esc(prio) + '</span></div>' + cuerpo +
       '</section>';
   }
 
@@ -172,9 +203,12 @@
         (d.dolores || []).map(function (x) {
           return '<tr><td>' + esc(x.dolor) + '</td><td>' +
             esc(x.evidencia_texto) + '</td><td>' +
-            (x.grado || []).map(function (g) {
+            (x.grado || []).map(function (g, i) {
+              /* `grado_detalle` va pegado al PRIMER grado: «Lo cuenta ella ·
+                 1 caso». Es lo que distingue un caso contado de una serie. */
               return '<span class="grado ' + (CLASE[g] || 'hip') + '">' +
-                esc(g) + '</span>';
+                esc(g + (i === 0 && x.grado_detalle
+                         ? ' · ' + x.grado_detalle : '')) + '</span>';
             }).join(' ') + '</td><td>' + esc('«' + (x.pregunta || '') + '»') +
             (x.nota_producto ? '<span class="s" style="display:block;' +
               'color:var(--ink3); font-size:12px">' + esc(x.nota_producto) +
@@ -216,9 +250,8 @@
       }).join('') + '</ol></div>' +
       (m.objecion ? '<div class="objecion"><b>Objeción probable:</b> ' +
         esc(m.objecion.texto) + '</div>' : '') +
-      '<p class="muestra">' + pendiente(
-        'Qué LO de HOMESÍ la atiende (con licencia y que hable español).') +
-      '</p></div></section>';
+      '<p class="muestra">' + pendiente(_pendienteDe(d, 'LO asignado') ||
+        'Qué LO de HOMESÍ la atiende.') + '</p></div></section>';
   }
 
   /* ── 7 · Producción ───────────────────────────────────────────────────── */
@@ -264,9 +297,14 @@
           '</b><span>' + esc(t.t || t.etiqueta) + (t.parcial ? '*' : '') +
           '</span></div>';
       }).join('') + '</div>' +
-      '<p class="muestra">* Trimestres incompletos: los datos empiezan y ' +
-      'terminan dentro del trimestre.</p>' +
-      '<h3 style="margin-top:8px">Loan type de sus buys</h3><div class="barras">' +
+      /* La nota y el título los escribe el CÓDIGO, con las fechas y el conteo
+         de verdad. Tenerlos fijos aquí era inventar una frase genérica encima
+         de datos que la app ya sabe. */
+      (p.trimestres_nota ? '<p class="muestra">' + esc(p.trimestres_nota) +
+        '</p>' : '') +
+      '<h3 style="margin-top:8px">' +
+      esc(p.loan_mix_titulo || 'Loan type de sus buys') +
+      '</h3><div class="barras">' +
       mix.map(function (x) {
         var pend = x.pendiente || x.tipo === 'Pendiente';
         return '<div class="barra"><span' + (pend ? ' class="pend"' : '') +
@@ -281,8 +319,11 @@
       '<div class="gente">' + (p.lenders || []).map(function (l) {
         return '<div class="persona"><span class="quien"><b>' + esc(l.lender) +
           '</b><span>' + esc(l.detalle || '') + '</span></span>' +
+          /* «1 buy», no «1 buys». Un plural mal puesto en una ficha que el BD
+             lee en voz alta se nota, y es gratis no ponerlo. */
           '<span class="cuantas">' + (l.n != null ? l.n : l.buys) +
-          ' buys</span></div>';
+          ((l.n != null ? l.n : l.buys) === 1 ? ' buy' : ' buys') +
+          '</span></div>';
       }).join('') + '</div>' +
       (ok(d, 'produccion') && p.lo_que_significa
         ? '<p class="lectura"><b>Lo que significa:</b> ' +
@@ -387,14 +428,18 @@
       return '<section class="colapsado" aria-label="Contexto de su zona">' +
         noValido((d._no_validas || {}).contexto) + '</section>';
     }
+    /* Los títulos vienen en el JSON: «Mercado de Cook County» nombra el
+       condado que se está mirando, y ponerlo fijo lo borraba. */
     var bloques = [];
     if (c.mercado_resumen) {
-      bloques.push('<details><summary><b>Mercado</b> <span>· ' +
+      bloques.push('<details><summary><b>' +
+        esc(c.mercado_titulo || 'Mercado') + '</b> <span>· ' +
         esc(c.mercado_resumen.texto) + '</span></summary><p style="margin-top:6px">' +
         esc((c.mercado_texto || {}).texto || '') + '</p></details>');
     }
     if (c.census_resumen) {
-      bloques.push('<details><summary><b>Quién vive en su zona</b> <span>· ' +
+      bloques.push('<details><summary><b>' +
+        esc(c.census_titulo || 'Quién vive en su zona') + '</b> <span>· ' +
         esc(c.census_resumen.texto) + '</span></summary><p style="margin-top:6px">' +
         esc((c.census_texto || {}).texto || '') + '</p></details>');
     }
@@ -407,9 +452,15 @@
   function fuentes(d) {
     var f = d.fuentes;
     var texto = typeof f === 'string' ? f : ((f || {}).texto || '');
+    /* Los pendientes son `{item, texto_visible}`: en el pie va el item corto,
+       y el texto largo lo usa quien lo necesite (el LO, en su sección). Una
+       lista de frases largas al pie no se lee. */
+    var items = (d.pendientes || []).map(function (p) {
+      return typeof p === 'string' ? p : (p.item || p.texto_visible || '');
+    }).filter(Boolean);
     return '<footer class="fuentes"><p><b>Fuentes:</b> ' + esc(texto) + '</p>' +
-      '<p><b>Falta en esta ficha:</b> ' +
-      esc((d.pendientes || []).join(' · ')) + '</p></footer>';
+      '<p><b>Falta en esta ficha:</b> ' + esc(items.join(' · ')) +
+      '</p></footer>';
   }
 
   function render(d) {

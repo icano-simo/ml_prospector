@@ -122,14 +122,32 @@ def main() -> int:
         print(__doc__)
         return 2
 
+    # Lo que YA está guardado, por realtor. Un paquete cuyo hash no cambió es
+    # la misma evidencia otra vez: la tabla es append-only, y «append-only» no
+    # quiere decir «guardar lo mismo de nuevo». Con duplicados, la ficha dice
+    # contra qué paquete se escribió y no se sabe cuál de los dos.
+    #
+    # La tabla lo impide igual con un unique. Esto es para poder DECIR «sin
+    # cambios» en vez de devolver un 409 que hay que ir a interpretar.
+    _c, ya, _ = leer("v_paquete_ficha",
+                     "?select=realtor_id,hash_paquete&limit=5000")
+    hash_actual = {f["realtor_id"]: f["hash_paquete"] for f in (ya or [])}
+
     print("paquetes a generar: %d%s"
           % (len(ids), "" if guardar else "   ·   MIDE, NO ESCRIBE"))
     print("")
     filas = []
+    sin_cambios = 0
     for rid in ids:
         p = paquete_de(rid)
         if not p:
             print("   %s · no existe" % rid[:8])
+            continue
+        if hash_actual.get(rid) == p["hash_paquete"]:
+            sin_cambios += 1
+            print("   %-8s %-26s sin cambios (%s)"
+                  % (rid[:8], (p.get("nombre") or "")[:26],
+                     p["hash_paquete"][:12]))
             continue
         por_tipo: dict = {}
         for e in p["evidencias"]:
@@ -143,8 +161,12 @@ def main() -> int:
                       "hash_paquete": p["hash_paquete"], "paquete": p})
 
     print("")
+    print("nuevos o cambiados: %d · sin cambios: %d" % (len(filas), sin_cambios))
     if not guardar:
         print("no se escribió nada. Pasá --guardar.")
+        return 0
+    if not filas:
+        print("nada que guardar: ningún paquete cambió.")
         return 0
     cod, det, _ = escribir("paquetes_ficha", filas, devolver=False)
     if cod >= 400:

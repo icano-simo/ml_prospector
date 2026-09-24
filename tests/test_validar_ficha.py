@@ -86,7 +86,9 @@ def _ficha(**cambios):
             "evidencias": ["MM-TX-RESUMEN"]}},
         "por_que_ella": {"razones": [
             {"titulo": "Buy side fuerte", "texto": "8 financed buys.",
-             "evidencias": ["MM-TX-RESUMEN"]},
+             "evidencias": ["MM-TX-RESUMEN"],
+             "de_donde_sale": {"texto": "Model Match › Transactions.",
+                               "evidencias": ["MM-TX-RESUMEN"]}},
             {"titulo": "Muchos cash buyers", "texto": "9 figuran como cash.",
              "evidencias": ["MM-TX-RESUMEN"]},
             {"titulo": "Trabaja el credit", "texto": "Cuenta un caso.",
@@ -209,6 +211,40 @@ def test_una_cita_recortada_con_puntos_suspensivos_pasa():
         "fecha": "2026-05-15", "nota": "x",
         "evidencias": ["IG-2026-05-15-a"]}]
     assert validar(f, PAQUETE) == []
+
+
+def test_el_de_donde_sale_de_una_razon_tambien_se_valida():
+    """Si no se validara, la razón quedaría comprobada y su justificación no.
+
+    Y la justificación es justo donde alguien pone el número que no se puede
+    sostener: la razón dice «se reparten entre varios lenders» y el «De dónde
+    sale» dice «25 operaciones entre el 4 ago y el 14 sep».
+    """
+    f = _ficha()
+    f["por_que_ella"]["razones"][0]["de_donde_sale"]["texto"] = \
+        "Model Match › Transactions: 99 operaciones."
+    p = validar(f, PAQUETE)
+    assert any("no está en las evidencias" in x["motivo"] for x in p), p
+    assert any("de_donde_sale" in x["seccion"] for x in p), p
+
+
+def test_una_cita_dentro_del_de_donde_sale_se_valida_como_cita():
+    f = _ficha()
+    f["por_que_ella"]["razones"][0]["de_donde_sale"]["citas"] = [{
+        "texto_literal": "Esto no lo dijo nunca", "fecha": "2026-05-15",
+        "nota": "", "evidencias": ["IG-2026-05-15-a"]}]
+    p = validar(f, PAQUETE)
+    assert any("no aparece en la evidencia" in x["motivo"] for x in p), p
+
+
+def test_el_grado_detalle_no_cambia_la_regla_del_grado():
+    """«Lo cuenta ella · 1 caso» sigue exigiendo citar un post."""
+    f = _ficha()
+    f["dolores"][0]["grado_detalle"] = "1 caso"
+    assert validar(f, PAQUETE) == []
+    f["dolores"][0]["evidencias"] = ["MM-TX-RESUMEN"]
+    p = validar(f, PAQUETE)
+    assert any("el grado no corresponde" in x["motivo"] for x in p), p
 
 
 # ══ 4 · «LO CUENTA ELLA» SIN FECHA ═══════════════════════════════════════════

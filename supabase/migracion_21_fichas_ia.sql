@@ -46,7 +46,19 @@ create table if not exists pacs.paquetes_ficha (
         not (paquete::text ilike '%marcadores_culturales%')
         and not (paquete::text ilike '%barrios_mencionados%')
         and not (paquete::text ilike '%"buyers"%')
-        and not (paquete::text ilike '%"sellers"%'))
+        and not (paquete::text ilike '%"sellers"%')),
+
+    -- UN PAQUETE POR CONTENIDO, no por vez que alguien corra el generador.
+    --
+    -- La tabla es append-only, pero «append-only» no quiere decir «guardar lo
+    -- mismo otra vez»: el hash ES el contenido, así que dos filas con el mismo
+    -- hash son la misma evidencia contada dos veces. Y el conteo importa: la
+    -- ficha dice contra qué paquete se escribió, y con duplicados no se sabe
+    -- cuál de los dos.
+    --
+    -- El generador además no llega hasta aquí: comprueba el hash antes y se
+    -- salta al realtor, para poder decir «sin cambios» en vez de un 409.
+    constraint paquete_uno_por_contenido unique (realtor_id, hash_paquete)
 );
 
 create index if not exists paquete_por_realtor
@@ -127,14 +139,27 @@ comment on table pacs.fichas_ia_pendientes is
 -- Columnas una por una y no `select *`: en Postgres un `select *` congela la
 -- lista de columnas al crear la vista, así que una columna nueva no aparece
 -- nunca y nadie se entera.
-create or replace view pacs.v_ficha_ia_actual as
+--
+-- `security_invoker = true` EN LAS DOS, y es la parte que importa
+-- --------------------------------------------------------------
+-- Por defecto una vista corre con los permisos de su OWNER, así que se salta
+-- la RLS de las tablas que lee. Hoy no cambia nada --las políticas son
+-- `using (true)`-- pero el día que se cierren con `allowed_apps ? 'prospector'`
+-- (PR de autenticación, migración 17) las tablas quedarían cerradas y las
+-- vistas seguirían abiertas: una puerta cerrada al lado de una ventana.
+--
+-- Y sería una ventana invisible, porque la verificación de la migración de
+-- auth va a probar las TABLAS. Se pone ahora, que es cuando se ve.
+create or replace view pacs.v_ficha_ia_actual
+with (security_invoker = true) as
 select distinct on (f.realtor_id)
     f.id, f.realtor_id, f.generada_en, f.generada_por, f.version_prompt,
     f.hash_paquete, f.json, f.validacion
 from pacs.fichas_ia f
 order by f.realtor_id, f.generada_en desc;
 
-create or replace view pacs.v_paquete_ficha as
+create or replace view pacs.v_paquete_ficha
+with (security_invoker = true) as
 select distinct on (p.realtor_id)
     p.id, p.realtor_id, p.generado_en, p.version_paquete, p.hash_paquete,
     p.paquete
@@ -149,10 +174,14 @@ comment on view pacs.v_paquete_ficha is
 -- la vista. Devuelve el jsonb, o null si la app todavía no lo generó -- y null
 -- es la respuesta correcta: significa «este realtor no está listo para
 -- redactar», no «no tiene datos».
+-- `security invoker` explícito aunque sea el valor por defecto de las
+-- funciones: al lado de dos vistas donde SÍ hay que declararlo, el silencio se
+-- lee como olvido.
 create or replace function pacs.paquete_ficha(p_realtor_id uuid)
 returns jsonb
 language sql
 stable
+security invoker
 as $$
     select v.paquete from pacs.v_paquete_ficha v
      where v.realtor_id = p_realtor_id

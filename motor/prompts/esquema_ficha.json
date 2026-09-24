@@ -1,103 +1,414 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Ficha del realtor v3",
-  "description": "Cada campo dice quién lo escribe: 'codigo' (lo llena la app desde la base) o 'ia' (lo escribe Claude). Solo los campos 'ia' van en el JSON Schema de la llamada a la API. Toda frase de IA lleva 'evidencias': ids del paquete.",
-  "$defs": {
-    "frase": {
-      "type": "object", "escribe": "ia",
-      "required": ["texto", "evidencias"],
-      "properties": {
-        "texto": {"type": "string"},
-        "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1}
-      }
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "title": "Ficha del realtor v3",
+ "description": "Cada campo dice quién lo escribe: 'codigo' (lo llena la app desde la base) o 'ia' (lo escribe Claude). Solo los campos 'ia' van en el JSON Schema de la llamada a la API. Toda frase de IA lleva 'evidencias': ids del paquete. v2 (2026-09-24): agrega de_donde_sale por razón, grado_detalle, títulos de contexto y prosa de código que faltaba.",
+ "$defs": {
+  "frase": {
+   "type": "object",
+   "escribe": "ia",
+   "required": [
+    "texto",
+    "evidencias"
+   ],
+   "properties": {
+    "texto": {
+     "type": "string"
     },
-    "cita": {
-      "type": "object", "escribe": "ia",
-      "required": ["texto_literal", "fecha", "nota", "evidencias"],
-      "properties": {
-        "texto_literal": {"type": "string", "description": "Copiado exacto del post; el validador lo busca dentro de la evidencia citada."},
-        "fecha": {"type": "string", "format": "date"},
-        "nota": {"type": "string"},
-        "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1}
-      }
+    "evidencias": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "minItems": 1
     }
+   }
   },
-  "type": "object",
-  "properties": {
-    "cabecera": {
-      "properties": {
-        "nombre": {"escribe": "codigo"},
-        "meta": {"escribe": "codigo", "description": "REALTOR® · brokerage · team · zona"},
-        "iniciales": {"escribe": "codigo"},
-        "bio": {"$ref": "#/$defs/frase", "description": "4-5 oraciones: años, idioma (solo si ella lo dice), dónde compra (ZIPs de Transactions), qué muestra en IG."},
-        "bio_evidencias_visibles": {"type": "array", "items": {"$ref": "#/$defs/cita"}, "description": "El 'De dónde sale' de la bio."},
-        "contactos": {"escribe": "codigo", "description": "[{canal, valor, fuentes[], difiere}]"}
-      }
+  "cita": {
+   "type": "object",
+   "escribe": "ia",
+   "required": [
+    "texto_literal",
+    "fecha",
+    "nota",
+    "evidencias"
+   ],
+   "properties": {
+    "texto_literal": {
+     "type": "string",
+     "description": "Copiado exacto del post; el validador lo busca dentro de la evidencia citada."
     },
-    "veredicto": {"escribe": "codigo", "description": "estado, texto y pendientes de loan (Transactions <35 días). La IA NO lo toca."},
-    "salesforce": {"escribe": "codigo", "description": "Lead, Owner, Status, Lead Source, creado, actividades clasificadas, o 'Pendiente'."},
-    "por_que_ella": {
-      "properties": {
-        "prioridad": {"escribe": "codigo", "description": "'Pendiente' hasta que haya puntaje validado."},
-        "razones": {"type": "array", "minItems": 3, "maxItems": 3, "items": {
-          "type": "object", "required": ["titulo", "texto", "evidencias"],
-          "properties": {"titulo": {"type": "string"}, "texto": {"type": "string"}, "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1}}
-        }, "escribe": "ia"}
-      }
+    "fecha": {
+     "type": "string",
+     "format": "date"
     },
-    "dolores": {"type": "array", "minItems": 2, "maxItems": 5, "escribe": "ia", "items": {
-      "type": "object", "required": ["dolor", "evidencia_texto", "grado", "pregunta", "evidencias"],
-      "properties": {
-        "dolor": {"type": "string"},
-        "evidencia_texto": {"type": "string"},
-        "grado": {"type": "array", "items": {"enum": ["Dato", "Lo cuenta ella", "Hipótesis", "Hipótesis el porqué"]}, "minItems": 1},
-        "pregunta": {"type": "string"},
-        "nota_producto": {"type": ["string", "null"], "description": "Productos posibles, siempre con [Confirmar con producto]."},
-        "evidencias": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "qualifier_pacs": {"type": ["string", "null"], "description": "P-Q01, etc., si sale de una activación PACS-H."}
-      }
-    }},
-    "mensaje": {"escribe": "ia", "type": "object",
-      "required": ["sms", "largo_es", "largo_en", "canal", "preguntas", "objecion"],
-      "properties": {
-        "sms": {"$ref": "#/$defs/frase", "description": "2-3 líneas, español con cierre en inglés, <=320 caracteres, gancho = algo que ella publicó."},
-        "largo_es": {"$ref": "#/$defs/frase"},
-        "largo_en": {"$ref": "#/$defs/frase"},
-        "canal": {"$ref": "#/$defs/frase", "description": "Teléfono que usa hoy (según fuentes) y por qué no el otro."},
-        "preguntas": {"type": "array", "minItems": 3, "maxItems": 5, "items": {"$ref": "#/$defs/frase"}},
-        "objecion": {"$ref": "#/$defs/frase"}
-      }
+    "nota": {
+     "type": "string"
     },
-    "produccion": {
-      "properties": {
-        "lede": {"$ref": "#/$defs/frase", "escribe": "ia"},
-        "kpis": {"escribe": "codigo"}, "trimestres": {"escribe": "codigo"}, "loan_mix": {"escribe": "codigo"},
-        "nota_loan_mix": {"$ref": "#/$defs/frase", "escribe": "ia", "description": "p.ej. FHA con 3,5% mínimo, HE con $213K down"},
-        "lenders": {"escribe": "codigo"},
-        "lo_que_significa": {"$ref": "#/$defs/frase", "escribe": "ia"},
-        "operaciones": {"escribe": "codigo", "description": "Tabla, plegada por defecto."}
-      }
-    },
-    "instagram": {
-      "properties": {
-        "encabezado": {"escribe": "codigo", "description": "handle, fecha de lectura"},
-        "lede": {"$ref": "#/$defs/frase", "escribe": "ia"},
-        "a_quien_le_habla": {"type": "array", "maxItems": 4, "escribe": "ia", "items": {
-          "type": "object", "required": ["titulo", "cita"],
-          "properties": {"titulo": {"type": "string"}, "cita": {"$ref": "#/$defs/cita"}}
-        }},
-        "nota_listings": {"$ref": "#/$defs/frase", "escribe": "ia"},
-        "idioma": {"$ref": "#/$defs/frase", "escribe": "ia"},
-        "que_cuenta_de_sus_clientes": {"type": "array", "maxItems": 3, "escribe": "ia", "items": {"$ref": "#/$defs/cita"}},
-        "comentarios": {"escribe": "ia", "type": "object", "required": ["hay_clientes", "texto", "chips"],
-          "properties": {"hay_clientes": {"type": "boolean"}, "texto": {"type": "string"}, "chips": {"type": "array", "items": {"type": "string"}, "maxItems": 3}, "evidencias": {"type": "array", "items": {"type": "string"}}}}
-      }
-    },
-    "contexto": {"escribe": "ia", "properties": {
-      "mercado_resumen": {"$ref": "#/$defs/frase"}, "mercado_texto": {"$ref": "#/$defs/frase"},
-      "census_resumen": {"$ref": "#/$defs/frase"}, "census_texto": {"$ref": "#/$defs/frase"}
-    }},
-    "fuentes": {"escribe": "codigo"},
-    "pendientes": {"escribe": "codigo", "description": "Lista con motivo: puntaje, LO asignado, Census por ZIP, seguidores..."}
+    "evidencias": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     },
+     "minItems": 1
+    }
+   }
   }
+ },
+ "type": "object",
+ "properties": {
+  "cabecera": {
+   "properties": {
+    "nombre": {
+     "escribe": "codigo"
+    },
+    "meta": {
+     "escribe": "codigo",
+     "description": "REALTOR® · brokerage · team · zona"
+    },
+    "iniciales": {
+     "escribe": "codigo"
+    },
+    "bio": {
+     "$ref": "#/$defs/frase",
+     "description": "4-5 oraciones: años, idioma (solo si ella lo dice), dónde compra (ZIPs de Transactions), qué muestra en IG."
+    },
+    "bio_evidencias_visibles": {
+     "type": "array",
+     "items": {
+      "$ref": "#/$defs/cita"
+     },
+     "description": "El 'De dónde sale' de la bio."
+    },
+    "contactos": {
+     "escribe": "codigo",
+     "description": "[{canal, valor, fuentes[], difiere}] La plantilla pinta 'Solo en el archivo original' (u otra fuente) cuando difiere=true."
+    }
+   }
+  },
+  "veredicto": {
+   "escribe": "codigo",
+   "description": "estado, texto y pendientes de loan (Transactions <35 días). La IA NO lo toca."
+  },
+  "salesforce": {
+   "escribe": "codigo",
+   "description": "Lead, Owner, Status, Lead Source, creado, actividades clasificadas, o 'Pendiente'. Incluye 'de_donde_sale' (texto de código: tarea, línea de campaña, fecha de lectura de BQ)."
+  },
+  "por_que_ella": {
+   "properties": {
+    "prioridad": {
+     "escribe": "codigo",
+     "description": "codigo: se pinta 'Prioridad: pendiente'"
+    },
+    "razones": {
+     "type": "array",
+     "minItems": 3,
+     "maxItems": 3,
+     "items": {
+      "type": "object",
+      "required": [
+       "titulo",
+       "texto",
+       "evidencias",
+       "de_donde_sale"
+      ],
+      "properties": {
+       "titulo": {
+        "type": "string"
+       },
+       "texto": {
+        "type": "string"
+       },
+       "evidencias": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        },
+        "minItems": 1
+       },
+       "de_donde_sale": {
+        "type": "object",
+        "description": "Prosa del 'De dónde sale' bajo cada razón.",
+        "properties": {
+         "texto": {
+          "type": "string"
+         },
+         "citas": {
+          "type": "array",
+          "items": {
+           "$ref": "#/$defs/cita"
+          }
+         },
+         "evidencias": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          },
+          "minItems": 1
+         }
+        },
+        "required": [
+         "texto",
+         "evidencias"
+        ]
+       }
+      }
+     },
+     "escribe": "ia"
+    }
+   }
+  },
+  "dolores": {
+   "type": "array",
+   "minItems": 2,
+   "maxItems": 5,
+   "escribe": "ia",
+   "items": {
+    "type": "object",
+    "required": [
+     "dolor",
+     "evidencia_texto",
+     "grado",
+     "pregunta",
+     "evidencias"
+    ],
+    "properties": {
+     "dolor": {
+      "type": "string"
+     },
+     "evidencia_texto": {
+      "type": "string"
+     },
+     "grado": {
+      "type": "array",
+      "items": {
+       "enum": [
+        "Dato",
+        "Lo cuenta ella",
+        "Hipótesis",
+        "Hipótesis el porqué"
+       ]
+      },
+      "minItems": 1
+     },
+     "pregunta": {
+      "type": "string"
+     },
+     "nota_producto": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "Productos posibles, siempre con [Confirmar con producto]."
+     },
+     "evidencias": {
+      "type": "array",
+      "items": {
+       "type": "string"
+      },
+      "minItems": 1
+     },
+     "qualifier_pacs": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "P-Q01, etc., si sale de una activación PACS-H."
+     },
+     "grado_detalle": {
+      "type": [
+       "string",
+       "null"
+      ],
+      "description": "p.ej. '1 caso' → se pinta 'Lo cuenta ella · 1 caso'"
+     }
+    }
+   }
+  },
+  "mensaje": {
+   "escribe": "ia",
+   "type": "object",
+   "required": [
+    "sms",
+    "largo_es",
+    "largo_en",
+    "canal",
+    "preguntas",
+    "objecion"
+   ],
+   "properties": {
+    "sms": {
+     "$ref": "#/$defs/frase",
+     "description": "2-3 líneas, español con cierre en inglés, <=320 caracteres, gancho = algo que ella publicó."
+    },
+    "largo_es": {
+     "$ref": "#/$defs/frase"
+    },
+    "largo_en": {
+     "$ref": "#/$defs/frase"
+    },
+    "canal": {
+     "$ref": "#/$defs/frase",
+     "description": "Teléfono que usa hoy (según fuentes) y por qué no el otro."
+    },
+    "preguntas": {
+     "type": "array",
+     "minItems": 3,
+     "maxItems": 5,
+     "items": {
+      "$ref": "#/$defs/frase"
+     }
+    },
+    "objecion": {
+     "$ref": "#/$defs/frase"
+    }
+   }
+  },
+  "produccion": {
+   "properties": {
+    "lede": {
+     "$ref": "#/$defs/frase",
+     "escribe": "ia"
+    },
+    "kpis": {
+     "escribe": "codigo"
+    },
+    "trimestres": {
+     "escribe": "codigo",
+     "description": "codigo: incluye nota de período ('los datos empiezan el 4 ago 2025 y llegan hasta el 23 sep 2026')"
+    },
+    "loan_mix": {
+     "escribe": "codigo",
+     "description": "codigo: incluye el título con el conteo ('Loan type de sus 18 buys')"
+    },
+    "nota_loan_mix": {
+     "$ref": "#/$defs/frase",
+     "escribe": "ia",
+     "description": "p.ej. FHA con 3,5% mínimo, HE con $213K down"
+    },
+    "lenders": {
+     "escribe": "codigo"
+    },
+    "lo_que_significa": {
+     "$ref": "#/$defs/frase",
+     "escribe": "ia"
+    },
+    "operaciones": {
+     "escribe": "codigo",
+     "description": "Tabla, plegada por defecto."
+    }
+   }
+  },
+  "instagram": {
+   "properties": {
+    "encabezado": {
+     "escribe": "codigo",
+     "description": "handle, fecha de lectura"
+    },
+    "lede": {
+     "$ref": "#/$defs/frase",
+     "escribe": "ia"
+    },
+    "a_quien_le_habla": {
+     "type": "array",
+     "maxItems": 4,
+     "escribe": "ia",
+     "items": {
+      "type": "object",
+      "required": [
+       "titulo",
+       "cita"
+      ],
+      "properties": {
+       "titulo": {
+        "type": "string"
+       },
+       "cita": {
+        "$ref": "#/$defs/cita"
+       }
+      }
+     }
+    },
+    "nota_listings": {
+     "$ref": "#/$defs/frase",
+     "escribe": "ia"
+    },
+    "idioma": {
+     "$ref": "#/$defs/frase",
+     "escribe": "ia"
+    },
+    "que_cuenta_de_sus_clientes": {
+     "type": "array",
+     "maxItems": 3,
+     "escribe": "ia",
+     "items": {
+      "$ref": "#/$defs/cita"
+     }
+    },
+    "comentarios": {
+     "escribe": "ia",
+     "type": "object",
+     "required": [
+      "hay_clientes",
+      "texto",
+      "chips"
+     ],
+     "properties": {
+      "hay_clientes": {
+       "type": "boolean"
+      },
+      "texto": {
+       "type": "string"
+      },
+      "chips": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "maxItems": 3
+      },
+      "evidencias": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     }
+    }
+   }
+  },
+  "contexto": {
+   "escribe": "ia",
+   "properties": {
+    "mercado_resumen": {
+     "$ref": "#/$defs/frase"
+    },
+    "mercado_texto": {
+     "$ref": "#/$defs/frase"
+    },
+    "census_resumen": {
+     "$ref": "#/$defs/frase"
+    },
+    "census_texto": {
+     "$ref": "#/$defs/frase"
+    },
+    "mercado_titulo": {
+     "type": "string",
+     "escribe": "ia",
+     "description": "p.ej. 'Mercado de Cook County', 'Quién vive en su zona'"
+    },
+    "census_titulo": {
+     "type": "string",
+     "escribe": "ia",
+     "description": "p.ej. 'Mercado de Cook County', 'Quién vive en su zona'"
+    }
+   }
+  },
+  "fuentes": {
+   "escribe": "codigo"
+  },
+  "pendientes": {
+   "escribe": "codigo",
+   "description": "codigo: [{item, motivo, texto_visible}] p.ej. {item:'LO asignado', texto_visible:'Qué LO de HOMESÍ la atiende (con licencia en Illinois y que hable español)'}"
+  }
+ }
 }

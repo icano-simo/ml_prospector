@@ -523,6 +523,12 @@ def _ficha_solo_codigo(base: dict) -> dict:
             "trimestres": [{"t": t["etiqueta"], "n": t["n"],
                             "parcial": t["parcial"]}
                            for t in (prod.get("trimestres") or [])],
+            # La nota y el título los escribe el CÓDIGO con las fechas y el
+            # conteo de verdad. En la plantilla estaban fijos, y una frase
+            # genérica encima de datos que la app ya sabe es peor que el dato.
+            "trimestres_nota": _nota_de_trimestres(filas),
+            "loan_mix_titulo": ("Loan type de sus %d buys" % c["total"]
+                                if c.get("total") else "Loan type de sus buys"),
             "loan_mix": ([{"tipo": k, "n": n}
                           for k, n in (r.get("loan_mix_compra") or {}).items()]
                          + [{"tipo": "Cash", "n": c.get("cash_segun_mm") or 0}]
@@ -540,8 +546,47 @@ def _ficha_solo_codigo(base: dict) -> dict:
                                     % str(ig.get("leido_en") or "")[:10])
                                    if ig.get("leido_en") else ""))},
         "fuentes": _texto_de_fuentes(base.get("fuentes") or {}),
-        "pendientes": base.get("falta_en_la_ficha") or [],
+        # `{item, motivo, texto_visible}`: el pie muestra el item corto y cada
+        # sección usa su texto largo. Antes el texto largo estaba escrito en la
+        # plantilla --«con licencia y que hable español»-- y por eso decía algo
+        # distinto de la maqueta, que nombra el estado.
+        "pendientes": _pendientes_visibles(base, prod),
     }
+
+
+def _nota_de_trimestres(filas: list[dict]) -> str | None:
+    """«los datos empiezan el X y llegan hasta el Y».
+
+    Sin las fechas, el asterisco de los trimestres parciales no dice nada: hay
+    que poder ver POR QUÉ el primero y el último están cortados.
+    """
+    fechas = sorted(f["fecha"] for f in (filas or []) if f.get("fecha"))
+    if not fechas:
+        return None
+    return ("* Trimestres incompletos: los datos empiezan el %s y llegan hasta "
+            "el %s." % (fechas[0], fechas[-1]))
+
+
+def _pendientes_visibles(base: dict, prod: dict | None) -> list[dict]:
+    from api.ficha import PENDIENTES
+
+    zips = sorted(((prod or {}).get("resumen") or {}).get("zips_de_compra")
+                  or {}, key=lambda z: -(((prod or {}).get("resumen") or {})
+                                         .get("zips_de_compra") or {})[z])[:3]
+    return [
+        {"item": "puntaje", "motivo": PENDIENTES["puntaje"],
+         "texto_visible": "Prioridad: pendiente"},
+        {"item": "LO asignado", "motivo": PENDIENTES["lo_asignado"],
+         "texto_visible": ("Qué LO de HOMESÍ la atiende (con licencia en %s y "
+                           "que hable español)."
+                           % ((base.get("quien_es") or {}).get("estado")
+                              or "su estado"))},
+        {"item": "Census por ZIP", "motivo": PENDIENTES["census_zip"],
+         "texto_visible": ("Census por ZIP%s"
+                           % ((" (%s)" % ", ".join(zips)) if zips else ""))},
+        {"item": "seguidores", "motivo": PENDIENTES["seguidores"],
+         "texto_visible": "número de seguidores"},
+    ]
 
 
 def _mm_dinero(n):

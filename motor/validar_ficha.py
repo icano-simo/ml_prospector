@@ -306,6 +306,16 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
         s = "por_que_ella.razones[%d]" % i
         problemas += _revisar_frase(s, r, i)
         problemas += _revisar_evidencias(s, r, por_id)
+        # `de_donde_sale` es texto de la IA como cualquier otro: si no se
+        # valida, la razón queda comprobada y su justificación no -- que es
+        # justo donde alguien pondría el número que no se puede sostener.
+        dd = r.get("de_donde_sale")
+        if isinstance(dd, dict):
+            sd = s + ".de_donde_sale"
+            problemas += _revisar_frase(sd, dd, i)
+            problemas += _revisar_evidencias(sd, dd, por_id)
+            for j, c in enumerate(dd.get("citas") or []):
+                problemas += _revisar_cita("%s.citas[%d]" % (sd, j), c, por_id)
 
     # ── dolores ─────────────────────────────────────────────────────────────
     dolores = ficha.get("dolores") or []
@@ -376,6 +386,12 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
             s = "contexto.%s" % clave
             problemas += _revisar_frase(s, ctx[clave], 0)
             problemas += _revisar_evidencias(s, ctx[clave], por_id)
+    # Los títulos son texto suelto, sin evidencias: no afirman un hecho, lo
+    # nombran. Se revisan solo por términos prohibidos.
+    for clave in ("mercado_titulo", "census_titulo"):
+        if ctx.get(clave):
+            problemas += _revisar_frase("contexto.%s" % clave,
+                                        {"texto": ctx[clave]}, 0)
 
     return problemas
 
