@@ -785,6 +785,28 @@ IG_ANALISIS = {
 }
 
 
+def _paquete_con_lender(nombre: str) -> dict:
+    """El mismo paquete con OTRO lender, para probar el nombre parcial."""
+    from motor.paquete import construir as _construir
+
+    return _construir(
+        realtor={"id": "r-1", "nombre_completo": "AGENTE DE PRUEBA",
+                 "brokerage": "Una Inmobiliaria", "estado": "IL"},
+        evaluacion=None, perfil_mm=None,
+        resumen_tx={"compras": {"total": 1, "financiada": 1,
+                                "cash_segun_mm": 0, "cash_provisional": 0,
+                                "no_leido": 0},
+                    "ventas": {"total": 0, "financiada": 0,
+                               "cash_segun_mm": 0, "cash_provisional": 0,
+                               "no_leido": 0},
+                    "lenders_compra": {nombre: 1}, "lenders_venta": {},
+                    "zips_de_compra": {}, "pendientes_de_prestamo": [],
+                    "unidades_de_la_casa": 0, "trimestres": []},
+        filas_tx=None, mercados=None, ig=None, contactos=[], census=None,
+        veredicto={"estado": "ok", "motivo": "sin operaciones con la casa"},
+        salesforce=None)
+
+
 def _con_pestanas(**cambios):
     """Una ficha con las tres pestañas, COPIADA A FONDO.
 
@@ -937,6 +959,110 @@ def test_una_frase_de_instagram_sin_evidencias_no_pasa():
                                         "evidencias": []}
     p = validar(f, PAQUETE)
     assert any(x["seccion"] == "instagram_analisis.donde" for x in p), p
+
+
+# ══ 10 · LO QUE SE ENVÍA, Y EL INSTAGRAM QUE NO APORTA ═══════════════════════
+
+def test_un_toque_no_puede_nombrar_su_lender():
+    """La regla del SMS vale para el toque: un toque se envía igual."""
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Te llamo por lo del buy side.\n\n¿Qué pasa cuando Guaranteed Rate no "
+        "aprueba a un buyer?")
+    p = validar(f, PAQUETE)
+    assert any("menciona sus transacciones" in x["motivo"]
+               and x["seccion"] == "secuencia.toques[2]" for x in p), p
+
+
+def test_un_toque_no_se_escapa_con_las_dos_primeras_palabras_del_lender():
+    """«Angel Oak» es «Angel Oak Mortgage Solutions» para cualquiera que lea.
+
+    Nadie escribe la razón social entera en un mensaje, así que comprobar solo
+    el nombre completo caza justo lo que nadie iba a escribir.
+    """
+    paquete = _paquete_con_lender("Angel Oak Mortgage Solutions Llc")
+    f = _con_pestanas()
+    f["hash_paquete"] = paquete["hash_paquete"]
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Vi que trabajas con Angel Oak.\n\n¿Cómo te va con ellos?")
+    p = validar(f, paquete)
+    assert any("menciona sus transacciones" in x["motivo"] for x in p), p
+
+
+def test_un_toque_no_puede_nombrar_uno_de_sus_ZIPs():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Vi que cierras mucho en el 60638.\n\n¿Sigue siendo tu zona?")
+    p = validar(f, PAQUETE)
+    assert any("menciona sus transacciones" in x["motivo"] for x in p), p
+
+
+def test_el_bloque_E_y_el_G_tambien_se_envian():
+    """E es la primera frase que se dice y G la pregunta con la que se cierra."""
+    f = _con_pestanas()
+    f["dossier"]["E"]["texto"] = "Abrir nombrándole Guaranteed Rate."
+    f["dossier"]["G"]["texto"] = "¿Cómo te va con Zillow Home Loans?"
+    p = validar(f, PAQUETE)
+    secciones = {x["seccion"] for x in p if "menciona sus transacciones"
+                 in x["motivo"]}
+    assert secciones == {"dossier.E", "dossier.G"}, p
+
+
+def test_con_aporta_false_no_se_exigen_las_nueve_frases():
+    """Cinco realtors tienen la cuenta sin datos, personal o de otra persona.
+
+    Pedirles las nueve frases es pedir que se escriba sobre lo que no hay.
+    """
+    f = _con_pestanas()
+    f["instagram_analisis"] = {
+        "aporta": False,
+        "prioridad_ig": {"clase": "D", "razones": [
+            {"texto": "Su cuenta no tiene captions leídos.",
+             "evidencias": ["IG-RESUMEN"]}]},
+        "que_verificar": {"texto": "Si tiene otra cuenta activa.",
+                          "evidencias": ["IG-RESUMEN"]}}
+    assert validar(f, PAQUETE) == []
+
+
+def test_un_aporta_false_SIN_motivo_no_pasa():
+    """«No aporta» sin razón no se distingue de un hueco."""
+    f = _con_pestanas()
+    f["instagram_analisis"] = {"aporta": False,
+                               "prioridad_ig": {"clase": "D", "razones": []}}
+    p = validar(f, PAQUETE)
+    assert any("no dice por qué" in x["motivo"] for x in p), p
+
+
+def test_el_vocabulario_no_se_le_exige_a_una_cita_literal():
+    """«$0 de enganche … al cierre» es palabra de ella, no nuestra."""
+    f = _ficha()
+    f["instagram"] = {"que_cuenta_de_sus_clientes": [{
+        "texto_literal": "He kept it for a couple months",
+        "fecha": "2026-05-15", "nota": "un buyer que trabajó su credit",
+        "evidencias": ["IG-2026-05-15-a"]}]}
+    assert validar(f, PAQUETE) == []
+
+    # Y fuera de una cita se sigue exigiendo.
+    f2 = _ficha()
+    f2["cabecera"] = {"bio": {"texto": "Pide poco enganche.",
+                              "evidencias": ["MM-TX-RESUMEN"]}}
+    assert any("vocabulario de lending traducido" in x["motivo"]
+               for x in validar(f2, PAQUETE))
+
+
+def test_el_texto_entre_corchetes_no_cuenta_para_el_idioma():
+    """`[tu nombre]` es una marca para el BD, no texto que se envía."""
+    from motor.validar_ficha import _revisar_idioma_del_sms
+
+    ingles = "Hi [tu nombre] here from HOMESI. Saw your post. Coffee?"
+    assert _revisar_idioma_del_sms(ingles, PAQUETE) == []
+
+
+def test_el_decimal_con_punto_vale_contra_el_decimal_con_coma():
+    from motor.validar_ficha import _numero_esta
+
+    assert _numero_esta("44.8", "la evidencia dice 44,8 por ciento")
+    assert _numero_esta("44,8", "la evidencia dice 44.8 por ciento")
 
 
 def test_lo_que_se_apaga_es_el_TOQUE_y_no_la_secuencia():

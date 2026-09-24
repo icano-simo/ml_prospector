@@ -53,7 +53,12 @@ from captura.trampas import NMLS_DE_LA_CASA, NOMBRES_DE_LA_CASA
 
 #: Version del parser de esta pestaña. Viaja en la captura: re-derivar es
 #: gratis y volver a capturar no.
-VERSION_PARSER_TX = "tx-2026.09.23-v1"
+#: La version del parser, que viaja DENTRO de cada parseado guardado.
+#:
+#: Sirve para saber que capturas hay que re-derivar cuando el parser cambia:
+#: `parseado.transacciones.version_parser` contra esta constante. Sin ella, la
+#: unica forma de saberlo era volver a parsear las 40 y comparar campo a campo.
+VERSION_PARSER_TX = "tx-2026.09.24-v2"
 
 #: Las 21 columnas, en orden. Los encabezados se PIERDEN al copiar y pegar, asi
 #: que el parser no depende de ellos: depende del orden y valida cada fila.
@@ -962,8 +967,24 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
         # Ya no bloquea, y por eso mismo hay que poder verlo: el conteo y la
         # cobertura viajan, para que la ficha diga «27 de 28 con lender» en vez
         # de callarlo.
+        #
+        # DOS COBERTURAS, Y CADA NOMBRE DICE SU DENOMINADOR.
+        #
+        # Antes había una sola, `cobertura_lender`, calculada sobre TODAS las
+        # operaciones -- y todo lo que se muestra es del lado comprador: el
+        # veredicto cuenta unidades buy side y la caja de la ficha se llama
+        # «Lenders y LOs de sus buyers». Reporté «25 de 26» de Eva leyendo la
+        # de todas cuando la que estaba guardada en su veredicto era «12 de
+        # 13». Dos números para una pregunta, y el que se coge depende de cuál
+        # esté más a mano.
+        #
+        # La que se muestra y se reporta es SIEMPRE `_compra`. La de todas se
+        # queda porque es la que dice si el pegado trae originadores, pero con
+        # el denominador en el nombre para que nadie la tome por la otra.
         "financiadas_sin_lender": len(financiadas_sin_lender),
-        "cobertura_lender": _cobertura_lender(filas),
+        "cobertura_lender_compra": _cobertura_lender(
+            [f for f in filas if f.get("lado") in (COMPRA, AMBOS)]),
+        "cobertura_lender_todas": _cobertura_lender(filas),
     }
 
 

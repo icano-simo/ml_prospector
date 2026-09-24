@@ -418,12 +418,18 @@ def test_una_financiada_sin_lender_NO_bloquea_la_lectura():
     assert p["completa"] is True, p["por_que_no_completa"]
     assert p["por_que_no_completa"] == []
     assert p["financiadas_sin_lender"] == 1
-    assert p["cobertura_lender"]["texto"] == "9 de 10 con lender"
-    assert p["cobertura_lender"]["sin_lender_identificado"] == 1
+    assert p["cobertura_lender_todas"]["texto"] == "9 de 10 con lender"
+    assert p["cobertura_lender_todas"]["sin_lender_identificado"] == 1
+    # La del lado COMPRADOR es otra, y es la que se muestra y se reporta.
+    assert p["cobertura_lender_compra"]["texto"] == "7 de 8 con lender"
 
     r = resumen(p)
     assert r["compras_sin_lender_identificado"] == 1
     assert r["cobertura_lender_compra"]["texto"] == "7 de 8 con lender"
+    # El parseo y el resumen tienen que decir LO MISMO: son dos caminos al
+    # mismo número, y el día que difieran cada pantalla mostrará el suyo.
+    assert (p["cobertura_lender_compra"]
+            == r["cobertura_lender_compra"])
     # Y el veredicto sale, que es el punto de todo esto.
     assert puede_contactarse({"transacciones": p}).estado == OK
 
@@ -435,9 +441,39 @@ def test_la_cobertura_se_mide_sobre_las_FINANCIADAS_y_no_sobre_todas():
     cobertura del 60 % que no significa nada.
     """
     p = _p()
-    assert p["cobertura_lender"]["financiadas"] == 10
-    assert p["cobertura_lender"]["texto"] == "10 de 10 con lender"
+    assert p["cobertura_lender_todas"]["financiadas"] == 10
+    assert p["cobertura_lender_todas"]["texto"] == "10 de 10 con lender"
     assert p["leidas"] == 25
+
+
+def test_las_dos_coberturas_llevan_su_denominador_en_el_NOMBRE():
+    """Un número sin denominador se lee como el del otro.
+
+    Reporté «25 de 26 con lender» de Eva Diaz leyendo la cobertura de TODAS
+    sus operaciones, cuando la que estaba guardada en su veredicto era «12 de
+    13»: la del lado comprador. Las dos eran ciertas y solo una contestaba la
+    pregunta. Ahora el nombre dice cuál es cuál, y no queda ninguna con el
+    nombre ambiguo.
+    """
+    p = _p()
+    assert "cobertura_lender" not in p, "el nombre ambiguo volvió"
+    assert set(p["cobertura_lender_compra"]) == {
+        "financiadas", "con_lender", "sin_lender_identificado", "texto"}
+    # En el volcado real hay 10 financiadas en total y 8 del lado comprador.
+    assert p["cobertura_lender_todas"]["financiadas"] == 10
+    assert p["cobertura_lender_compra"]["financiadas"] == 8
+
+
+def test_el_texto_de_la_ficha_dice_de_que_es_el_denominador():
+    """«7 de 8» no se sostiene solo: la caja habla de buyers, y hay que decirlo."""
+    from api.rutas import _texto_de_cobertura
+
+    r = resumen(_p(REAL.replace("Guaranteed Rate Inc\n", "—\n", 1)))
+    texto = _texto_de_cobertura(r)
+    assert texto == ("7 de 8 financed buys con lender · 1 sin lender en "
+                     "Model Match"), texto
+    # Sin huecos, no se dice nada: repetir que no falta nada es ruido.
+    assert _texto_de_cobertura(resumen(_p())) == ""
 
 
 def test_sin_pie_no_se_afirma_que_estan_todas():
