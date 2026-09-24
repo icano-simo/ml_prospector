@@ -42,6 +42,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from captura.transacciones import DIAS_CASH_PROVISIONAL as DIAS_PROVISIONALES
+from captura.transacciones import resumen as _resumen_tx
 from captura.trampas import (
     TrampaDetectada,
     es_de_la_casa,
@@ -72,6 +74,22 @@ class Veredicto:
     def a_dict(self) -> dict:
         return {"estado": self.estado, "motivo": self.motivo,
                 "evidencia": dict(self.evidencia)}
+
+
+def _resumen_de_transacciones(perfil: dict) -> dict | None:
+    """El resumen del grano de transaccion, o None si la pestaña no se pegó.
+
+    `None` y no un resumen en cero: la diferencia entre «no hay operaciones» y
+    «no se capturó la pestaña» es la que decide si el veredicto se puede dar.
+    """
+    tx = perfil.get("transacciones")
+    if not isinstance(tx, dict) or not tx.get("filas"):
+        return None
+    return _resumen_tx(tx)
+
+
+def _operaciones(n: int) -> str:
+    return "1 compra o venta" if n == 1 else "%d compras o ventas" % n
 
 
 def _evidencia_base(reparto, capturado_en) -> dict:
@@ -133,6 +151,74 @@ def puede_contactarse(perfil: dict | None, *,
             estado=EXCLUIDO,
             motivo="%s aparece como lender en Model Match"
                    % ", ".join(de_la_casa_en_lenders),
+            evidencia=evidencia)
+
+    # 2c · LA PESTAÑA TRANSACTIONS. Cuando esta, MANDA.
+    #
+    #      El Overview es un resumen, y un resumen no se puede desarmar. Las «9
+    #      compras sin originador» de una captura real no eran un dato que
+    #      faltara: eran compras cash. Con el grano de transaccion eso se ve, y
+    #      el veredicto deja de estar incompleto sobre una ausencia que no
+    #      existia.
+    #
+    #      Tres salidas, en este orden:
+    #        · faltan paginas  -> pendiente. Calcular sobre 25 de 137 filas es
+    #          publicar un porcentaje de una quinta parte.
+    #        · alguna operacion con la casa -> excluido, igual que siempre.
+    #        · ninguna -> ok, pero las compras cash de menos de 35 dias viajan
+    #          en la evidencia: Model Match todavia no recibio sus datos de
+    #          prestamo, y una de ellas puede terminar financiada por la casa.
+    tx = _resumen_de_transacciones(perfil)
+    if tx is not None:
+        evidencia = _evidencia_base(perfil.get("orig_buyer"), capturado_en)
+        evidencia.update({
+            "origen": "pestaña Transactions de Model Match",
+            "grano": "transacción",
+            "compras_totales": tx["compras"]["total"],
+            "compras_financiadas": tx["compras"]["financiada"],
+            "compras_cash_segun_mm": tx["compras"]["cash_segun_mm"],
+            "unidades_de_la_casa": tx["unidades_de_la_casa"],
+            "unidades_totales": tx["compras"]["financiada"],
+            "lenders_de_la_casa": tx["lenders_de_la_casa"],
+            "compras_pendientes_de_prestamo": tx["pendientes_de_prestamo"],
+            "operaciones_sin_lado": tx["sin_lado"],
+        })
+        pendientes = tx["pendientes_de_prestamo"]
+        coletilla = ("" if not pendientes else
+                     " %s con fecha de cierre de menos de %d días: Model Match "
+                     "todavía no recibió sus datos de préstamo, y hay que "
+                     "volver a capturar Transactions después del %s."
+                     % (_operaciones(len(pendientes)), DIAS_PROVISIONALES,
+                        max(p.get("recapturar_despues_de") or ""
+                            for p in pendientes) or "cierre + 35 días"))
+
+        faltan = (perfil.get("transacciones") or {}).get("faltan_paginas")
+        if faltan:
+            return Veredicto(
+                estado=PENDIENTE,
+                motivo=("la pestaña Transactions está pegada a medias: %s"
+                        % (perfil["transacciones"].get("aviso") or
+                           "faltan páginas")),
+                evidencia=evidencia)
+
+        if tx["unidades_de_la_casa"] > UNIDADES_MINIMAS_PARA_EXCLUIR:
+            quienes = ", ".join(tx["lenders_de_la_casa"]) or "la casa"
+            return Veredicto(
+                estado=EXCLUIDO,
+                motivo=("ya trabaja con %s: %d de %d compras financiadas. "
+                        "Escribirle es competirle su propia cartera a un "
+                        "colega.%s"
+                        % (quienes, tx["unidades_de_la_casa"],
+                           tx["compras"]["financiada"], coletilla)),
+                evidencia=evidencia)
+
+        return Veredicto(
+            estado=OK,
+            motivo=("ninguna de sus %d compras financiadas pasó por la casa "
+                    "(%d de %d compras fueron cash según Model Match).%s"
+                    % (tx["compras"]["financiada"],
+                       tx["compras"]["cash_segun_mm"],
+                       tx["compras"]["total"], coletilla)),
             evidencia=evidencia)
 
     # 3 · «Model Match no muestra originadores para este agente», declarado con
@@ -201,7 +287,25 @@ def puede_contactarse(perfil: dict | None, *,
         "compras_con_originador": reparto.get("unidades_totales"),
         "compras_totales": perfil.get("buyer_units"),
         "share_de_la_casa": reparto.get("share"),
+        # Este veredicto sale del RESUMEN, no del grano. Que lo diga.
+        "falta_transactions": True,
+        "grano": "resumen del Overview",
     })
+
+    # Las compras sin originador identificado son una AUSENCIA, no un dato. Con
+    # la pestaña Transactions se ve cuales fueron cash y cuales tienen un
+    # originador que Model Match no muestra; sin ella no se sabe, y restar
+    # «compras - compras con originador» y llamarlo cash inventa una categoria
+    # que nadie midio.
+    sin_identificar = None
+    if (perfil.get("buyer_units") and reparto.get("unidades_totales")
+            and perfil["buyer_units"] > reparto["unidades_totales"]):
+        sin_identificar = perfil["buyer_units"] - reparto["unidades_totales"]
+    evidencia["compras_sin_originador_identificado"] = sin_identificar
+    falta_tx = ("" if sin_identificar is None else
+                " Faltan %g de %g compras por identificar: pegá la pestaña "
+                "Transactions para saber cuáles fueron cash."
+                % (sin_identificar, perfil["buyer_units"]))
 
     if unidades > UNIDADES_MINIMAS_PARA_EXCLUIR:
         quienes = ", ".join(evidencia["originadores_de_la_casa"]) or "la casa"
@@ -218,5 +322,6 @@ def puede_contactarse(perfil: dict | None, *,
     return Veredicto(
         estado=OK,
         motivo=("no tiene operaciones buyside con originadores de la casa "
-                "(%d originadores leídos)" % evidencia["originadores_leidos"]),
+                "(%d originadores leídos).%s"
+                % (evidencia["originadores_leidos"], falta_tx)),
         evidencia=evidencia)
