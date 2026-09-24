@@ -243,6 +243,7 @@ def construir(*, realtor: dict, evaluacion: dict | None,
               ig: dict | None, contactos: list[dict] | None,
               census: dict | None, veredicto: dict | None,
               salesforce: dict | None = None,
+              censo_estado: dict | None = None,
               ahora: dt.datetime | None = None) -> dict:
     """Todo lo que se sabe del realtor, con un id por hecho.
 
@@ -429,6 +430,29 @@ def construir(*, realtor: dict, evaluacion: dict | None,
                    "pendiente": ("el Census por ZIP todavía no está cargado; "
                                  "a nivel condado es un área demasiado grande "
                                  "para describir su zona")})
+
+    # ── EL CENSUS DEL ESTADO · `CENSUS-RPT-<ST>` ────────────────────────────
+    #
+    # El reporte de mercado latino del estado donde opera. Es el contexto que
+    # explica por qué este mercado y no otro, y lo citan el bloque C, el E2 y
+    # los toques de invierno.
+    #
+    # DESCRIBE EL MERCADO, NUNCA A LA PERSONA. De «en Illinois el 18,8 % son
+    # latinos» a «sus buyers son latinos» hay un salto que nadie midió: el
+    # grado máximo que sostiene esta evidencia es **Hipótesis**, igual que
+    # `MM-MK-*`. El validador lo impone al no incluir `CENSUS-RPT` en
+    # `_GRADO_POR_FUENTE`, así que no puede sostener un «Dato».
+    if censo_estado and censo_estado.get("texto"):
+        ev.append({
+            "id": censo_estado.get("id_evidencia")
+                  or "CENSUS-RPT-%s" % censo_estado.get("estado"),
+            "tipo": "census_reporte_estado",
+            "estado": censo_estado.get("estado"),
+            "texto": censo_estado["texto"],
+            "fuente": censo_estado.get("fuente"),
+            "nota": ("Describe el MERCADO del estado, no a esta persona. "
+                     "Grado máximo: Hipótesis."),
+        })
 
     # ── PACS-H · las activaciones, con su cadena ────────────────────────────
     #
