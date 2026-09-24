@@ -244,6 +244,226 @@ def _restar_meses(d: "dt.date", meses: int) -> "dt.date":
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# LA FICHA v3 · las nueve secciones que el BD lee antes de escribir
+# ══════════════════════════════════════════════════════════════════════════════
+
+def ficha_v3(params: dict) -> tuple[int, dict]:
+    """La maqueta v3, con datos de la base. Ver `api/ficha.py` para las reglas.
+
+    Es UNA petición y no nueve: las secciones se contradicen si cada una lee
+    por su lado y una llega tarde. El BD abre la ficha y la lee entera o no la
+    lee.
+    """
+    from api.ficha import (
+        PENDIENTES,
+        contactos_por_canal,
+        dolores_posibles,
+        iniciales,
+        objecion,
+        razones,
+        telefono_para_el_primer_contacto,
+        trimestres_de,
+    )
+    from captura.transacciones import resumen as resumen_tx
+    from motor.ganchos import gancho_de
+    from motor.narrativa import narrativa
+    from motor.qualifiers import enunciado
+
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+    rid = urllib.parse.quote(realtor_id)
+
+    cod, filas, _ = leer("realtors", "?select=%s&id=eq.%s" % (CAMPOS_LISTA, rid))
+    if cod >= 400 or not filas:
+        return (cod if cod >= 400 else 404), {"error": "realtor no encontrado"}
+    realtor = filas[0]
+
+    _c, evs, _ = leer(
+        "v_evaluacion_actual",
+        "?select=resultado,dolor_primario,dolores_secundarios,apertura,"
+        "gating_qualifier,gating_intensidad,confianza,version_reglas,"
+        "evaluado_en,excluido,excluido_motivo,veredicto_contacto"
+        "&realtor_id=eq.%s" % rid)
+    ev = (evs or [None])[0] or {}
+    activaciones = (ev.get("resultado") or {}).get("activaciones") or []
+
+    _c, cts, _ = leer("contactos",
+                      "?select=canal,valor,fuente,vigente&realtor_id=eq.%s" % rid)
+    contactos = contactos_por_canal(cts or [])
+
+    # ── Model Match, del lote que manda ─────────────────────────────────────
+    crudas, cuantas = capturas_que_mandan(realtor_id)
+    perfiles, mercados = [], []
+    for f in crudas or []:
+        p = f.get("parseado") or {}
+        if p.get("perfil"):
+            perfiles.append(p["perfil"])
+        if p.get("metricas"):
+            mercados.append({"nivel": f.get("geografia_nivel"),
+                             "estado": f.get("estado"),
+                             "etiqueta": f.get("geografia_etiqueta"),
+                             "metricas": p["metricas"],
+                             "capturado_en": f.get("capturado_en")})
+    mercados.extend(_mercados_enlazados(crudas))
+    perfil = unir_perfiles(perfiles) if perfiles else {}
+    tx = perfil.get("transacciones") if isinstance(perfil, dict) else None
+    resumen = resumen_tx(tx) if (tx or {}).get("filas") else None
+
+    # ── Instagram, con su compuerta ─────────────────────────────────────────
+    _c, sen, _ = leer("v_ig_senales_current",
+                      "?select=handle,estado_perfil,captions_n,comentarios_n,"
+                      "senales,capturado_en&realtor_id=eq.%s" % rid)
+    _c, cls, _ = leer("v_ig_clase_actual",
+                      "?select=clase,motivo,handle&realtor_id=eq.%s" % rid)
+    ig = dict(sen[0]) if sen else {}
+    if cls:
+        ig["clase_perfil"] = cls[0].get("clase")
+        ig["clase_motivo"] = cls[0].get("motivo")
+        ig.setdefault("handle", cls[0].get("handle"))
+
+    ganchos = {}
+    for a in activaciones:
+        if a.get("familia") != "P":
+            continue
+        g = gancho_de(a["qualifier"], intensidad=a.get("intensidad"),
+                      acto_de_habla=a.get("acto"))
+        if g:
+            ganchos[a["qualifier"]] = g.texto
+    enunciados = {a["qualifier"]: enunciado(a["qualifier"])
+                  for a in activaciones}
+
+    tel = telefono_para_el_primer_contacto(contactos)
+    ver = ev.get("veredicto_contacto") or {}
+
+    return 200, {
+        # 1 · quién es y contacto
+        "quien_es": {
+            "nombre": realtor.get("nombre_completo"),
+            "iniciales": iniciales(realtor.get("nombre_completo")),
+            "brokerage": realtor.get("brokerage"),
+            "estado": ESTADOS.get(realtor.get("estado")) or realtor.get("estado"),
+            "unidades_ano": realtor.get("unidades_ano"),
+            "bio": narrativa(
+                realtor, estado_nombre=ESTADOS.get(realtor.get("estado")),
+                perfil_mm=perfil or None,
+                mercado=((mercados[0].get("metricas") if mercados else None)),
+                donde=(mercados[0].get("etiqueta") if mercados else None)),
+            "contactos": contactos,
+        },
+        # 2 · veredicto y Salesforce
+        "veredicto": {
+            "estado": ver.get("estado"),
+            "motivo": ver.get("motivo"),
+            "evidencia": ver.get("evidencia") or {},
+        },
+        "salesforce": {"pendiente": PENDIENTES["salesforce"],
+                       "sf_lead_id": realtor.get("sf_lead_id")},
+        # 3 · por qué ella
+        "por_que_ella": razones(resumen, activaciones, perfil),
+        "prioridad": {"pendiente": PENDIENTES["puntaje"]},
+        # 4 · dolores posibles
+        "dolores": dolores_posibles(activaciones, enunciados, ganchos),
+        # 5 y 6 · cómo abrirle la conversación
+        "conversar": {
+            "telefono": tel,
+            "objecion": objecion(resumen),
+            "preguntas": [d["pregunta"] for d in
+                          dolores_posibles(activaciones, enunciados, ganchos)
+                          if d.get("pregunta")][:4],
+            "lo_asignado": {"pendiente": PENDIENTES["lo_asignado"]},
+        },
+        # 7 · producción
+        "produccion": (None if not resumen else {
+            "resumen": resumen,
+            "trimestres": trimestres_de((tx or {}).get("filas") or []),
+            "filas": [
+                {k: f.get(k) for k in
+                 ("fecha", "lado", "ciudad", "zip", "precio", "prestamo",
+                  "enganche", "tipo", "tasa", "lender", "lo_nombre",
+                  "estado_prestamo")}
+                for f in sorted((tx or {}).get("filas") or [],
+                                key=lambda f: f.get("fecha") or "",
+                                reverse=True)],
+            "completa": (tx or {}).get("completa"),
+            "aviso": (tx or {}).get("aviso"),
+        }),
+        "sin_transactions": (None if resumen else
+                             "Falta Transactions: sin esa pestaña no se sabe "
+                             "cuáles de sus compras fueron cash, y eso no se "
+                             "calcula por diferencia."),
+        # 8 · Instagram
+        "instagram": _instagram_para_la_ficha(ig),
+        # 9 · mercado y Census
+        "mercados": [{"etiqueta": m.get("etiqueta"), "nivel": m.get("nivel"),
+                      "capturado_en": m.get("capturado_en"),
+                      "de_la_biblioteca": m.get("de_la_biblioteca", False),
+                      "rango_desde": m.get("rango_desde"),
+                      "rango_hasta": m.get("rango_hasta"),
+                      "metricas": m.get("metricas") or {}}
+                     for m in mercados],
+        "census": {"pendiente": PENDIENTES["census_zip"]},
+        # 10 · fuentes
+        "fuentes": {
+            "model_match": (crudas[0].get("capturado_en") if crudas else None),
+            "capturas_anteriores": cuantas.get("anteriores"),
+            "instagram": ig.get("capturado_en"),
+            "evaluado_en": ev.get("evaluado_en"),
+            "version_reglas": ev.get("version_reglas"),
+        },
+        "falta_en_la_ficha": [
+            "puntaje · %s" % PENDIENTES["puntaje"],
+            "LO de HOMESÍ asignado · %s" % PENDIENTES["lo_asignado"],
+            "Census por ZIP · %s" % PENDIENTES["census_zip"],
+            "seguidores · %s" % PENDIENTES["seguidores"],
+            "Salesforce · %s" % PENDIENTES["salesforce"],
+        ],
+    }
+
+
+def _instagram_para_la_ficha(ig: dict) -> dict | None:
+    """Lo que Instagram aporta, PASADO POR LA COMPUERTA DE PERFIL.
+
+    Una cuenta que no es de quien creíamos no aporta nada, y la ficha lo dice
+    en vez de mostrar sus números: 36 de 39 perfiles no utilizables tenían un
+    dolor primario vigente, incluido un criadero de gallos.
+
+    El dato de que un lender le refiere clientes va AQUÍ, como contexto, y
+    nunca en «Por qué ella» ni en el mensaje: RESPA §8.
+    """
+    from ingest.instagram.clase_perfil import CLASES_UTILIZABLES
+    from motor.desde_instagram import senales_visibles
+
+    if not ig:
+        return None
+    clase = ig.get("clase_perfil")
+    utilizable = clase in CLASES_UTILIZABLES and clase != "otro_perfil"
+    s = senales_visibles(ig)
+    return {
+        "handle": ig.get("handle"),
+        "clase": clase,
+        "motivo_de_la_clase": ig.get("clase_motivo"),
+        "utilizable": utilizable,
+        "leido_en": ig.get("capturado_en"),
+        "estado_perfil": ig.get("estado_perfil"),
+        # Los conteos NO van sueltos: cada uno con lo que se leyó de él.
+        "posts_leidos": ig.get("captions_n"),
+        "comentarios_leidos": ig.get("comentarios_n"),
+        "idioma": (None if not utilizable else {
+            "posts_en_espanol": s.get("idioma_publica_es"),
+            "posts_en_ingles": s.get("idioma_publica_en"),
+        }),
+        "tema_dominante": s.get("tema_dominante") if utilizable else None,
+        "audiencia_dominante": s.get("audiencia_dominante") if utilizable else None,
+        "destacadas": s.get("destacadas_titulos") if utilizable else None,
+        # RESPA §8: contexto, nunca gancho.
+        "respa": ("Si menciona que un lender le refiere clientes, es contexto "
+                  "para entender su operación. No se usa en el mensaje ni "
+                  "como razón para contactarla (RESPA §8)."),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # LA BIBLIOTECA YA TIENE ESTE MERCADO
 # ══════════════════════════════════════════════════════════════════════════════
 #
@@ -2409,6 +2629,7 @@ RUTAS = {
     "/api/geografias": (geografias, "GET"),
     "/api/leer_overview": (leer_overview, "POST"),
     "/api/mercados_en_biblioteca": (mercados_en_biblioteca, "GET"),
+    "/api/ficha": (ficha_v3, "GET"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
     "/api/instagram": (instagram, "GET"),

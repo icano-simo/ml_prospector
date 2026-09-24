@@ -174,6 +174,10 @@ function abrir(id){
    eso pase, cada toque que prometa un recurso va marcado recurso_sin_verificar
    y la secuencia no sale. */
 const PESTANAS = [
+  /* La ficha v3 va PRIMERO: es el orden que revisaron Isabella y un BD.
+     Primero quién es y cómo se le escribe; el motor queda plegado en «Cómo se
+     calculó», que es donde vive lo que al BD no le sirve para hablar. */
+  ['ficha','Ficha',true],
   ['lectura','Lectura del perfil',true],
   ['calculo','Cómo se calculó',true],
   ['mm','Model Match',true],
@@ -201,6 +205,7 @@ function pintarFicha(){
   document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
     TAB = b.dataset.tab; pintarFicha();
   });
+  if(TAB === 'ficha') vFicha();
   if(TAB === 'mercados') vMercados();
   if(TAB === 'mm') vModelMatch();
   if(TAB === 'lectura' || TAB === 'calculo') vLectura(TAB);
@@ -386,6 +391,296 @@ const VEREDICTO_BADGE = {
   'señal de alerta':               ['excluido', '⚠'],
   'neutro':                        ['sin-evaluar', '▣'],
 };
+
+/* ── LA FICHA v3 · el orden que revisaron Isabella y un BD ──────────────────
+ *
+ * Nueve secciones, en este orden: quién es y contacto · veredicto y Salesforce
+ * · por qué ella · dolores posibles · mensaje · canal y preguntas · producción
+ * · Instagram · mercado y Census.
+ *
+ * Cuatro reglas, y las cuatro son de contenido y no de diseño:
+ *   1 · cada dato con su «De dónde sale»;
+ *   2 · lo que no existe se muestra como Pendiente, no se estima;
+ *   3 · las hipótesis se escriben como hipótesis, con su marca al lado;
+ *   4 · vocabulario de lending en inglés, sin traducir.
+ */
+function chipPendiente(motivo){
+  return `<span class="badge bloqueado"><i>▲</i>Pendiente</span>
+    <span class="pista">${esc(motivo || '')}</span>`;
+}
+
+function deDondeSale(texto){
+  if(!texto) return '';
+  return `<details style="margin-top:6px"><summary class="pista"
+    style="cursor:pointer">De dónde sale</summary>
+    <div class="pista" style="margin-top:6px">${esc(texto)}</div></details>`;
+}
+
+function seccionQuienEs(q){
+  const filas = {};
+  (q.contactos || []).forEach(c => {
+    (filas[c.canal] = filas[c.canal] || []).push(c);
+  });
+  const orden = ['telefono','email','instagram','oficina','direccion','web','otro'];
+  const contacto = orden.filter(k => filas[k]).map(k => `
+    <div><span class="pista">${esc(k)}</span><br>
+      ${filas[k].map(c => `<b style="color:var(--navy)">${esc(c.valor)}</b>
+        ${(c.fuentes||[]).map(f => `<span class="badge sin-evaluar">${esc(f)}</span>`).join('')}
+        ${c.una_sola_fuente ? '<span class="badge bloqueado"><i>▲</i>una sola fuente</span>' : ''}`)
+        .join('<br>')}</div>`).join('');
+  return `<div class="tarjeta">
+    <div class="grid2" style="align-items:start">
+      <div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <span class="kpi chico" style="min-width:46px;text-align:center"
+            >${esc(q.iniciales)}</span>
+          <div><h2 style="margin:0">${esc(q.nombre || '—')}</h2>
+            <span class="pista">${esc(q.brokerage || '—')} ·
+              ${esc(q.estado || '—')}${q.unidades_ano != null
+                ? ' · ' + q.unidades_ano + ' u/año' : ''}</span></div>
+        </div>
+        <p class="sub" style="margin-top:12px">${esc(q.bio || '')}</p>
+      </div>
+      <div><div class="seccion">Contacto</div>
+        <div style="display:grid;gap:10px;margin-top:10px">${contacto
+          || '<span class="pista">No hay datos de contacto suyos en la base.</span>'}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function seccionVeredicto(d){
+  const v = d.veredicto || {}, e = v.evidencia || {};
+  const pend = (e.compras_pendientes_de_prestamo || []);
+  return `<div class="tarjeta">
+    <div class="grid2" style="align-items:start">
+      <div>
+        <div class="seccion">Veredicto</div>
+        <h2 style="margin-top:8px">${v.estado === 'ok' ? '✓ Se le puede escribir'
+          : v.estado === 'excluido' ? '✕ No se le escribe'
+          : '▲ Falta Model Match'}</h2>
+        <p class="sub">${esc(v.motivo || '')}</p>
+        ${pend.length ? `<p class="sub"><b>${pend.length}</b> closing sin
+          datos del loan: Model Match tarda de 3 a 5 semanas. Revisar
+          Transactions después del ${esc(pend.map(p =>
+            p.recapturar_despues_de).filter(Boolean).sort().pop() || '—')}.</p>` : ''}
+      </div>
+      <div>
+        <div class="seccion">Salesforce</div>
+        <div style="margin-top:8px">${chipPendiente(d.salesforce.pendiente)}</div>
+        ${d.salesforce.sf_lead_id ? `<p class="sub">Lead
+          ${esc(d.salesforce.sf_lead_id)}</p>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function seccionPorQueElla(d){
+  const rs = d.por_que_ella || [];
+  return `<div class="tarjeta">
+    <div class="seccion">Por qué ella</div>
+    <div style="margin-top:6px">${chipPendiente(d.prioridad.pendiente)}</div>
+    ${rs.length ? rs.map((r,i) => `
+      <div style="margin-top:14px;border-top:2px solid var(--navy);padding-top:8px">
+        <b style="color:var(--navy)">${i+1} · ${esc(r.titulo)}</b>
+        ${r.hipotesis ? '<span class="badge bloqueado"><i>▲</i>Hipótesis</span>' : ''}
+        <p class="sub">${esc(r.texto)}</p>
+        ${deDondeSale(r.de_donde)}
+      </div>`).join('')
+      : '<p class="sub" style="margin-top:10px">Todavía no hay nada medido con qué armarlas.</p>'}
+  </div>`;
+}
+
+function seccionDolores(d){
+  const ds = d.dolores || [];
+  if(!ds.length) return `<div class="tarjeta"><div class="seccion">Dolores posibles</div>
+    <p class="sub" style="margin-top:8px">Sin evidencia suficiente: no lo sabemos.</p></div>`;
+  return `<div class="tarjeta">
+    <div class="seccion">Dolores posibles y cómo validarlos</div>
+    <table class="tabla" style="margin-top:10px">
+      <thead><tr><th class="lbl">Dolor posible</th><th>Evidencia</th>
+        <th>Grado</th><th>Pregunta para validarlo</th></tr></thead>
+      <tbody>${ds.map(x => `<tr class="metric">
+        <td class="lbl">${esc(x.dolor)}</td>
+        <td>${esc(x.evidencia)}</td>
+        <td><span class="badge ${x.grado === 'Dato' ? 'ok'
+          : x.grado === 'Hipótesis' ? 'bloqueado' : 'sin-evaluar'}"
+          >${esc(x.grado)}</span></td>
+        <td>${esc(x.pregunta || '—')}</td></tr>`).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+function seccionConversar(d){
+  const c = d.conversar || {}, t = c.telefono, o = c.objecion;
+  return `<div class="tarjeta">
+    <div class="seccion">Cómo abrirle la conversación</div>
+    <div class="grid2" style="margin-top:10px;align-items:start">
+      <div>
+        <span class="pista">Canal · al que usa hoy</span><br>
+        ${t && t.valor ? `<b style="color:var(--navy)">${esc(t.valor)}</b>
+          ${(t.fuentes||[]).map(f => `<span class="badge sin-evaluar">${esc(f)}</span>`).join('')}`
+          : chipPendiente(t ? t.pendiente : 'sin teléfono')}
+        <div class="seccion" style="margin-top:14px">Qué preguntarle</div>
+        <ul class="lista">${(c.preguntas||[]).map(p =>
+          `<li>${esc(p)}</li>`).join('') || '<li>—</li>'}</ul>
+      </div>
+      <div>
+        ${o ? `<div class="seccion">Objeción probable</div>
+          <p class="sub">${esc(o.texto)}</p>` : ''}
+        <div class="seccion" style="margin-top:14px">LO de HOMESÍ</div>
+        <div style="margin-top:6px">${chipPendiente(c.lo_asignado.pendiente)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function seccionProduccion(d){
+  const p = d.produccion;
+  if(!p) return `<div class="tarjeta"><div class="seccion">Su producción</div>
+    <p class="sub" style="margin-top:8px"><b>Falta Transactions.</b>
+      ${esc(d.sin_transactions || '')}</p></div>`;
+  const r = p.resumen, c = r.compras || {}, v = r.ventas || {};
+  const mix = Object.entries(r.loan_mix_compra || {});
+  const maxTri = Math.max(1, ...(p.trimestres||[]).map(t => t.n));
+  return `<div class="tarjeta">
+    <div class="seccion">Su producción y con quién financian sus buyers</div>
+    <div class="grid2" style="margin-top:12px">
+      <div><span class="pista">buys / listings</span><br>
+        <span class="kpi chico">${c.total ?? 0} / ${v.total ?? 0}</span></div>
+      <div><span class="pista">median purchase price</span><br>
+        <span class="kpi chico">${r.precio_mediano_compra
+          ? '$' + Math.round(r.precio_mediano_compra/1000) + 'K' : '—'}</span></div>
+      <div><span class="pista">buy side volume</span><br>
+        <span class="kpi chico">${r.volumen_compra
+          ? '$' + (r.volumen_compra/1e6).toFixed(1) + 'M' : '—'}</span></div>
+      <div><span class="pista">financed buys</span><br>
+        <span class="kpi chico">${c.financiada ?? 0}</span>
+        <span class="pista">· ${c.cash_segun_mm ?? 0} cash</span></div>
+    </div>
+    ${p.completa === false ? `<p class="sub"><b>Lectura incompleta:</b>
+      ${esc(p.aviso || '')}</p>` : ''}
+    <div class="seccion" style="margin-top:14px">Buys por trimestre</div>
+    <table class="tabla"><tbody>${(p.trimestres||[]).map(t => `<tr class="metric">
+      <td class="lbl">${esc(t.etiqueta)}${t.parcial
+        ? ' <span class="pista">(incompleto)</span>' : ''}</td>
+      <td><span style="display:inline-block;height:9px;border-radius:3px;
+        background:var(--navy);width:${Math.round(100*t.n/maxTri)}%"></span></td>
+      <td class="totcol">${t.n}</td></tr>`).join('')}</tbody></table>
+    <div class="seccion" style="margin-top:14px">Loan type de sus buys</div>
+    <ul class="lista">${mix.map(([k,n]) =>
+      `<li>${esc(k)} · <b>${n}</b></li>`).join('')}
+      <li>cash · <b>${c.cash_segun_mm ?? 0}</b></li>
+      ${c.cash_provisional ? `<li><span class="badge bloqueado"><i>▲</i>Pendiente</span>
+        · <b>${c.cash_provisional}</b> sin datos del loan todavía</li>` : ''}</ul>
+    <div class="seccion" style="margin-top:14px">Lenders de sus buyers</div>
+    <ul class="lista">${Object.entries(r.lenders_compra||{}).map(([k,n]) =>
+      `<li>${esc(k)} · <b>${n}</b> buys</li>`).join('') || '<li>—</li>'}</ul>
+    <details style="margin-top:12px"><summary class="pista"
+      style="cursor:pointer">De dónde sale: sus ${p.filas.length} transactions</summary>
+      <table class="tabla" style="margin-top:8px">
+        <thead><tr><th class="lbl">Closing</th><th>Side</th><th>Zona</th>
+          <th class="totcol">Sold</th><th>Loan</th><th>Lender</th></tr></thead>
+        <tbody>${p.filas.map(f => `<tr class="metric">
+          <td class="lbl">${esc(f.fecha || '—')}</td>
+          <td>${esc(f.lado || '—')}</td>
+          <td>${esc((f.zip || '') + (f.ciudad ? ' · ' + f.ciudad : ''))}</td>
+          <td class="totcol">${f.precio ? '$' + Math.round(f.precio/1000) + 'K' : '—'}</td>
+          <td>${f.estado_prestamo === 'financiada'
+            ? esc(f.tipo || '—') + (f.tasa ? ' · ' + f.tasa + '%' : '')
+            : f.estado_prestamo === 'cash_segun_mm' ? 'cash'
+            : '<span class="badge bloqueado"><i>▲</i>Pendiente</span>'}</td>
+          <td>${esc(f.lender || '—')}</td></tr>`).join('')}</tbody>
+      </table>
+      <p class="sub">«Cash» es lo que muestra Model Match en operaciones de más
+        de 5 semanas. No se guardan los nombres de buyers ni de sellers, y de la
+        dirección solo queda el ZIP.</p>
+    </details>
+  </div>`;
+}
+
+function seccionInstagramFicha(ig){
+  if(!ig) return `<div class="tarjeta"><div class="seccion">Instagram</div>
+    <p class="sub" style="margin-top:8px">No tenemos su cuenta.</p></div>`;
+  if(!ig.utilizable) return `<div class="tarjeta"><div class="seccion">Instagram</div>
+    <p class="sub" style="margin-top:8px"><b>@${esc(ig.handle || '—')}</b> no
+      aporta señales: ${esc(ig.motivo_de_la_clase || ig.clase || '')}.</p></div>`;
+  const i = ig.idioma || {};
+  return `<div class="tarjeta">
+    <div class="seccion">Instagram · @${esc(ig.handle || '—')}</div>
+    <p class="sub" style="margin-top:8px">Leído el
+      ${esc(String(ig.leido_en || '').slice(0,10))}. Se leyeron
+      <b>${ig.posts_leidos ?? 0}</b> posts y
+      <b>${ig.comentarios_leidos ?? 0}</b> comentarios.</p>
+    <div class="grid2" style="margin-top:10px">
+      <div><span class="pista">a quién le habla</span><br>
+        <b style="color:var(--navy)">${esc(ig.audiencia_dominante || '—')}</b></div>
+      <div><span class="pista">de qué habla</span><br>
+        <b style="color:var(--navy)">${esc(ig.tema_dominante || '—')}</b></div>
+      <div><span class="pista">posts en español</span><br>
+        <span class="kpi chico">${i.posts_en_espanol ?? '—'}</span>
+        <span class="pista">de ${ig.posts_leidos ?? '—'}</span></div>
+      <div><span class="pista">seguidores</span><br>
+        ${chipPendiente('viene de handles sin verificar')}</div>
+    </div>
+    <p class="sub" style="margin-top:10px">${esc(ig.respa)}</p>
+  </div>`;
+}
+
+function seccionContexto(d){
+  return `<div class="tarjeta">
+    <div class="seccion">Contexto de su zona</div>
+    ${(d.mercados||[]).map(m => {
+      const x = m.metricas || {};
+      return `<details style="margin-top:8px"><summary style="cursor:pointer">
+        <b>${esc(m.etiqueta || '—')}</b>
+        <span class="pista">${x.fallout != null
+          ? '· ' + x.fallout + '% de fallout' : ''}</span></summary>
+        <p class="sub" style="margin-top:6px">
+          ${x.mkt_fha != null ? 'FHA ' + x.mkt_fha + '% · ' : ''}
+          ${x.fallout != null ? 'fallout ' + x.fallout + '% · ' : ''}
+          ${m.rango_desde ? 'período ' + esc(m.rango_desde) + ' a '
+            + esc(m.rango_hasta || '—') : 'período no registrado'}
+          ${m.de_la_biblioteca ? ' · tomado de la biblioteca' : ''}</p>
+      </details>`;
+    }).join('') || '<p class="sub" style="margin-top:8px">Sin mercados capturados.</p>'}
+    <details style="margin-top:8px"><summary style="cursor:pointer">
+      <b>Quién vive en su zona</b></summary>
+      <p class="sub" style="margin-top:6px">${chipPendiente(d.census.pendiente)}</p>
+    </details>
+  </div>`;
+}
+
+async function vFicha(){
+  $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando la ficha…</div>';
+  try{
+    const d = await api('/api/ficha?realtor_id=' + encodeURIComponent(SEL.id));
+    const f = d.fuentes || {};
+    $('#cuerpo').innerHTML =
+      seccionQuienEs(d.quien_es)
+      + seccionVeredicto(d)
+      + seccionPorQueElla(d)
+      + seccionDolores(d)
+      + seccionConversar(d)
+      + seccionProduccion(d)
+      + seccionInstagramFicha(d.instagram)
+      + seccionContexto(d)
+      + `<div class="tarjeta">
+          <div class="seccion">Fuentes</div>
+          <p class="sub" style="margin-top:8px">
+            Model Match capturado el ${esc(String(f.model_match||'—').slice(0,10))}
+            ${f.capturas_anteriores ? ' · ' + f.capturas_anteriores
+              + ' captura(s) anterior(es) como histórico' : ''} ·
+            Instagram leído el ${esc(String(f.instagram||'—').slice(0,10))} ·
+            diagnóstico del ${esc(String(f.evaluado_en||'—').slice(0,10))}.</p>
+          <div class="seccion" style="margin-top:12px">Falta en esta ficha</div>
+          <ul class="lista">${(d.falta_en_la_ficha||[]).map(x =>
+            `<li>${esc(x)}</li>`).join('')}</ul>
+        </div>`;
+  }catch(e){
+    $('#cuerpo').innerHTML = `<div class="tarjeta err">${esc(e.message)}</div>`;
+  }
+}
 
 async function vLectura(cual){
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
