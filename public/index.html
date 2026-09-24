@@ -539,7 +539,9 @@ function seccionProduccion(d){
   const p = d.produccion;
   if(!p) return `<div class="tarjeta"><div class="seccion">Su producción</div>
     <p class="sub" style="margin-top:8px"><b>Falta Transactions.</b>
-      ${esc(d.sin_transactions || '')}</p></div>`;
+      Sin esa pestaña no se sabe cuáles de sus compras fueron cash y cuáles
+      tienen un originador que Model Match no muestra, y eso no se calcula por
+      diferencia.</p></div>`;
   const r = p.resumen, c = r.compras || {}, v = r.ventas || {};
   const mix = Object.entries(r.loan_mix_compra || {});
   const maxTri = Math.max(1, ...(p.trimestres||[]).map(t => t.n));
