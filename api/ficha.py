@@ -76,8 +76,23 @@ _QUIEN_LO_OBSERVO = (
 )
 
 
-def grado_de(activacion: dict) -> str:
+def grado_de(activacion: dict, citas: dict | None = None) -> str:
     """Dato / Lo cuenta ella / Hipótesis, desde los CAMPOS que la regla leyó.
+
+    **`Lo cuenta ella` EXIGE LA CITA.** Sin una frase suya con su fecha, un
+    `ev2_*` es `Hipótesis` y no su palabra.
+
+    El motivo salió de un caso real: `ev2_fha_gob` llega por dos caminos --una
+    columna del libro v3 cuya derivación no está documentada, y `menciona_fha`
+    de Instagram, que cuenta menciones en los captions-- así que «lo cuenta
+    ella» podía ser un puntaje heredado o un post que enumera tipos de
+    financing. El BD lo iba a repetir en la llamada como si ella lo hubiera
+    dicho, y lo que se cae cuando no lo reconoce no es la frase: es la
+    credibilidad de todo lo demás.
+
+    `citas` es {campo: {"texto": ..., "fecha": ...}}. Mientras no exista el
+    mecanismo que las junte, llega vacío y todos los `ev2_*` son hipótesis --
+    que es lo correcto: no tenemos la cita.
 
     La pregunta no es la del motor. El motor pregunta «¿cuán fuerte es esto?»;
     el BD pregunta «¿esto lo midió alguien, me lo contó ella, o lo estamos
@@ -95,10 +110,23 @@ def grado_de(activacion: dict) -> str:
     con la bio se sostiene en Model Match.
     """
     campos = [str(c) for c in ((activacion or {}).get("campos_leidos") or {})]
+    citas = citas or {}
     for prefijo, grado in _QUIEN_LO_OBSERVO:
-        if any(c.startswith(prefijo) for c in campos):
-            return grado
+        coinciden = [c for c in campos if c.startswith(prefijo)]
+        if not coinciden:
+            continue
+        if grado is LO_CUENTA_ELLA and not any(
+                _cita_util(citas.get(c)) for c in coinciden):
+            return HIPOTESIS
+        return grado
     return HIPOTESIS
+
+
+def _cita_util(cita) -> bool:
+    """Una cita sirve si trae la frase Y la fecha. Sin fecha no se puede
+    decir «el 15 de junio dijo», y sin eso el BD no la puede usar."""
+    return bool(isinstance(cita, dict) and cita.get("texto")
+                and cita.get("fecha"))
 
 
 def iniciales(nombre: str | None) -> str:

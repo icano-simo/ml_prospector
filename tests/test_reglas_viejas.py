@@ -78,11 +78,13 @@ def test_la_pantalla_pinta_el_aviso_y_la_marca():
 def test_la_version_actual_no_es_la_de_las_evaluaciones_guardadas():
     """El caso real, fijado: si alguien vuelve a correr el motor esto cambia,
     y entonces esta prueba hay que actualizarla A PROPOSITO."""
-    assert VERSION_REGLAS == "2026.09.23-compuertas"
+    assert VERSION_REGLAS == "2026.09.24-fuente-real"
     assert VERSION_REGLAS != "2026.09.23-vocabulario-de-oficio"
-    # Y las 4.187 evaluaciones guardadas son de `-sin-r7`, que ya no es la
-    # actual: hasta que se vuelva a correr el motor, la pantalla tiene que
-    # decir que ese diagnóstico es de una versión anterior.
+    # Las 4.187 evaluaciones guardadas son de `-compuertas`. Hasta que se
+    # vuelva a correr el motor, la pantalla tiene que decir que ese diagnóstico
+    # es de una versión anterior -- que es exactamente para lo que existe la
+    # comparación, y lo que obliga a correr la re-evaluación antes de mergear.
+    assert VERSION_REGLAS != "2026.09.23-compuertas"
     assert VERSION_REGLAS != "2026.09.23-sin-r7"
 
 

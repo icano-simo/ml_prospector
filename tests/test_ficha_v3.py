@@ -93,17 +93,32 @@ def test_lo_que_mide_model_match_es_un_Dato():
                      "campos_leidos": {"mm_share_buy": 0.75}}) == DATO
 
 
-def test_lo_que_dice_su_bio_es_Lo_cuenta_ella_aunque_la_regla_sea_E1():
-    """El caso que rompió la primera versión.
+def test_un_ev2_SIN_CITA_es_Hipotesis_y_no_su_palabra():
+    """La corrección del 2026-09-24, y el caso que la motivó.
 
-    `P-Q01-2` lee `ev2_dpa_enganche`, que sale de su propia bio, y está
-    declarada E1 -- así que decidir por grado la marcaba «Hipótesis» sobre una
-    frase que ella escribió. El grado mide cuán fuerte es la evidencia; el
-    sello de la ficha mide de quién es.
+    `ev2_fha_gob` llega por DOS caminos: una columna del libro v3 cuya
+    derivación no está documentada, y `menciona_fha` de Instagram, que cuenta
+    menciones en los captions. Así que «lo cuenta ella» podía ser un puntaje
+    heredado o un post que enumera tipos de financing.
+
+    El BD lo iba a repetir en la llamada como si ella lo hubiera dicho, y lo
+    que se cae cuando la realtor no lo reconoce no es la frase: es la
+    credibilidad de todo lo demás.
     """
     assert grado_de({"grado": "E1",
-                     "campos_leidos": {"ev2_dpa_enganche": True}}) \
-        == LO_CUENTA_ELLA
+                     "campos_leidos": {"ev2_fha_gob": True}}) == HIPOTESIS
+    # Y ni una cita sin fecha alcanza: sin fecha no se puede decir «el 15 de
+    # junio dijo», que es lo único que el BD puede usar.
+    assert grado_de({"grado": "E1", "campos_leidos": {"ev2_fha_gob": True}},
+                    {"ev2_fha_gob": {"texto": "hablo de FHA"}}) == HIPOTESIS
+
+
+def test_con_la_cita_y_su_fecha_SI_es_Lo_cuenta_ella():
+    """El control: la regla no es «nunca», es «no sin la cita»."""
+    assert grado_de(
+        {"grado": "E1", "campos_leidos": {"ev2_dpa_enganche": True}},
+        {"ev2_dpa_enganche": {"texto": "ayudo con el down payment",
+                              "fecha": "2026-06-15"}}) == LO_CUENTA_ELLA
 
 
 def test_un_puntaje_del_libro_es_una_Hipotesis():
@@ -199,7 +214,7 @@ def test_cada_dolor_trae_su_grado_y_su_pregunta():
     assert p11["dolor"] == "Enunciado de P-Q11"
     assert p11["pregunta"] == "¿Cuántos closings al mes?"
     p01 = next(d for d in ds if d["qualifier"] == "P-Q01")
-    assert p01["grado"] == LO_CUENTA_ELLA
+    assert p01["grado"] == HIPOTESIS, "un ev2_* sin cita no es su palabra"
 
 
 def test_los_dolores_van_de_mas_fuerte_a_menos():
