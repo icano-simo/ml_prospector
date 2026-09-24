@@ -689,6 +689,271 @@ def test_un_encaje_correcto_pasa():
     assert validar(f, PAQUETE) == []
 
 
+# ══ 9 · LAS TRES PESTAÑAS REDACTADAS ═════════════════════════════════════════
+#
+# Instagram, dossier y secuencia. Las reglas nuevas son cuatro, y las cuatro
+# son de las que no fallan solas: un `AFIRMA` de más suena mejor que un
+# `PREGUNTA`, un toque 1 distinto del SMS parece una mejora, y un día movido no
+# se nota hasta que la cadencia deja de ser la del método.
+
+MK = next(e["id"] for e in PAQUETE["evidencias"]
+          if e["id"].startswith("MM-MK"))
+
+TOQUES = [
+    {"n": 1, "dia": 0, "canal": "sms", "objetivo": "abrir por su propio post",
+     "texto": "Hola, soy [tu nombre] de HOMESÍ. Vi tu post del buyer que "
+              "trabajó su credit. ¿Un café de 15 min?",
+     "si_responde": "Preguntarle cuántos buyers tiene esperando.",
+     "evidencias": ["IG-2026-05-15-a"]},
+    {"n": 2, "dia": 3, "canal": "email", "objetivo": "dar un dato de su mercado",
+     "texto": "En su condado se cae uno de cada cuatro expedientes antes del "
+              "closing.\n\n¿Te cuadra con lo que ves tú?",
+     "si_responde": "Preguntarle en qué punto se le caen a ella.",
+     "evidencias": [MK]},
+    {"n": 3, "dia": 10, "canal": "llamada", "objetivo": "saber con qué perfil "
+                                                        "trabaja",
+     "texto": "Te llamo por lo del buy side.\n\n¿Con qué perfil trabajas más "
+              "— first-time homebuyer, self-employed o investor?",
+     "si_responde": "Anotar el perfil y devolver un caso parecido.",
+     "evidencias": ["MM-TX-RESUMEN"]},
+    {"n": 4, "dia": 21, "canal": "email", "objetivo": "nombrar su dependencia "
+                                                      "de un lender",
+     "texto": "De tus 8 financed buys, 3 fueron con el mismo lender.\n\n¿Qué "
+              "haces cuando ese lender no aprueba a un buyer?",
+     "si_responde": "Ofrecerle capacidad para esos casos.",
+     "evidencias": ["MM-TX-RESUMEN"]},
+    {"n": 5, "dia": 30, "canal": "email", "objetivo": "abrir por bank statements",
+     "texto": "Cuando un buyer llega con bank statements en vez de W-2, el "
+              "caso cambia de ruta.\n\n¿Te ha pasado este año?",
+     "si_responde": "Pedirle el caso y mirarlo con ella.",
+     "evidencias": ["MM-TX-RESUMEN"]},
+    {"n": 6, "dia": 45, "canal": "dm_ig", "objetivo": "volver a su post",
+     "texto": "Te escribo por lo del credit del buyer que contabas.\n\n"
+              "¿Sigues teniendo buyers esperando el pre-approval?",
+     "si_responde": "Proponerle una llamada de 15 min.",
+     "evidencias": ["IG-2026-05-15-a"]},
+    {"n": 7, "dia": 60, "canal": "email", "objetivo": "cerrar sin insistir",
+     "texto": "Te escribí varias veces y no te llegué en buen momento, así "
+              "que este es el último.\n\n¿Te parece si te escribo el día que "
+              "se te complique un caso de los difíciles?",
+     "si_responde": "Volver a la secuencia desde el toque 3.",
+     "evidencias": ["MM-TX-RESUMEN"]},
+]
+
+DOSSIER = {
+    "A": {"texto": "Trabaja en Una Inmobiliaria, en Illinois.",
+          "evidencias": ["MM-OV"]},
+    "B": {"texto": "Cierra sobre todo buy side: 18 buys y 7 listings.",
+          "evidencias": ["MM-TX-RESUMEN"]},
+    "C": {"texto": "En su condado se cae uno de cada cuatro expedientes.",
+          "evidencias": [MK]},
+    "D": {"qualifier": "P-Q01", "intensidad": 2, "grado": "E1",
+          "acto": "PREGUNTA",
+          "texto": "Podría estar perdiendo casos de nicho; hay que "
+                   "preguntárselo.",
+          "evidencias": ["PACS-P-Q01"]},
+    "E": {"texto": "Abrir por el caso del buyer que trabajó su credit.",
+          "evidencias": ["IG-2026-05-15-a"]},
+    "E2": {"texto": "Ofrecerle capacidad para los buyers que su lender no "
+                    "aprueba.", "evidencias": ["MM-TX-RESUMEN"]},
+    "G": {"texto": "¿Con qué lender trabajas hoy y qué se te complica?",
+          "evidencias": ["MM-TX-RESUMEN"]},
+}
+
+IG_ANALISIS = {
+    "quien_es": {"texto": "Se presenta como realtor activa.",
+                 "evidencias": ["IG-RESUMEN"]},
+    "con_quien_se_relaciona": {"texto": "Menciona a otros agentes.",
+                               "evidencias": ["IG-RESUMEN"]},
+    "que_escribe": {"texto": "Publica casos de clientes.",
+                    "evidencias": ["IG-2026-05-15-a"]},
+    "a_quien_le_habla": {"texto": "Le habla a first-time homebuyers.",
+                         "evidencias": ["IG-2026-05-15-a"]},
+    "donde": {"texto": "Nombra Pilsen en sus posts.",
+              "evidencias": ["IG-RESUMEN"]},
+    "cada_cuanto": {"texto": "El raspado llega hasta septiembre.",
+                    "evidencias": ["IG-RESUMEN"]},
+    "que_le_preguntan": {"texto": "Los comentarios no dicen quién escribe.",
+                         "evidencias": ["IG-COMENTARIOS"]},
+    "senales_para_el_bd": {"texto": "Cuenta un caso de credit con nombre y "
+                                    "fecha.", "evidencias": ["IG-2026-05-15-a"]},
+    "que_verificar": {"texto": "Si atiende en español hay que preguntárselo.",
+                      "evidencias": ["IG-RESUMEN"]},
+    "prioridad_ig": {"clase": "B", "razones": [
+        {"texto": "Publica casos propios y no solo listings.",
+         "evidencias": ["IG-2026-05-15-a"]}]},
+}
+
+
+def _con_pestanas(**cambios):
+    """Una ficha con las tres pestañas, COPIADA A FONDO.
+
+    Con `dict(...)` --copia superficial-- las pruebas se pisan entre ellas: la
+    que pone `clase: "Alta"` para comprobar que se rechaza deja ese valor en el
+    diccionario compartido, y la siguiente encuentra una ficha rota que no
+    escribió. El control fallaba y el defecto no estaba en lo que el control
+    mide.
+    """
+    import copy
+
+    f = _ficha()
+    f["instagram_analisis"] = copy.deepcopy(IG_ANALISIS)
+    f["dossier"] = copy.deepcopy(DOSSIER)
+    f["secuencia"] = {"toques": copy.deepcopy(TOQUES)}
+    for k, v in cambios.items():
+        f[k] = v
+    return f
+
+
+def test_las_tres_pestanas_correctas_pasan():
+    """El control. Sin esto, todo lo de abajo podría estar cazando ruido."""
+    assert validar(_con_pestanas(), PAQUETE) == []
+
+
+def test_D_no_puede_AFIRMAR_con_una_activacion_que_no_es_3_E0():
+    """P-Q01 viene 2/E1: afirmarlo es convertir una hipótesis en un dato."""
+    f = _con_pestanas()
+    f["dossier"]["D"]["acto"] = "AFIRMA"
+    p = validar(f, PAQUETE)
+    assert any("AFIRMA sin una activación" in x["motivo"] for x in p), p
+    assert all(x["seccion"] == "dossier.D" for x in p), p
+
+
+def test_D_no_puede_decir_una_intensidad_que_no_es_la_de_la_activacion():
+    f = _con_pestanas()
+    f["dossier"]["D"]["intensidad"] = 3
+    p = validar(f, PAQUETE)
+    assert any("intensidad no es la de la activación" in x["motivo"]
+               for x in p), p
+
+
+def test_D_nombra_un_qualifier_y_cita_otra_cosa():
+    f = _con_pestanas()
+    f["dossier"]["D"]["evidencias"] = ["MM-TX-RESUMEN"]
+    p = validar(f, PAQUETE)
+    assert any("nombra un qualifier que no cita" in x["motivo"] for x in p), p
+
+
+def test_el_bloque_F_no_lo_escribe_la_IA():
+    f = _con_pestanas()
+    f["dossier"]["F"] = {"texto": "No le propongas cambiar de lender.",
+                         "evidencias": ["MM-TX-RESUMEN"]}
+    p = validar(f, PAQUETE)
+    assert any("el bloque F no lo escribe la IA" in x["motivo"] for x in p), p
+
+
+def test_el_toque_1_tiene_que_ser_el_SMS_de_la_ficha():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][0]["texto"] = ("Hola, soy [tu nombre]. ¿Un café "
+                                            "esta semana?")
+    p = validar(f, PAQUETE)
+    assert any("el toque 1 no es el SMS" in x["motivo"] for x in p), p
+
+
+def test_los_dias_son_los_de_PACS():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][3]["dia"] = 25
+    p = validar(f, PAQUETE)
+    assert any("el día no es el de PACS" in x["motivo"] for x in p), p
+
+
+def test_un_toque_que_promete_material_no_pasa():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Te mando el desglose de tu condado.\n\n¿Lo miramos juntos?")
+    p = validar(f, PAQUETE)
+    assert any("promete material" in x["motivo"] for x in p), p
+
+
+def test_un_toque_de_folleto_no_pasa():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Somos tu mejor aliado.\n\n¿Hablamos?")
+    p = validar(f, PAQUETE)
+    assert any("adjetivos de folleto" in x["motivo"] for x in p), p
+
+
+def test_un_toque_que_no_cierra_con_pregunta_ni_oferta_no_pasa():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Te llamo por lo del buy side.\n\nQuedo atento a tu respuesta.")
+    p = validar(f, PAQUETE)
+    assert any("no cierra con pregunta" in x["motivo"] for x in p), p
+
+
+def test_un_toque_con_tres_parrafos_dice_mas_de_una_cosa():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Una cosa.\n\nOtra cosa.\n\n¿Y una tercera?")
+    p = validar(f, PAQUETE)
+    assert any("dice más de una cosa" in x["motivo"] for x in p), p
+
+
+def test_un_toque_que_propone_cambiar_de_lender_no_pasa():
+    """El bloque F corre sobre el copy que se ENVÍA, no solo sobre el dossier."""
+    f = _con_pestanas()
+    f["secuencia"]["toques"][2]["texto"] = (
+        "Deja a tu lender y trabaja con nosotros.\n\n¿Lo vemos?")
+    p = validar(f, PAQUETE)
+    assert any("nunca se le dice" in x["motivo"] for x in p), p
+
+
+def test_un_toque_sin_que_hacer_si_responde_no_pasa():
+    f = _con_pestanas()
+    f["secuencia"]["toques"][4]["si_responde"] = ""
+    p = validar(f, PAQUETE)
+    assert any("qué hacer si responde" in x["motivo"] for x in p), p
+
+
+def test_un_excluido_no_lleva_secuencia_ni_D_ni_E():
+    from motor.paquete import construir as _construir
+
+    paquete = _construir(
+        realtor={"id": "r-2", "nombre_completo": "OTRO AGENTE",
+                 "brokerage": "Otra", "estado": "IL"},
+        evaluacion=None, perfil_mm=None, resumen_tx=None, filas_tx=None,
+        mercados=None, ig=None, contactos=[], census=None,
+        veredicto={"estado": "excluido", "motivo": "ya trabaja con la casa"},
+        salesforce=None)
+    f = _con_pestanas()
+    f["hash_paquete"] = paquete["hash_paquete"]
+    p = validar(f, paquete)
+    motivos = " · ".join(x["motivo"] for x in p)
+    assert "no lleva secuencia" in motivos, motivos
+    assert "no lleva el bloque D" in motivos, motivos
+    assert "no lleva el bloque E" in motivos, motivos
+
+
+def test_la_prioridad_de_instagram_es_A_B_C_o_D():
+    f = _con_pestanas()
+    f["instagram_analisis"]["prioridad_ig"]["clase"] = "Alta"
+    p = validar(f, PAQUETE)
+    assert any("no es A, B, C ni D" in x["motivo"] for x in p), p
+
+
+def test_una_frase_de_instagram_sin_evidencias_no_pasa():
+    f = _con_pestanas()
+    f["instagram_analisis"]["donde"] = {"texto": "Opera en todo Chicago.",
+                                        "evidencias": []}
+    p = validar(f, PAQUETE)
+    assert any(x["seccion"] == "instagram_analisis.donde" for x in p), p
+
+
+def test_lo_que_se_apaga_es_el_TOQUE_y_no_la_secuencia():
+    """La granularidad es la razón de `partes_con_problema`.
+
+    Apagar los siete toques porque el cuarto promete material esconde seis
+    textos que sí se sostienen, y deja al BD sin secuencia por un párrafo.
+    """
+    from motor.validar_ficha import partes_con_problema
+
+    f = _con_pestanas()
+    f["secuencia"]["toques"][3]["texto"] = (
+        "Te mando la guía del condado.\n\n¿La miramos?")
+    partes = partes_con_problema(validar(f, PAQUETE))
+    assert list(partes["secuencia"]) == ["toques[3]"], partes
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

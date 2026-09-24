@@ -497,6 +497,130 @@ def ficha_v3_completa(params: dict) -> tuple[int, dict]:
                  "hay_paquete": bool(paquete)}
 
 
+def bloques_ia(params: dict) -> tuple[int, dict]:
+    """Los bloques redactados de Instagram, Dossier y Secuencia, validados.
+
+    Es el mismo mecanismo de la ficha --se lee de `pacs.fichas_ia`, se valida
+    al leer contra el paquete guardado, y lo que no pasa no se muestra-- con
+    una diferencia: **apaga la PARTE, no la sección**.
+
+    La ficha se lee de un tirón y apagar una de sus ocho secciones es una
+    decisión razonable. El dossier son siete bloques y la secuencia siete
+    toques: apagar los siete porque el toque 4 promete material esconde seis
+    textos que sí se sostienen y deja al BD sin secuencia por un párrafo.
+
+    Un endpoint aparte y no dentro de `/api/dossier` por dos razones: la
+    lectura es la misma para las tres pestañas --una implementación, no tres--
+    y `/api/dossier` responde 409 a un excluido, que es correcto para la
+    secuencia y dejaría a Instagram sin texto por una razón que no es la suya.
+    """
+    from motor.nunca import BLOQUE_F
+    from motor.secuencia import DIAS_PACS
+    from motor.validar_ficha import partes_con_problema, validar
+
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+    rid = urllib.parse.quote(realtor_id)
+
+    _c, paqs, _ = leer("v_paquete_ficha",
+                       "?select=paquete,hash_paquete&realtor_id=eq.%s" % rid)
+    paquete = (paqs or [{}])[0].get("paquete") or {}
+    _c, fichas, _ = leer(
+        "v_ficha_ia_actual",
+        "?select=json,generada_en,generada_por,version_prompt,hash_paquete"
+        "&realtor_id=eq.%s" % rid)
+    redactada = (fichas or [None])[0]
+
+    # El bloque F viaja SIEMPRE, haya o no texto redactado: es lo que el BD
+    # tiene que tener delante cuando escribe a mano, y es justo entonces
+    # cuando no hay ficha que lo traiga.
+    vacio = {
+        "instagram_analisis": None,
+        "dossier": {"F": [dict(x) for x in BLOQUE_F]},
+        "secuencia": None,
+        "dias_pacs": list(DIAS_PACS),
+        "pendientes": {},
+        "redaccion": {},
+        "hay_ficha": False,
+        "hay_paquete": bool(paquete),
+    }
+    if not redactada:
+        return 200, vacio
+
+    ficha = redactada.get("json") or {}
+    problemas = validar(ficha, paquete)
+    partes = partes_con_problema(problemas)
+
+    salida = dict(vacio)
+    salida["hay_ficha"] = True
+    salida["instagram_analisis"] = _solo_lo_valido(
+        ficha.get("instagram_analisis"), partes.get("instagram_analisis") or {})
+    dos = _solo_lo_valido(ficha.get("dossier"),
+                          partes.get("dossier") or {}) or {}
+    # F lo pone el código SIEMPRE, y pisa lo que venga: si la IA lo escribió,
+    # el validador ya lo marcó, pero el bloque tiene que estar igual.
+    dos["F"] = [dict(x) for x in BLOQUE_F]
+    salida["dossier"] = dos
+    salida["secuencia"] = _secuencia_valida(
+        ficha.get("secuencia"), partes.get("secuencia") or {}, DIAS_PACS)
+    salida["pendientes"] = {k: v for k, v in partes.items()
+                            if k in ("instagram_analisis", "dossier",
+                                     "secuencia")}
+    salida["redaccion"] = {
+        "generada_en": redactada.get("generada_en"),
+        "generada_por": redactada.get("generada_por"),
+        "version_prompt": redactada.get("version_prompt"),
+        "desactualizada": bool(
+            paquete.get("hash_paquete")
+            and redactada.get("hash_paquete") != paquete["hash_paquete"]),
+    }
+    return 200, salida
+
+
+def _solo_lo_valido(seccion, partes: dict):
+    """La sección sin las partes que no pasaron, y con su motivo en el hueco.
+
+    El hueco NO se borra: se marca. Un bloque que desaparece se lee como que
+    no había nada que decir; un bloque que dice «Pendiente: el número no está
+    en la evidencia» se lee como lo que es.
+    """
+    if not isinstance(seccion, dict):
+        return None
+    if "" in partes:                  # el problema es de la sección entera
+        return {"_pendiente": partes[""]}
+    salida = {}
+    for clave, valor in seccion.items():
+        motivos = partes.get(clave)
+        salida[clave] = {"_pendiente": motivos} if motivos else valor
+    for clave, motivos in partes.items():
+        salida.setdefault(clave, {"_pendiente": motivos})
+    return salida
+
+
+def _secuencia_valida(seq, partes: dict, dias) -> dict | None:
+    """Los toques, con los que no pasaron reducidos a su número y su día.
+
+    El número y el día del toque apagado salen de `DIAS_PACS`, no del texto:
+    justamente el día pudo ser lo que falló, y repetir el dato equivocado al
+    lado del «Pendiente» sería mostrar sin validar lo que no se validó.
+    """
+    if not isinstance(seq, dict):
+        return None
+    if "" in partes:
+        return {"_pendiente": partes[""], "toques": []}
+    toques = []
+    for i, t in enumerate(seq.get("toques") or []):
+        motivos = partes.get("toques[%d]" % i)
+        if motivos:
+            toques.append({"n": i + 1,
+                           "dia": dias[i] if i < len(dias) else None,
+                           "_pendiente": motivos})
+        else:
+            toques.append(t)
+    return {"toques": toques}
+
+
 def _ficha_solo_codigo(base: dict) -> dict:
     """Las secciones `escribe: codigo`, con la forma del esquema de la ficha."""
     q = base.get("quien_es") or {}
@@ -3064,6 +3188,7 @@ RUTAS = {
     "/api/mercados_en_biblioteca": (mercados_en_biblioteca, "GET"),
     "/api/ficha": (ficha_v3, "GET"),
     "/api/ficha_v3": (ficha_v3_completa, "GET"),
+    "/api/bloques_ia": (bloques_ia, "GET"),
     "/api/pedir_ficha": (pedir_ficha, "POST"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),
