@@ -31,6 +31,30 @@
 html, body { height: 100% }
 .wrap { display: grid; grid-template-columns: 340px 1fr; height: calc(100% - 52px) }
 @media (max-width: 860px){ .wrap { grid-template-columns: 1fr } .side { display: none } }
+
+/* En pantalla angosta las tablas se apilan: cada fila es un bloque y cada
+ * celda lleva encima el nombre de su columna.
+ *
+ * `.tbl-scroll` con `overflow-x:auto` no es responsive a 352 px: es una tabla
+ * escondida detrás de un gesto que nadie hace, y lo que se ve es media palabra
+ * por columna. Es el mismo arreglo que la ficha, y por la misma razón.
+ *
+ * La clase `apilable` y el `data-col` de cada celda los pone `etiquetarTablas`
+ * al renderizar, copiando el `<th>`. Una tabla sin encabezado no se apila:
+ * quedaría una lista de valores sin decir de qué son. */
+@media (max-width: 620px){
+  .tbl-scroll { overflow-x: visible }
+  table.apilable { min-width: 0; width: 100% }
+  table.apilable thead { display: none }
+  table.apilable tr { display: block; padding: 10px 0;
+    border-top: 1px solid var(--slate-200) }
+  table.apilable tbody tr:first-child { border-top: none }
+  table.apilable td { display: block; border: none; padding: 2px 0 6px;
+    text-align: left; white-space: normal }
+  table.apilable td::before { content: attr(data-col); display: block;
+    font: 700 11px/1.4 var(--font-body); letter-spacing: .06em;
+    text-transform: uppercase; color: var(--slate-500) }
+}
 .side { border-right: 1px solid var(--slate-200); display: flex;
   flex-direction: column; min-height: 0; background: var(--white) }
 .filtros { padding: 14px; border-bottom: 1px solid var(--slate-200); display: grid; gap: 8px }
@@ -95,8 +119,55 @@ html, body { height: 100% }
 <script src="ficha_v3.js"></script>
 <script>
 const $ = s => document.querySelector(s);
-const esc = s => String(s ?? '').replace(/[&<>"]/g,
+/* `esc` escapa Y traduce: una fecha se lee, un teléfono se marca.
+ *
+ * La lista de aceptación --sin fechas ISO, sin teléfonos en E.164-- no es solo
+ * de la ficha: «Lectura del perfil», «Model Match», «Instagram» y «Secuencia»
+ * mostraban `2026-09-21` y `+17733701489`. Traducirlo campo por campo son
+ * cuarenta sitios y el que se olvide no falla: se ve técnico y ya.
+ *
+ * Va en `esc` porque es el único punto por el que pasa todo. `legible` es la
+ * MISMA función que usa la ficha (`ficha_v3.js`), para que las dos pantallas
+ * no digan la fecha de dos maneras.
+ *
+ * Los dos sitios donde `esc` llena un atributo --el `value` del `<option>` de
+ * estados y el del input `#estadoDet`-- llevan códigos de estado, no fechas ni
+ * teléfonos, así que no los toca. */
+const _legible = s => (window.fichaV3Utils && window.fichaV3Utils.legible)
+  ? window.fichaV3Utils.legible(s) : s;
+const esc = s => _legible(String(s ?? '')).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+/* Cada celda con el nombre de su columna, para poder apilar la tabla.
+ *
+ * Se hace al vuelo y no en cada plantilla porque hay quince tablas repartidas
+ * en diez vistas: escribir `data-col` a mano en cada `<td>` es acordarse
+ * quince veces, y la que se olvide no falla --se apila sin etiquetas, que es
+ * peor que no apilarse--. Esto lo copia del `<th>`, que ya está escrito.
+ *
+ * Lo dispara un MutationObserver sobre `#cuerpo`: las vistas se pintan con
+ * `innerHTML = ...` desde veinte sitios distintos y llamar a esto en cada uno
+ * es la misma lista de quince que se desactualiza. Poner y quitar atributos no
+ * dispara al observador --mira `childList`, no `attributes`--, así que no se
+ * llama a sí mismo. */
+function etiquetarTablas(raiz){
+  (raiz || document).querySelectorAll('table').forEach(t => {
+    // La ficha v3 trae las suyas ya etiquetadas y con su propio corte, que
+    // mira el ancho del PANEL. Dos hojas apilando la misma tabla con dos
+    // criterios distintos es justo lo que se acaba de arreglar.
+    if(t.closest('.fv3-raiz')) return;
+    const ths = [...t.querySelectorAll('thead th')].map(th =>
+      (th.textContent || '').trim());
+    if(!ths.filter(Boolean).length) return;
+    t.querySelectorAll('tbody tr').forEach(tr => {
+      [...tr.children].forEach((td, i) => {
+        if(ths[i] && !td.hasAttribute('data-col'))
+          td.setAttribute('data-col', ths[i]);
+      });
+    });
+    t.classList.add('apilable');
+  });
+}
+
 let FILAS = [], SEL = null, TAB = 'mercados', GEO = [], FORZAR = false;
 let VENTANA_CONFIRMADA = false;
 
@@ -248,16 +319,33 @@ function pintarFicha(){
   if(TAB === 'dossier' || TAB === 'seq') vDossier(TAB);
 }
 
+/* Una respuesta que llega tarde no pinta la pestaña de otra.
+ *
+ * `#cuerpo` se reconstruye al cambiar de pestaña, pero el `await` de la vista
+ * anterior sigue vivo y al volver escribe en el `#cuerpo` NUEVO. En la
+ * aceptación visual salió la ficha de Ana ENTERA debajo del encabezado de
+ * «Lectura del perfil», con la pestaña correcta subrayada: no es un problema
+ * de la medición, es lo que ve quien cambia de pestaña antes de que conteste
+ * la anterior.
+ *
+ * Cada vista anota en qué pestaña empezó y se calla si ya no es esa. Es el
+ * mismo caso que el `if(!$('#biblio')) return` de `cargarBiblio`, que se
+ * manifestaba como un `TypeError` en vez de como contenido equivocado. */
+const otraPestana = mia => TAB !== mia;
+
 /* ══ DOSSIER Y SECUENCIA ═══════════════════════════════════════════════════
  * Salen sin esperar a que se verifiquen los recursos, porque se quitaron las
  * promesas de material: el valor va DENTRO del mensaje.
  */
 async function vDossier(cual){
+  const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
   try{
     const d = await api('/api/dossier?realtor_id=' + encodeURIComponent(SEL.id));
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = cual === 'seq' ? vistaSecuencia(d) : vistaDossier(d);
   }catch(e){
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
 }
@@ -355,9 +443,11 @@ function vistaSecuencia(d){
 
 /* ── pestaña Instagram · lo capturado, sin motor ──────────────────────────── */
 async function vInstagram(){
+  const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
   try{
     const d = await api('/api/instagram?realtor_id=' + encodeURIComponent(SEL.id));
+    if(otraPestana(mia)) return;
     if(!d.perfiles.length){
       $('#cuerpo').innerHTML = `<div class="tarjeta">
         <div class="seccion">Instagram</div>
@@ -411,6 +501,7 @@ async function vInstagram(){
           ).join('')}</ul>
       </div>`).join('');
   }catch(e){
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
 }
@@ -696,27 +787,31 @@ function seccionContexto(d){
  * vez de esconder la ficha: una ficha vieja bien marcada es útil, una ficha
  * vieja sin marcar es una mentira con fecha. */
 async function vFichaV3(){
+  const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando la ficha…</div>';
   try{
     const d = await api('/api/ficha_v3?realtor_id=' + encodeURIComponent(SEL.id));
+    if(otraPestana(mia)) return;
     const r = d.redaccion || {};
-    const aviso = r.desactualizada
-      ? `<div class="avi">Hay datos nuevos: ficha pendiente de actualizar.
-          Se sigue mostrando la del ${esc(String(r.generada_en||'').slice(0,10))}.</div>`
-      : '';
-    const cabecera = r.generada_en
-      ? `<div class="tarjeta" style="margin-bottom:12px">
-          <span class="pista">Ficha redactada el
-            ${esc(String(r.generada_en).slice(0,10))} ·
-            ${esc(r.version_prompt || '')} · por ${esc(r.generada_por || '')}</span>
-          <button class="btn sec" id="btnPedir" style="margin-left:12px"
-            >Pedir actualización</button></div>`
-      : `<div class="tarjeta" style="margin-bottom:12px">
-          <span class="pista">Todavía no hay ficha redactada para este realtor.
-            Las secciones de datos se muestran igual.</span>
-          <button class="btn sec" id="btnPedir" style="margin-left:12px"
-            >Pedir que se redacte</button></div>`;
-    $('#cuerpo').innerHTML = cabecera + aviso + window.renderFichaV3(d.ficha);
+    /* La cabecera va DENTRO de la ficha, no en una tarjeta de la app encima.
+     * Fuera traía la tipografía de la app --dos familias en la misma pantalla,
+     * lo primero que se ve-- y la fecha en ISO. Se la pasamos a la plantilla,
+     * que la pinta con su propio estilo y con la fecha ya legible. */
+    const fecha = (window.fichaV3Utils || {}).fecha || (s => String(s||''));
+    const ficha = Object.assign({}, d.ficha, {
+      _cabecera_version: r.generada_en
+        ? `Ficha redactada el ${fecha(r.generada_en)} · `
+          + `${r.version_prompt || ''} · por ${r.generada_por || ''}`
+        : 'Todavía no hay ficha redactada para este realtor. '
+          + 'Las secciones de datos se muestran igual.',
+      _aviso_datos: r.desactualizada
+        ? 'Hay datos nuevos: ficha pendiente de actualizar. Se sigue mostrando'
+          + ` la del ${fecha(r.generada_en)}.`
+        : '',
+      _boton_pedir: r.generada_en ? 'Pedir actualización'
+                                  : 'Pedir que se redacte',
+    });
+    $('#cuerpo').innerHTML = window.renderFichaV3(ficha);
     const bp = $('#btnPedir');
     if(bp) bp.onclick = async () => {
       bp.disabled = true; bp.textContent = 'pidiendo…';
@@ -734,14 +829,17 @@ async function vFichaV3(){
         .then(() => { bc.textContent = 'Copiado'; }, () => {});
     };
   }catch(e){
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="tarjeta err">${esc(e.message)}</div>`;
   }
 }
 
 async function vFicha(){
+  const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando la ficha…</div>';
   try{
     const d = await api('/api/ficha?realtor_id=' + encodeURIComponent(SEL.id));
+    if(otraPestana(mia)) return;
     const f = d.fuentes || {};
     $('#cuerpo').innerHTML =
       seccionQuienEs(d.quien_es)
@@ -765,17 +863,21 @@ async function vFicha(){
             `<li>${esc(x)}</li>`).join('')}</ul>
         </div>`;
   }catch(e){
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="tarjeta err">${esc(e.message)}</div>`;
   }
 }
 
 async function vLectura(cual){
+  const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
   try{
     const d = await api('/api/lectura?realtor_id=' + encodeURIComponent(SEL.id));
     LECTURA = d;
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = cual === 'lectura' ? vistaLectura(d) : vistaCalculo(d);
   }catch(e){
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
 }
@@ -1387,9 +1489,11 @@ function cerrarPanel(){
 
 /* ── pestaña Model Match · lo capturado, desde la base ────────────────────── */
 async function vModelMatch(){
+  const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando capturas…</div>';
   try{
     const d = await api('/api/capturas?realtor_id=' + encodeURIComponent(SEL.id));
+    if(otraPestana(mia)) return;
     if(!d.capturas.length){
       $('#cuerpo').innerHTML = `<div class="tarjeta">
         <h2>Model Match</h2>
@@ -1424,6 +1528,7 @@ async function vModelMatch(){
     document.querySelectorAll('[data-cap]').forEach(b => b.onclick = () =>
       abrirPanel(+b.dataset.cap, +b.dataset.blo));
   }catch(e){
+    if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
   }
 }
@@ -1808,10 +1913,18 @@ async function guardar(){
   }
 }
 
+/* La biblioteca de geografías del panel de captura.
+ *
+ * `#biblio` puede haber desaparecido antes de que conteste `/api/geografias`:
+ * la vista se repinta entera al cambiar de pestaña y el `await` sigue vivo.
+ * Sin la guarda salta `Cannot set properties of null` y --lo que importa-- se
+ * corta lo que venía después. Se sale en silencio a propósito: no hay nada que
+ * avisar, la pantalla que pedía este dato ya no está. */
 async function cargarBiblio(){
   try{
     const d = await api('/api/geografias');
     GEO = d.geografias;
+    if(!$('#biblio')) return;
     $('#biblio').innerHTML = GEO.length
       ? `<div class="tbl-scroll"><table class="piv"><thead><tr>
           <th class="lbl">Geografía</th><th>Nivel</th><th>Realtors</th>
@@ -1822,10 +1935,19 @@ async function cargarBiblio(){
           <td class="totcol">${g.capturas}</td></tr>`).join('') +
         '</tbody></table></div>'
       : '<span class="badge sin-evaluar"><i>▣</i>Todavía no hay ninguna geografía capturada</span>';
-  }catch(e){ $('#biblio').innerHTML = `<div class="avi">${esc(e.message)}</div>` }
+  }catch(e){
+    if($('#biblio')) $('#biblio').innerHTML = `<div class="avi">${esc(e.message)}</div>`;
+  }
 }
 
 /* ── arranque ─────────────────────────────────────────────────────────── */
+/* El observador que etiqueta las tablas. Sobre `#detalle` y no sobre
+ * `#cuerpo`, porque `#cuerpo` lo crea la vista del realtor y todavía no
+ * existe; y sobre el documento entero tampoco, para no mirar la lista de la
+ * izquierda en cada tecla del buscador. */
+new MutationObserver(() => etiquetarTablas($('#detalle')))
+  .observe($('#detalle'), {childList: true, subtree: true});
+
 $('#velo').onclick = cerrarPanel;
 document.addEventListener('keydown', e => { if(e.key === 'Escape') cerrarPanel() });
 let t = null;

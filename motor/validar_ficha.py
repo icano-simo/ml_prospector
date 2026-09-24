@@ -165,8 +165,18 @@ def _problema(seccion, motivo, detalle=None):
     return {"seccion": seccion, "motivo": motivo, "detalle": detalle}
 
 
-def _revisar_frase(seccion, frase, indice, *, es_mensaje=False):
-    """Las comprobaciones que no dependen del paquete."""
+def _revisar_frase(seccion, frase, indice, *, es_mensaje=False,
+                   es_cita=False):
+    """Las comprobaciones que no dependen del paquete.
+
+    `es_cita` apaga las reglas de RESPA y de origen. Una cita literal son LAS
+    PALABRAS DEL REALTOR: si ella escribió «I met her through a Lender Referral
+    partner», eso es contexto y se puede mostrar. Lo que RESPA prohíbe es que
+    NOSOTROS lo usemos como gancho, y eso se mira en el mensaje.
+
+    Rechazar la cita era rechazar el hecho por cómo suena, y el efecto es que
+    la ficha esconde justo lo que el BD tiene que saber antes de llamar.
+    """
     problemas = []
     texto = (frase or {}).get("texto") or (frase or {}).get("texto_literal") or ""
     plano = _plano(texto)
@@ -184,13 +194,14 @@ def _revisar_frase(seccion, frase, indice, *, es_mensaje=False):
                 "«Cash» en Model Match es «sin loan registrado». Va «figura "
                 "como cash»."))
 
-    for r in _RESPA:
-        if _plano(r) in plano:
-            problemas.append(_problema(
-                seccion, "usa como gancho que un lender le refiere clientes",
-                "RESPA §8: es contexto, nunca gancho. Dice «%s»" % r))
-
-    if es_mensaje:
+    # RESPA y origen: SOLO en el mensaje, que es lo que le llega a ella. En una
+    # cita literal son sus palabras, y en el resto de la ficha son contexto.
+    if es_mensaje and not es_cita:
+        for r in _RESPA:
+            if _plano(r) in plano:
+                problemas.append(_problema(
+                    seccion, "usa como gancho que un lender le refiere clientes",
+                    "RESPA §8: es contexto, nunca gancho. Dice «%s»" % r))
         for o in _ORIGEN:
             if re.search(r"\b%s\b" % re.escape(o), plano):
                 problemas.append(_problema(
@@ -229,7 +240,7 @@ def _revisar_evidencias(seccion, frase, por_id):
 
 def _revisar_cita(seccion, cita, por_id):
     """Una cita literal tiene que estar DENTRO del post que dice citar."""
-    problemas = _revisar_frase(seccion, cita, 0)
+    problemas = _revisar_frase(seccion, cita, 0, es_cita=True)
     citados = list((cita or {}).get("evidencias") or [])
     if not citados:
         return problemas + [_problema(seccion, "cita sin evidencias")]

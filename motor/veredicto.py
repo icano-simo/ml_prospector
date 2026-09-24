@@ -44,6 +44,7 @@ from dataclasses import dataclass, field
 
 from captura.transacciones import DIAS_CASH_PROVISIONAL as DIAS_PROVISIONALES
 from captura.transacciones import resumen as _resumen_tx
+from motor.fechas import fecha_legible
 from captura.trampas import (
     TrampaDetectada,
     es_de_la_casa,
@@ -189,8 +190,9 @@ def puede_contactarse(perfil: dict | None, *,
                      "todavía no recibió sus datos de préstamo, y hay que "
                      "volver a capturar Transactions después del %s."
                      % (_operaciones(len(pendientes)), DIAS_PROVISIONALES,
-                        max(p.get("recapturar_despues_de") or ""
-                            for p in pendientes) or "cierre + 35 días"))
+                        fecha_legible(
+                            max(p.get("recapturar_despues_de") or ""
+                                for p in pendientes) or "cierre + 35 días")))
 
         # NO SE PUDO LEER ENTERA -> PENDIENTE, y no hay `ok` que valga.
         #

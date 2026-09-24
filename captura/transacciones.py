@@ -659,6 +659,66 @@ def crudo_redactado(texto: str) -> str:
     return "\n".join(salida) + "\n"
 
 
+def nombre_que_manda(celdas_por_fila, *, propuesto: str | None = None,
+                     umbral: float = 0.9) -> tuple[str | None, str]:
+    """Qué nombre se usa para decidir el lado, y por qué.
+
+    El lado sale de en qué columna de agente aparece su nombre, así que un
+    nombre que no calza deja TODAS las operaciones sin lado. Pasó: la base dice
+    «XOCHIL ESCOBAR» y Model Match «Xochil Wendy Escobar», y sus 37 operaciones
+    quedaron sin lado -- sin que nada fallara, porque «sin lado» es un estado
+    legítimo.
+
+    El que manda es el de la CAPTURA (`parseado.perfil.nombre` del Overview),
+    porque al capturar se confirmó que es la misma persona. El del libro no se
+    usa para esto nunca: es un volcado, viene en mayúsculas y sin el segundo
+    nombre.
+
+    Respaldo si ni ese calza: el nombre que aparece como Buyer o Listing Agent
+    en el 90 % o más de las filas. Es él: en su propia tabla de transacciones,
+    el agente que sale en casi todas es el dueño de la tabla.
+
+    Devuelve `(nombre, motivo)`. El motivo se muestra: si el respaldo eligió,
+    hay que poder ver cuál eligió y con qué respaldo.
+    """
+    filas = [f for f in celdas_por_fila if len(f) == len(COLUMNAS)]
+    if not filas:
+        return propuesto, "no hay filas completas de las que deducirlo"
+
+    def _cuantas_con(nombre):
+        n = 0
+        for f in filas:
+            d = dict(zip(COLUMNAS, f))
+            if (_nombre_igual(_texto(d.get("agente_comprador")), nombre)
+                    or _nombre_igual(_texto(d.get("agente_listing")), nombre)
+                    or _nombre_igual(_texto(d.get("agente_colisting")), nombre)):
+                n += 1
+        return n
+
+    if propuesto and _cuantas_con(propuesto) > 0:
+        return propuesto, "el nombre de la captura de Model Match"
+
+    # El respaldo: el agente que sale en casi todas las filas.
+    cuenta: dict = {}
+    for f in filas:
+        d = dict(zip(COLUMNAS, f))
+        for campo in ("agente_comprador", "agente_listing"):
+            v = _texto(d.get(campo))
+            if v:
+                cuenta[v] = cuenta.get(v, 0) + 1
+    if not cuenta:
+        return propuesto, "las columnas de agente vienen vacías"
+    nombre, n = max(cuenta.items(), key=lambda kv: kv[1])
+    if n / float(len(filas)) >= umbral:
+        return nombre, ("«%s» no aparece en ninguna fila; se usó «%s», que "
+                        "sale como agente en %d de %d operaciones"
+                        % (propuesto or "—", nombre, n, len(filas)))
+    return propuesto, ("«%s» no aparece en ninguna fila y ningún agente sale "
+                       "en el %d %% de ellas (el que más, «%s», en %d de %d)"
+                       % (propuesto or "—", int(umbral * 100), nombre, n,
+                          len(filas)))
+
+
 def parsear_transacciones(crudo: str, *, realtor: str | None = None,
                           capturado_en: str | None = None) -> dict:
     """La pestaña pegada -> las operaciones, con su control de completitud.
@@ -667,10 +727,16 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
     None y se declara, porque el lado sale de en que columna aparece su nombre
     y no hay otra forma de saberlo.
     """
+    crudas = _celdas_por_fila(crudo or "")
+    # QUÉ NOMBRE decide el lado. Ver `nombre_que_manda`: el de la base no se
+    # usa nunca para esto, y si el de la captura no calza hay un respaldo que
+    # se declara en el aviso.
+    realtor, motivo_del_nombre = nombre_que_manda(crudas, propuesto=realtor)
+
     filas: list[dict] = []
     descartadas = 0
     no_leidas: list[dict] = []
-    for celdas in _celdas_por_fila(crudo or ""):
+    for celdas in crudas:
         if not _fecha(celdas[0] if celdas else ""):
             # El pie de paginacion no es una fila descartada: es el pie. Si se
             # contara, `lineas_descartadas` --que existe para avisar de que
@@ -735,6 +801,8 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
 
     return {
         "version_parser": VERSION_PARSER_TX,
+        "nombre_usado": realtor,
+        "por_que_ese_nombre": motivo_del_nombre,
         "filas": filas,
         "leidas": len(filas),
         "no_leidas": no_leidas,
