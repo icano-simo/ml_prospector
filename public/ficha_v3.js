@@ -420,6 +420,11 @@
           ((l.n != null ? l.n : l.buys) === 1 ? ' buy' : ' buys') +
           '</span></div>';
       }).join('') + '</div>' +
+      /* Sobre cuántas financiadas se sabe el originador. Solo aparece cuando
+         falta alguno: repetir que no falta nada es ruido en la única caja
+         donde el BD busca un nombre. */
+      (p.cobertura_lender
+        ? '<p class="muestra">' + esc(p.cobertura_lender) + '</p>' : '') +
       (ok(d, 'produccion') && p.lo_que_significa
         ? '<p class="lectura"><b>Lo que significa:</b> ' +
           esc(p.lo_que_significa.texto) + '</p>' : '') +
