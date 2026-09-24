@@ -38,6 +38,11 @@ from captura.parser_mm import (  # noqa: E402
     parsear_perfil,
     unir_perfiles,
 )
+from captura.transacciones import (  # noqa: E402
+    NUNCA_SE_GUARDAN,
+    parsear_transacciones,
+)
+from captura.transacciones import resumen as resumen_de_transacciones  # noqa: E402
 from captura.protocolo import (  # noqa: E402
     Bloque,
     ProtocoloInvalido,
@@ -399,9 +404,76 @@ def _contactos_de(perfil: dict, realtor_id: str, lote: str,
 
     agregar("telefono", c.get("telefono_oficina_e164")
             or c.get("telefono_oficina"))
+    # `Direct:` es la linea del agente, no la centralita del brokerage. Se
+    # perdia entera: el parser solo miraba `Office:`, asi que un perfil que
+    # solo trae `Direct` quedaba sin telefono ninguno.
+    #
+    # Va como otra fila de canal `telefono` y no como un canal nuevo: el check
+    # de `pacs.contactos` tiene cinco canales y agregar uno es una migracion
+    # para una distincion que ya queda guardada en `parseado.contacto`, con sus
+    # dos campos separados.
+    agregar("telefono", c.get("telefono_directo_e164")
+            or c.get("telefono_directo"))
     agregar("oficina", c.get("oficina"))
     agregar("direccion", c.get("direccion"))
     return filas
+
+
+#: Las columnas de `pacs.transacciones`, una por una. Lo que no este aqui NO se
+#: escribe, que es lo contrario de mandar el dict entero: una lista blanca no
+#: deja pasar el campo que nadie penso en prohibir.
+_COLUMNAS_TX = (
+    "hash_fila", "fecha", "lado", "ciudad", "estado", "zip",
+    "precio", "lista", "prestamo", "enganche",
+    "proposito", "tipo", "tasa", "plazo",
+    "estado_prestamo", "dias_desde_cierre", "recapturar_despues_de",
+    "lo_nombre", "lo_nmls", "empleador", "lender", "lender_nmls", "broker",
+    "title", "constructor", "agente_contraparte", "de_la_casa", "aviso_suma",
+)
+
+#: Lo que no puede llegar a la base NUNCA. El parser ya no lo devuelve y la
+#: lista blanca de arriba ya lo dejaria fuera; esto es la tercera vuelta, y
+#: revienta ruidosamente si las dos primeras se rompen a la vez.
+#:
+#: Es redundante a proposito. La vez que una sustitucion no se aplico, las
+#: columnas sensibles se cargaron igual porque la unica guarda era la que
+#: fallo, y el typechecker no podia verlo.
+_JAMAS_EN_TX = frozenset(
+    tuple(NUNCA_SE_GUARDAN)
+    + ("buyers", "sellers", "compradores", "vendedores", "direccion", "calle"))
+
+
+def _filas_de_transacciones(parseado: dict, realtor_id: str, lote: str,
+                            ahora: str) -> list[dict]:
+    """Las operaciones -> filas de `pacs.transacciones`. Sin nombres de partes.
+
+    Revienta --no filtra en silencio-- si aparece un campo prohibido: un filtro
+    callado deja el mismo bug vivo para el campo siguiente.
+    """
+    filas: list[dict] = []
+    for f in parseado.get("filas") or []:
+        prohibidos = sorted(set(f) & _JAMAS_EN_TX)
+        if prohibidos:
+            raise ValueError(
+                "el parser de Transactions devolvió %s, que no puede llegar a "
+                "la base (ECOA Regulation B). No se escribe ninguna operación."
+                % ", ".join(prohibidos))
+        fila = {k: f.get(k) for k in _COLUMNAS_TX}
+        fila.update({
+            "realtor_id": realtor_id, "upload_batch_id": lote,
+            "uploaded_at": ahora, "capturado_en": ahora,
+            "version_parser": parseado.get("version_parser"),
+        })
+        filas.append(fila)
+    # Dos filas idénticas dentro del mismo pegado violan el unique del lote y
+    # tirarían las N. Se deduplican aquí, y se dice cuántas.
+    vistas, unicas = set(), []
+    for f in filas:
+        if f["hash_fila"] in vistas:
+            continue
+        vistas.add(f["hash_fila"])
+        unicas.append(f)
+    return unicas
 
 
 #: Las tres metricas con las que se verifica una geografia de un vistazo.
@@ -431,6 +503,15 @@ def _en_orden(filas: list[dict]) -> list[dict]:
     return sorted(filas, key=lambda f: (
         _ORDEN_SECCION.get(f["parseado"].get("seccion"), 9),
         f["parseado"].get("orden") or 0))
+
+
+def _resumen_tx_del_perfil(perfil_unido: dict) -> dict | None:
+    """El resumen de Transactions del perfil unido, o `None` si no se pegó."""
+    tx = (perfil_unido or {}).get("transacciones")
+    if not isinstance(tx, dict) or not tx.get("filas"):
+        return None
+    return {"leidas": tx.get("leidas"), "completa": tx.get("completa"),
+            "aviso": tx.get("aviso"), **resumen_de_transacciones(tx)}
 
 
 def resumen_de_captura(filas: list[dict], perfil_unido: dict,
@@ -508,9 +589,23 @@ def resumen_de_captura(filas: list[dict], perfil_unido: dict,
                       or (filas[0]["parseado"].get("realtor_id")
                           if filas else None),
         "fallos": perfil_unido.get("fallos") or [],
+        # El grano de la operacion, cuando esta. `None` --y no un resumen en
+        # cero-- cuando la pestaña no se pego: la ficha tiene que poder decir
+        # «falta Transactions» y no «0 compras cash», que son cosas opuestas.
+        "transacciones": _resumen_tx_del_perfil(perfil_unido),
         "perfil": {
             "nombre": perfil_unido.get("nombre"),
             "buyer_units": perfil_unido.get("buyer_units"),
+            "telefono_directo": (perfil_unido.get("contacto")
+                                 or {}).get("telefono_directo"),
+            # Para poder decir «5 de 19 sin identificar» sin restar en la
+            # pantalla: el numerador viaja, y la resta solo se muestra como lo
+            # que falta por saber, nunca como cash.
+            "compras_con_originador": sum(
+                o.get("unidades") or 0
+                for o in (perfil_unido.get("orig_buyer") or [])) or None,
+            "los_buyer": perfil_unido.get("los_buyer"),
+            "los_seller": perfil_unido.get("los_seller"),
             "tpo_pct": perfil_unido.get("tpo_pct"),
             "lenders": len(perfil_unido.get("tabla_lenders") or []),
             "loan_mix": (perfil_unido.get("loan_mix_buyer") or {}).get("filas"),
@@ -744,11 +839,25 @@ def guardar(d: dict) -> tuple[int, dict]:
                 d = {**d, "sin_originadores_declarado": True}
             if c.tipo == "lenders" and c.estado == "vacio_declarado":
                 d = {**d, "sin_lenders_declarado": True}
+            # La caja de Transactions viaja por el mismo sitio que las demas:
+            # un campo del payload que el resto del guardado ya sabe leer.
+            if c.tipo == "transacciones" and c.estado == "leido":
+                d = {**d, "transacciones": c.texto}
+            if c.tipo == "transacciones" and c.estado == "vacio_declarado":
+                d = {**d, "sin_transacciones_declarado": True}
     else:
         try:
             bloques = etiquetar_por_posicion(ms, condados)
         except ProtocoloInvalido as exc:
             return 400, {"error": str(exc), "condados": condados}
+
+    # La ficha se lee ACA y no mas abajo porque el parser de Transactions la
+    # necesita: el LADO de cada operacion sale de en que columna de agente
+    # aparece su nombre, y sin el nombre no hay lado que derivar.
+    _c_r, fichas, _ = leer(
+        "realtors", "?select=nombre_completo,email_principal,brokerage,estado"
+                    "&id=eq.%s" % urllib.parse.quote(realtor_id))
+    ficha_del_realtor = (fichas or [{}])[0]
 
     ahora = dt.datetime.now(dt.timezone.utc).isoformat()
     lote = str(uuid.uuid4())
@@ -868,6 +977,35 @@ def guardar(d: dict) -> tuple[int, dict]:
         agregar("lenders", d["lenders"], alcance="perfil",
                 extra={"perfil": pl})
 
+    # ── LA PESTAÑA TRANSACTIONS ─────────────────────────────────────────────
+    #
+    # Va con `alcance="perfil"` igual que Originators y Lenders: es un hecho
+    # del agente, no de un mercado. Lo que la distingue es `seccion`.
+    #
+    # Y el parseado entra como un FRAGMENTO DE PERFIL --`{"transacciones": ...}`
+    # -- porque `unir_perfiles` es lo que lee la re-evaluacion, y solo mira
+    # `parseado.perfil`. Guardarlo en otra llave del jsonb lo dejaria en la
+    # base y fuera del motor, que es la forma en que este proyecto ya perdio
+    # Instagram durante semanas.
+    tx_parseado = None
+    texto_tx = (d.get("transacciones") or "").strip()
+    if texto_tx:
+        nombre_del_realtor = ficha_del_realtor.get("nombre_completo")
+        tx_parseado, _fallo_tx = _parsear(
+            lambda t: parsear_transacciones(t, realtor=nombre_del_realtor,
+                                            capturado_en=ahora),
+            texto_tx, "Transactions")
+        agregar("transacciones", texto_tx, alcance="perfil",
+                extra={"perfil": {"transacciones": tx_parseado}})
+        if isinstance(tx_parseado, dict) and tx_parseado.get("aviso"):
+            avisos.append("Transactions · " + tx_parseado["aviso"])
+        if isinstance(tx_parseado, dict) and tx_parseado.get("sin_lado"):
+            avisos.append(
+                "Transactions · %d operaciones sin lado: el nombre del agente "
+                "no coincide con ninguna columna de agente. Se guardan igual y "
+                "no cuentan ni como compra ni como venta."
+                % tx_parseado["sin_lado"])
+
     # ── lo que estaba en el texto y no llego al dict ─────────────────────────
     # Un `[]` dice dos cosas a la vez: "este agente no trabaja con nadie" y "el
     # parser no supo leerlo". La primera es un dato y la segunda es un error, y
@@ -917,6 +1055,28 @@ def guardar(d: dict) -> tuple[int, dict]:
             "queda en `ok` con 0 operaciones con la casa, no en pendiente.")
     if d.get("sin_lenders_declarado"):
         perfil_unido["sin_lenders_declarado"] = True
+
+    # ── LA FICHA DICE «FALTA TRANSACTIONS», Y NO CALCULA CASH POR DIFERENCIA ─
+    #
+    # Sin la pestaña, las compras sin originador identificado son una AUSENCIA
+    # y no un dato: pueden ser cash o pueden ser un originador que Model Match
+    # no muestra. Restar «compras - compras con originador» y llamarlo cash es
+    # inventarse una categoria que nadie midio y que sale con la misma cara que
+    # una medida.
+    if not texto_tx and not d.get("sin_transacciones_declarado"):
+        sin_orig = None
+        total_compras = perfil_unido.get("buyer_units")
+        con_orig = sum(o.get("unidades") or 0
+                       for o in (perfil_unido.get("orig_buyer") or []))
+        if total_compras and con_orig and total_compras > con_orig:
+            sin_orig = total_compras - con_orig
+        avisos.append(
+            "falta Transactions%s. Sin esa pestaña no se sabe cuáles de sus "
+            "compras fueron cash y cuáles tienen un originador que Model Match "
+            "no muestra, y eso NO se calcula por diferencia."
+            % ("" if sin_orig is None
+               else " · %g de %g compras sin originador identificado"
+                    % (sin_orig, total_compras)))
 
     for f in perfil_unido.get("fallos") or []:
         avisos.append(
@@ -979,10 +1139,6 @@ def guardar(d: dict) -> tuple[int, dict]:
     # colgada de Fulano sin que falle nada. Es peor que una captura huerfana:
     # una huerfana no sirve para nada y se nota, esta sirve para lo que no es.
     # El Overview trae el nombre y el email del agente, asi que hay con que.
-    _c_r, fichas, _ = leer(
-        "realtors", "?select=nombre_completo,email_principal,brokerage,estado"
-                    "&id=eq.%s" % urllib.parse.quote(realtor_id))
-    ficha_del_realtor = (fichas or [{}])[0]
     pertenece = comprobar(perfil_unido, ficha_del_realtor)
     if pertenece["veredicto"] == "discrepa":
         avisos.append(
@@ -1017,6 +1173,29 @@ def guardar(d: dict) -> tuple[int, dict]:
     cod, datos, _ = escribir("capturas_modelmatch", filas, devolver=False)
     if cod >= 400:
         return cod, {"error": "no se guardo", "detalle": datos}
+
+    # ── EL GRANO DE LA OPERACION ─────────────────────────────────────────────
+    # Va DESPUES del crudo y no puede tumbar la captura: el texto ya esta
+    # guardado y las filas se re-derivan de el. Al reves no.
+    transacciones_escritas = 0
+    if isinstance(tx_parseado, dict) and tx_parseado.get("filas"):
+        try:
+            filas_tx = _filas_de_transacciones(tx_parseado, realtor_id, lote,
+                                               ahora)
+        except ValueError as exc:
+            filas_tx = []
+            avisos.append("FALLO ECOA · " + str(exc))
+        if filas_tx:
+            cod_t, det_t, _ = escribir("transacciones", filas_tx,
+                                       devolver=False)
+            if cod_t >= 400:
+                avisos.append(
+                    "el texto de Transactions se guardó, pero las %d "
+                    "operaciones no entraron en pacs.transacciones: %s. El "
+                    "veredicto sigue leyéndolas del jsonb de la captura."
+                    % (len(filas_tx), str(det_t)[:200]))
+            else:
+                transacciones_escritas = len(filas_tx)
 
     # ── LA BIBLIOTECA DE MERCADOS ────────────────────────────────────────────
     # Va DESPUES del crudo, por lo mismo que los contactos: si falla, el
@@ -1120,6 +1299,11 @@ def guardar(d: dict) -> tuple[int, dict]:
 
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
                  "reevaluacion": reevaluacion,
+                 "transacciones": (None if not tx_parseado else {
+                     "leidas": tx_parseado.get("leidas"),
+                     "escritas": transacciones_escritas,
+                     "completa": tx_parseado.get("completa"),
+                     "resumen": resumen_de_transacciones(tx_parseado)}),
                  "condados": condados, "avisos": avisos, "volumenes": vols,
                  "estado": estado, "hash_volcado": huella,
                  "mercados_promovidos": promovidos,

@@ -769,6 +769,64 @@ const dinero = v => v == null ? '—'
   : '$' + Math.round(v/1e3) + 'K';
 const pct = v => v == null ? '—' : v.toFixed(1).replace('.', ',') + '%';
 
+/* El grano de la operación en la ficha.
+ *
+ * Cuando la pestaña no está, la tarjeta dice QUÉ FALTA y no un cero. Las
+ * compras sin originador identificado son una ausencia, no un dato: con
+ * Transactions se ve cuáles fueron cash y cuáles tienen un originador que
+ * Model Match no muestra, y restar y llamarlo cash inventa una categoría que
+ * nadie midió. */
+function tarjetaTransacciones(t, p){
+  if(!t){
+    const sinOrig = (p && p.buyer_units && p.compras_con_originador
+      && p.buyer_units > p.compras_con_originador)
+      ? ` · ${p.buyer_units - p.compras_con_originador} de ${p.buyer_units} compras sin originador identificado`
+      : '';
+    return `<div class="tarjeta">
+      <div class="seccion">Operaciones</div>
+      <p class="sub" style="margin-top:8px"><b>Falta Transactions</b>${esc(sinOrig)}.
+        Sin esa pestaña no se sabe cuáles de sus compras fueron cash y cuáles
+        tienen un originador que Model Match no muestra, y eso no se calcula
+        por diferencia.</p></div>`;
+  }
+  const c = t.compras || {}, v = t.ventas || {};
+  const mix = Object.entries(t.loan_mix_compra || {})
+    .map(([k, n]) => `<li>${esc(k)} · <b>${n}</b></li>`).join('');
+  const lend = Object.entries(t.lenders_compra || {})
+    .map(([k, n]) => `<li>${esc(k)} · <b>${n}</b></li>`).join('');
+  const zips = Object.entries(t.zips_de_compra || {})
+    .map(([k, n]) => `${esc(k)} (${n})`).join(' · ');
+  const pend = (t.pendientes_de_prestamo || []);
+  return `<div class="tarjeta">
+    <div class="seccion">Operaciones · una fila por cierre</div>
+    <div class="grid2" style="margin-top:12px">
+      <div><span class="pista">compras</span><br>
+        <span class="kpi chico">${c.total ?? 0}</span></div>
+      <div><span class="pista">ventas</span><br>
+        <span class="kpi chico">${v.total ?? 0}</span></div>
+      <div><span class="pista">compras financiadas</span><br>
+        <span class="kpi chico">${c.financiada ?? 0}</span></div>
+      <div><span class="pista">cash según Model Match</span><br>
+        <span class="kpi chico">${c.cash_segun_mm ?? 0}</span></div>
+    </div>
+    ${t.completa === false ? `<p class="sub" style="margin-top:10px">
+      <b>Faltan páginas</b>: ${esc(t.aviso || '')}</p>` : ''}
+    ${t.completa === null ? `<p class="sub" style="margin-top:10px">
+      Sin el pie «1 - 25 of 25» no se puede confirmar que estén todas.</p>` : ''}
+    ${pend.length ? `<p class="sub" style="margin-top:10px">
+      <b>${pend.length}</b> sin datos de préstamo todavía: Model Match los
+      recibe entre tres y cinco semanas después del cierre. Volvé a capturar
+      Transactions después del ${esc(pend.map(x => x.recapturar_despues_de)
+        .filter(Boolean).sort().pop() || 'cierre + 35 días')}.</p>` : ''}
+    ${mix ? `<div class="seccion" style="margin-top:14px">Loan mix de compra</div>
+      <ul class="lista">${mix}</ul>` : ''}
+    ${lend ? `<div class="seccion" style="margin-top:14px">Lenders del lado comprador</div>
+      <ul class="lista">${lend}</ul>` : ''}
+    ${zips ? `<div class="seccion" style="margin-top:14px">Dónde compra</div>
+      <p class="sub">${zips}</p>` : ''}
+  </div>`;
+}
+
 function pintarResumen(r){
   if(!r) return '';
 
@@ -904,6 +962,7 @@ function pintarResumen(r){
       <div class="seccion">Originadores · reparto por unidades</div>
       <ul class="lista" style="margin-top:10px">${orig}</ul>
     </div>
+    ${tarjetaTransacciones(r.transacciones, p)}
     <div class="tarjeta">
       <div class="seccion">Perfil</div>
       <div class="grid2" style="margin-top:12px">
@@ -1145,7 +1204,8 @@ function pintarCajas(d){
   CAJAS = [{clave:'ms_estado', tipo:'estado', etiqueta: estado}]
     .concat(CONDADOS.map((c,i) => ({clave:'ms_'+i, tipo:'condado', etiqueta:c})))
     .concat([{clave:'orig', tipo:'originators', etiqueta:'Originators (Buyer)'},
-             {clave:'lend', tipo:'lenders', etiqueta:'Lenders'}]);
+             {clave:'lend', tipo:'lenders', etiqueta:'Lenders'},
+             {clave:'trx', tipo:'transacciones', etiqueta:'Transactions'}]);
 
   $('#cajas').innerHTML = CAJAS.map(c => {
     const esGeo = c.tipo === 'estado' || c.tipo === 'condado';
@@ -1155,13 +1215,22 @@ function pintarCajas(d){
     /* La casilla solo en Originators y Lenders: son las dos secciones donde
        «no hay» y «no miré» son cosas distintas y el veredicto las trata
        distinto. En una geografía, vacío es vacío. */
+    const QUE = {originators: 'originadores', lenders: 'lenders',
+                 transacciones: 'operaciones'};
     const casilla = esGeo ? '' : `
       <label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:400">
         <input type="checkbox" id="vd_${c.clave}" style="width:auto;margin:0">
-        <span>Model Match no muestra ${c.tipo === 'originators'
-          ? 'originadores' : 'lenders'} para este agente</span></label>`;
+        <span>Model Match no muestra ${QUE[c.tipo] || 'esta sección'} para este agente</span></label>`;
+    /* Transactions es la única con una instrucción propia, porque es la única
+       donde pegar de menos se ve igual que pegar entero: 25 filas de 137 dan
+       un loan mix con la misma cara que el de verdad. El pie es lo que lo
+       delata, así que hay que pedirlo. */
     const nota = esGeo ? `<span class="pista">puede quedar vacía: se guarda
-      como «Model Match no muestra este condado»</span>` : '';
+      como «Model Match no muestra este condado»</span>`
+      : (c.tipo === 'transacciones' ? `<span class="pista">pegá la tabla
+        ENTERA, con el pie que dice «1 - 25 of 25». Sin ese pie no se puede
+        saber si faltan páginas, y con páginas de menos no se calcula nada.
+        Los nombres de compradores y vendedores no se guardan.</span>` : '');
     return `<div class="tarjeta">
       <div class="seccion">${titulo}</div>
       ${nota}
@@ -1170,6 +1239,31 @@ function pintarCajas(d){
       ${casilla}
     </div>`;
   }).join('');
+}
+
+/* Lo que Transactions aporta, en la confirmación del guardado.
+ *
+ * «Cash» NO se escribe como «pagó en efectivo»: Model Match dice que considera
+ * cash una operación hasta que recibe los datos del préstamo, y eso tarda de
+ * tres a cinco semanas. Por eso las de menos de 35 días salen en su propia
+ * línea, con la fecha a partir de la cual vale la pena volver a capturar. */
+function resumenTx(t){
+  if(!t || !t.resumen) return '';
+  const r = t.resumen, c = r.compras || {};
+  const pend = (r.pendientes_de_prestamo || []);
+  const completa = t.completa === false
+    ? ' <b>faltan páginas</b>' : (t.completa === null ? ' (sin pie: no se puede confirmar que estén todas)' : '');
+  const mix = Object.entries(r.loan_mix_compra || {})
+    .map(([k, v]) => esc(k) + ' ' + v).join(' · ');
+  const linPend = pend.length ? `<br><b>${pend.length}</b> ${pend.length === 1
+    ? 'operación todavía sin datos de préstamo en Model Match' :
+    'operaciones todavía sin datos de préstamo en Model Match'}: volvé a
+    capturar Transactions después del ${esc(pend.map(p =>
+      p.recapturar_despues_de).filter(Boolean).sort().pop() || 'cierre + 35 días')}` : '';
+  return `<br>Transactions: <span class="num">${t.leidas}</span> operaciones
+    leídas${completa} · <span class="num">${c.financiada ?? 0}</span> compras
+    financiadas y <span class="num">${c.cash_segun_mm ?? 0}</span> cash según
+    Model Match${mix ? '<br>loan mix: ' + mix : ''}${linPend}`;
 }
 
 /* ── paso 3 · guardar ──────────────────────────────────────────────────── */
@@ -1202,6 +1296,7 @@ async function guardar(){
     const cond = (d.condados||[]).join(' · ');
     const cont = (d.contactos||[]).map(c =>
       c.canal + ': ' + c.valor + (c.nuevo ? '' : ' (ya estaba)')).join(' · ');
+    const tx = d.transacciones ? resumenTx(d.transacciones) : '';
     $('#msgs').innerHTML = `<div class="ok">
       <b><span class="num">${d.bloques}</span> bloques guardados</b> ·
       <span class="num">${d.mercados_promovidos ?? 0}</span> promovidos a la
@@ -1210,7 +1305,8 @@ async function guardar(){
       ${cond ? '<br>condados: ' + esc(cond) : ''}
       ${cont ? `<br>contactos: <span class="num">${d.contactos_nuevos ?? 0}</span>
         nuevos, <span class="num">${d.contactos_ya_estaban ?? 0}</span> ya estaban
-        · ${esc(cont)}` : ''}</div>${avisos}`;
+        · ${esc(cont)}` : ''}
+      ${tx}</div>${avisos}`;
     /* La confirmación va DEBAJO de la caja y no se borra: es lo que se mira
        antes de pasar al realtor siguiente. */
     $('#confirmacion').innerHTML = pintarCajasGuardadas(d)

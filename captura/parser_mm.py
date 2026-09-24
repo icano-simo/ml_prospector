@@ -708,6 +708,16 @@ def _loan_mix_buyer(txt: str, buyer_units: float | None) -> dict:
 _RE_TELEFONO_OFICINA = re.compile(r"^[ \t]*Office:[ \t]*([+()\d][\d\s().\-]{6,24})",
                                   re.MULTILINE | re.IGNORECASE)
 
+#: `Direct: (312) 555-0134` -- la linea directa del agente, que NO es la de la
+#: oficina. Model Match muestra las dos y el parser solo guardaba `Office:`,
+#: asi que los perfiles que solo traen `Direct` quedaban sin telefono ninguno.
+#:
+#: Van en campos distintos a proposito: llamar a la centralita del brokerage y
+#: llamarle a el son dos cosas, y guardar las dos en el mismo campo borra cual
+#: de las dos se tiene.
+_RE_TELEFONO_DIRECTO = re.compile(r"^[ \t]*Direct:[ \t]*([+()\d][\d\s().\-]{6,24})",
+                                  re.MULTILINE | re.IGNORECASE)
+
 #: `San Ramon CA 94583` -- la linea que ancla la direccion postal.
 _RE_CIUDAD_ESTADO_CP = re.compile(
     r"^[ \t]*([A-Z][A-Za-z.'\- ]{1,40}?)[ \t]+([A-Z]{2})[ \t]+(\d{5})(?:-\d{4})?[ \t]*$",
@@ -729,17 +739,21 @@ def _contacto(txt: str, lineas: list[str]) -> dict:
     """
     o: dict = {"oficina": None, "calle": None, "ciudad": None,
                "estado_postal": None, "cp": None, "direccion": None,
-               "telefono_oficina": None, "telefono_oficina_e164": None}
+               "telefono_oficina": None, "telefono_oficina_e164": None,
+               "telefono_directo": None, "telefono_directo_e164": None}
 
-    m = _RE_TELEFONO_OFICINA.search(txt)
-    if m:
+    for patron, campo in ((_RE_TELEFONO_OFICINA, "telefono_oficina"),
+                          (_RE_TELEFONO_DIRECTO, "telefono_directo")):
+        m = patron.search(txt)
+        if not m:
+            continue
         crudo = m.group(1).strip()
-        o["telefono_oficina"] = crudo
+        o[campo] = crudo
         digitos = re.sub(r"\D", "", crudo)
         if len(digitos) == 10:
-            o["telefono_oficina_e164"] = "+1" + digitos
+            o[campo + "_e164"] = "+1" + digitos
         elif len(digitos) == 11 and digitos.startswith("1"):
-            o["telefono_oficina_e164"] = "+" + digitos
+            o[campo + "_e164"] = "+" + digitos
 
     m = _RE_CIUDAD_ESTADO_CP.search(txt)
     if not m:
@@ -845,6 +859,15 @@ def parsear_perfil(crudo: str) -> dict:
     sf = re.search(r"(\d+)\s*buy\s*/\s*(\d+)\s*sell", plano, re.IGNORECASE)
     if sf:
         o["sf_buy"], o["sf_sell"] = int(sf.group(1)), int(sf.group(2))
+
+    # `7 buyer · 2 seller LOs` de la cabecera: con cuantos originadores de cada
+    # lado tiene relacion. Es el denominador de la pestaña Originators, y sin
+    # el no se sabe si el reparto que se leyo son todos o los tres primeros.
+    los = re.search(r"(\d+)\s*buyer\D{0,8}?(\d+)\s*seller\s*LOs?", plano,
+                    re.IGNORECASE)
+    if los:
+        o["los_buyer"] = int(los.group(1))
+        o["los_seller"] = int(los.group(2))
     o["buyer_units"] = _n(plano, r"Buyer Units\s*(?:\(i\))?\s*(\d+)")
     o["listing_sold"] = _n(plano, r"(\d+)\s+Sold")
     o["buyer_volume"] = mval(

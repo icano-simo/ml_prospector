@@ -92,6 +92,20 @@ DEL_PERFIL_MM = {"buyside_anualizado": "mm_buyside_anualizado"}
 #: Los `mm_*` que NO se copian de un campo sino que se calculan aqui.
 DERIVADOS_MM = ("mm_share_buy",)
 
+
+def _share_del_grano(perfil: dict | None) -> float | None:
+    """El share contando operaciones de la pestaña Transactions, si la hay."""
+    from captura.transacciones import resumen, share_buy_de_transacciones
+
+    tx = (perfil or {}).get("transacciones")
+    if not isinstance(tx, dict) or not tx.get("filas"):
+        return None
+    # Con paginas de menos no se calcula: 25 filas de 137 dan un share de una
+    # quinta parte del negocio, y sale con la misma cara que el de verdad.
+    if tx.get("faltan_paginas"):
+        return None
+    return share_buy_de_transacciones(resumen(tx))
+
 #: Todos los `mm_*` que este modulo puede producir. `motor.reevaluacion` lo usa
 #: para saber que NO heredar de la evaluacion anterior: un campo de Model Match
 #: que no este aca se arrastraria para siempre desde la `entrada` vieja, y una
@@ -100,16 +114,31 @@ CAMPOS_MM = tuple(DEL_PERFIL_MM.values()) + DERIVADOS_MM
 
 
 def share_del_lado_comprador(perfil: dict | None) -> float | None:
-    """Fraccion de operaciones del lado comprador, segun `Side Focus`.
+    """Fraccion de operaciones del lado comprador. Del grano si lo hay.
 
-    Sale de «3 buy / 6 sell» y de nada mas. `buyer_units` y `listing_sold`
-    cuentan otras cosas con otro denominador, y una segunda derivacion que da
-    un numero parecido pero distinto es peor que no tenerla: cuando las dos no
-    coinciden, nadie sabe cual leyo el motor.
+    Dos fuentes, en orden, y el orden es la regla de siempre: **el grano manda
+    sobre el resumen.**
 
-    Devuelve `None` --no cero-- cuando Side Focus no vino. Sin el dato, la
-    compuerta la decide la bio, que es lo que habia antes.
+    1 · la pestaña Transactions, contando operaciones una por una. El lado sale
+        de en que columna aparece su nombre, asi que es un conteo y no una
+        lectura de un resumen ajeno;
+    2 · `Side Focus` del Overview -- «3 buy / 0 sell».
+
+    Las dos discrepan en las capturas medidas, y no poco: un perfil con Side
+    Focus «3 buy / 0 sell» tiene 9 unidades compradoras y 3 listings vendidos.
+    Son ventanas distintas del mismo negocio, y por eso hay un orden declarado
+    en vez de un promedio.
+
+    `buyer_units` y `listing_sold` NO se usan como tercera fuente: cuentan
+    cosas con otro denominador, y una derivacion que da un numero parecido pero
+    distinto es peor que no tenerla, porque nadie sabe cual leyo el motor.
+
+    Devuelve `None` --no cero-- cuando no hay ninguna de las dos.
     """
+    del_grano = _share_del_grano(perfil)
+    if del_grano is not None:
+        return del_grano
+
     buy = (perfil or {}).get("sf_buy")
     sell = (perfil or {}).get("sf_sell")
     if buy is None or sell is None:
