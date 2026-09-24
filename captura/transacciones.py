@@ -603,6 +603,62 @@ def _fila_es_de_la_casa(d: dict) -> bool:
 # LA PESTAÑA ENTERA
 # ══════════════════════════════════════════════════════════════════════════════
 
+#: Las columnas que NO se guardan en el crudo. Indices sobre `COLUMNAS`.
+#: 2 es la calle, 4 los compradores, 5 los vendedores.
+_A_REDACTAR = ("_compradores", "_vendedores")
+
+REDACTADO = "[redactado]"
+
+
+def crudo_redactado(texto: str) -> str:
+    """El pegado, reconstruido sin calle ni nombres de las partes.
+
+    LA EXCEPCION A «EL CRUDO SE GUARDA SIEMPRE», Y POR QUE
+    -------------------------------------------------------
+    En todo el resto del proyecto el crudo se guarda tal cual, y es lo que
+    permite arreglar el parser y re-derivar sin volver a capturar. Aqui no se
+    puede: el pegado de Transactions trae el nombre del comprador, el del
+    vendedor y la calle de la vivienda de cada operacion, y `texto_crudo` es
+    una columna que se lee, se exporta y se mira.
+
+    De nada sirve que la tabla `pacs.transacciones` no tenga esas columnas si
+    el texto entero queda al lado en otra tabla. La guarda tiene que estar en
+    la ENTRADA, no solo en el destino.
+
+    Que se conserva, y por que se puede re-derivar igual:
+      · todas las demas celdas, en su posicion;
+      · de la direccion, la ciudad, el estado y el ZIP -- se redacta SOLO la
+        calle. Sin ellos un re-parseo perderia el ZIP, que es la respuesta a
+        «donde trabaja» y que la tabla guarda igualmente por decision tomada;
+      · el pie de paginacion, que es lo que dice si estan todas.
+
+    Lo que se pierde de verdad es la capacidad de auditar a mano un nombre
+    contra el volcado. Es el precio, y se paga a proposito: ECOA Regulation B.
+    """
+    filas = _celdas_por_fila(texto or "")
+    salida = []
+    for celdas in filas:
+        if len(celdas) != len(COLUMNAS):
+            # Una fila que no se leyo se redacta ENTERA: no se sabe que celda
+            # es cual, asi que no se sabe cual lleva un nombre.
+            salida.append("\t".join(REDACTADO for _ in celdas))
+            continue
+        c = list(celdas)
+        pos = COLUMNAS.index("direccion")
+        ciudad, estado, zip_ = _ciudad_zip(c[pos])
+        c[pos] = ("%s, %s, %s, %s" % (REDACTADO, ciudad, estado, zip_)
+                  if zip_ else REDACTADO)
+        for campo in _A_REDACTAR:
+            c[COLUMNAS.index(campo)] = REDACTADO
+        salida.append("\t".join(c))
+
+    pag = paginacion(texto or "")
+    if pag.get("pie"):
+        salida.append(_FIN_DE_LA_TABLA)
+        salida.append(pag["pie"])
+    return "\n".join(salida) + "\n"
+
+
 def parsear_transacciones(crudo: str, *, realtor: str | None = None,
                           capturado_en: str | None = None) -> dict:
     """La pestaña pegada -> las operaciones, con su control de completitud.

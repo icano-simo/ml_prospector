@@ -67,6 +67,15 @@ create table if not exists pacs.transacciones (
     -- nueve días y «Cash» de hace un año no son el mismo hecho, y guardarlos
     -- con la misma palabra hace que la ficha afirme que alguien pagó en
     -- efectivo cuando lo único cierto es que todavía no se sabe.
+    -- `no_leido` ES UN ESTADO VALIDO, y tiene que poder guardarse.
+    --
+    -- La primera version del check no lo aceptaba, asi que una sola fila que
+    -- el troceado no supo leer hacia fallar el insert de las 25 y la captura
+    -- entera se quedaba sin operaciones. La fila que hay que poder auditar
+    -- --justamente la que no se leyo-- era la unica que no entraba.
+    --
+    -- Se guarda para auditoria y NO se cuenta como nada: ni loan ni cash. El
+    -- que bloquea es el veredicto, que queda en `pendiente` mientras haya una.
     estado_prestamo text not null,
     dias_desde_cierre   integer,
     recapturar_despues_de date,
@@ -89,7 +98,8 @@ create table if not exists pacs.transacciones (
     constraint tx_lado_valido check (
         lado is null or lado in ('compra', 'venta', 'ambos')),
     constraint tx_estado_prestamo_valido check (
-        estado_prestamo in ('financiada', 'cash_provisional', 'cash_segun_mm')),
+        estado_prestamo in ('financiada', 'cash_provisional', 'cash_segun_mm',
+                            'no_leido')),
     -- Una tasa en puntos base --«762.00%»-- pasa por un float perfectamente
     -- válido y sale en la ficha como una tasa. Aquí no entra.
     constraint tx_tasa_es_un_porcentaje check (
@@ -120,7 +130,8 @@ ausencia de esas columnas es la guarda, no un olvido.';
 comment on column pacs.transacciones.estado_prestamo is
 '«Cash» en Model Match significa «todavía no hay datos de préstamo», no
 «pagó en efectivo». Por debajo de 35 días desde el cierre es cash_provisional
-y la ficha no lo afirma.';
+y la ficha no lo afirma. `no_leido` es la celda que no se pudo leer: se guarda
+para auditoría, no cuenta como nada, y deja el veredicto en pendiente.';
 
 
 -- ── La vista de lo vigente ─────────────────────────────────────────────────

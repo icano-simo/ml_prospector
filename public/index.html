@@ -1163,6 +1163,8 @@ async function leerOverview(){
     CONDADOS = (d.condados || []).map(c => c.nombre);
     $('#msgs').innerHTML = d.aviso ? `<div class="avi">${esc(d.aviso)}</div>` : '';
     pintarDetectado(d);
+    ACTUALIZAR = {};
+    await cargarBiblioteca(d.estado || SEL.estado || '');
     pintarCajas(d);
     $('#tarjetaGuardar').style.display = '';
   }catch(e){
@@ -1191,11 +1193,50 @@ function pintarDetectado(d){
       <button class="btn" id="btnRehacer" style="margin-top:8px">
         Rehacer las cajas con estos condados</button>
     </div>`;
-  $('#btnRehacer').onclick = () => {
+  $('#btnRehacer').onclick = async () => {
     CONDADOS = $('#condadosDet').value.split('\n')
       .map(s => s.trim()).filter(Boolean);
+    ACTUALIZAR = {};
+    await cargarBiblioteca($('#estadoDet').value);
     pintarCajas({estado: $('#estadoDet').value});
   };
+}
+
+/* Lo que la biblioteca ya tiene, por geografía. Clave: etiqueta en minúsculas.
+ *
+ * Un benchmark de condado no es del realtor: es del condado. Pedir Cook por
+ * cuarta vez en un día es pedir cuatro veces el mismo dato, y cada pegado es
+ * una oportunidad de ponerlo en la caja equivocada. */
+let BIBLIOTECA = {};
+/* Las que el usuario decidió pegar igual, para actualizarlas. */
+let ACTUALIZAR = {};
+
+async function cargarBiblioteca(estado){
+  BIBLIOTECA = {};
+  if(!estado) return;
+  try{
+    const d = await api('/api/mercados_en_biblioteca?estado='
+      + encodeURIComponent(estado) + '&condados='
+      + encodeURIComponent(CONDADOS.join('|')));
+    (d.geografias || []).forEach(g => {
+      BIBLIOTECA[(g.etiqueta || '').trim().toLowerCase()] = g;
+    });
+  }catch(e){
+    /* Que la biblioteca no responda NO puede impedir capturar: las cajas
+       vuelven a pedir el pegado, que es como funcionaba antes. */
+    BIBLIOTECA = {};
+  }
+}
+
+function deLaBiblioteca(etiqueta){
+  return BIBLIOTECA[(etiqueta || '').trim().toLowerCase()] || null;
+}
+
+function fechaCorta(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso).slice(0,10)
+    : d.toLocaleDateString('es', {day:'numeric', month:'short', year:'numeric'});
 }
 
 /* ── paso 2 · una caja por geografía, más Originators y Lenders ────────── */
@@ -1231,6 +1272,37 @@ function pintarCajas(d){
         ENTERA, con el pie que dice «1 - 25 of 25». Sin ese pie no se puede
         saber si faltan páginas, y con páginas de menos no se calcula nada.
         Los nombres de compradores y vendedores no se guardan.</span>` : '');
+
+    /* Lo que ya está en la biblioteca no se vuelve a pedir. */
+    const bib = esGeo ? deLaBiblioteca(c.etiqueta) : null;
+    const yaEsta = bib && bib.estado_biblioteca === 'fresco'
+      && !ACTUALIZAR[c.clave];
+    const vieja = bib && bib.estado_biblioteca === 'viejo'
+      && !ACTUALIZAR[c.clave];
+
+    if(yaEsta) return `<div class="tarjeta">
+      <div class="seccion">${titulo}</div>
+      <p class="sub" style="margin:6px 0"><b>Ya en la biblioteca</b> ·
+        capturado el ${esc(fechaCorta(bib.capturado_en))}${bib.con_quien
+          ? ' al capturar a ' + esc(bib.con_quien) : ''} ·
+        <span class="num">${esc(String(bib.campos ?? '?'))}</span> métricas.
+        No hace falta pegarlo: este realtor queda enlazado a esa fila.</p>
+      <button class="btn sec" id="act_${c.clave}">Actualizar: pegar uno nuevo</button>
+    </div>`;
+
+    if(vieja) return `<div class="tarjeta">
+      <div class="seccion">${titulo}</div>
+      <p class="sub" style="margin:6px 0">Hay una del
+        ${esc(fechaCorta(bib.capturado_en))} (hace
+        <span class="num">${bib.dias}</span> días,
+        <span class="num">${esc(String(bib.campos ?? '?'))}</span> métricas):
+        ¿usar esa o pegar una nueva?</p>
+      <button class="btn sec" id="usar_${c.clave}">Usar la del
+        ${esc(fechaCorta(bib.capturado_en))}</button>
+      <button class="btn sec" id="act_${c.clave}"
+        style="margin-left:8px">Pegar una nueva</button>
+    </div>`;
+
     return `<div class="tarjeta">
       <div class="seccion">${titulo}</div>
       ${nota}
@@ -1239,6 +1311,29 @@ function pintarCajas(d){
       ${casilla}
     </div>`;
   }).join('');
+
+  /* Los botones, después de pintar. `USAR` marca la caja como resuelta desde
+     la biblioteca; `ACTUALIZAR` la devuelve a pedir el pegado. */
+  CAJAS.forEach(c => {
+    const act = $('#act_' + c.clave);
+    if(act) act.onclick = () => { ACTUALIZAR[c.clave] = true; pintarCajas(d); };
+    const usar = $('#usar_' + c.clave);
+    if(usar) usar.onclick = () => {
+      const b = deLaBiblioteca(c.etiqueta);
+      if(b) b.estado_biblioteca = 'fresco';   /* se trata como resuelta */
+      pintarCajas(d);
+    };
+  });
+}
+
+/* Las geografías que NO se pegan porque salen de la biblioteca. Es lo que
+   viaja al guardado, y lo que deja al realtor enlazado a esa fila. */
+function mercadosEnlazados(){
+  return CAJAS
+    .filter(c => (c.tipo === 'estado' || c.tipo === 'condado')
+                 && !ACTUALIZAR[c.clave])
+    .map(c => deLaBiblioteca(c.etiqueta))
+    .filter(b => b && b.estado_biblioteca === 'fresco' && b.mercado_id);
 }
 
 /* Lo que Transactions aporta, en la confirmación del guardado.
@@ -1278,6 +1373,7 @@ async function guardar(){
     texto: ($('#tx_'+c.clave) ? $('#tx_'+c.clave).value : ''),
     vacio_declarado: !!($('#vd_'+c.clave) && $('#vd_'+c.clave).checked),
   }));
+  const enlazados = mercadosEnlazados();
   $('#btnGuardar').disabled = true;
   $('#btnGuardar').textContent = 'guardando…';
   try{
@@ -1288,6 +1384,7 @@ async function guardar(){
         estado: ($('#estadoDet') ? $('#estadoDet').value : SEL.estado),
         mmi_agent_id: ($('#agent') ? $('#agent').value : ''),
         overview: overview, cajas: cajas, forzar: FORZAR,
+        mercados_enlazados: enlazados,
         ventana_meses: ($('#ventana') ? $('#ventana').value : null),
         ventana_confirmada: VENTANA_CONFIRMADA,
       })

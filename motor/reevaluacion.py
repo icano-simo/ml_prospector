@@ -75,7 +75,8 @@ def base_del_libro(entrada_anterior: dict | None) -> dict:
             if k not in SE_RECALCULAN}
 
 
-def reevaluar(realtor_id: str, *, lector, guardar: bool = True) -> dict:
+def reevaluar(realtor_id: str, *, lector, guardar: bool = True,
+              detalle: bool = False) -> dict:
     """Recalcula y escribe UNA evaluación. Devuelve qué cambió.
 
     `lector` expone `leer(tabla, consulta)` y `escribir(tabla, filas)`.
@@ -96,8 +97,11 @@ def reevaluar(realtor_id: str, *, lector, guardar: bool = True) -> dict:
     _c, evs, _ = lector.leer(
         "v_evaluacion_actual",
         "?select=entrada,dolor_primario,excluido,excluido_motivo,"
-        "veredicto_contacto,apertura,gating_intensidad,version_reglas"
-        "&realtor_id=eq.%s" % realtor_id)
+        "veredicto_contacto,apertura,gating_intensidad,version_reglas%s"
+        "&realtor_id=eq.%s"
+        # `resultado` es un jsonb grande y solo lo necesita la auditoria. En el
+        # guardado --que es la via caliente, una por captura-- no se pide.
+        % (",resultado" if detalle else "", realtor_id))
     anterior = (evs or [None])[0]
     if not anterior:
         # El MISMO mensaje que `base_del_libro`: son la misma causa, y dos
@@ -175,7 +179,21 @@ def reevaluar(realtor_id: str, *, lector, guardar: bool = True) -> dict:
             raise NoSePudoReevaluar("no se pudo escribir: %s" % str(resp)[:150])
 
     antes_ver = (anterior.get("veredicto_contacto") or {}).get("estado")
+    # `detalle` NO cambia lo que se guarda ni lo que ve la pantalla: agrega al
+    # dict de vuelta las activaciones de las dos evaluaciones, para poder
+    # auditar una corrida completa --«cuantas tenian P-Q14 AFIRMA 3/E0 antes y
+    # cuantas despues»-- sin escribir una segunda ruta que calcule lo mismo.
+    # Una medicion por un camino paralelo mide el camino paralelo.
+    extra = {}
+    if detalle:
+        extra = {
+            "activaciones_antes": ((anterior.get("resultado") or {})
+                                   .get("activaciones") or []),
+            "activaciones_ahora": d["activaciones"],
+            "moduladores_ahora": list(ev.moduladores),
+        }
     return {
+        **extra,
         "guardado": guardar,
         "dolor_antes": anterior.get("dolor_primario"),
         "dolor_ahora": ev.dolor_primario,
