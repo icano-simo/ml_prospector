@@ -359,6 +359,46 @@ def test_con_paginas_de_menos_tampoco_hay_veredicto():
     assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
 
 
+def test_una_financiada_sin_lender_NO_bloquea_la_lectura():
+    """Decisión de Isabella del 2026-09-24, y era una compuerta de más.
+
+    Model Match no siempre trae el originador. Bloquear por eso dejaba en
+    `pendiente_modelmatch` a catorce realtors cuya pestaña se había leído
+    ENTERA -- y una fila sin originador no impide decir si alguna operación
+    pasó por la casa: si pasara, el lender estaría ahí.
+
+    Lo que sí hace falta es que se VEA, porque la ausencia se parece mucho a
+    un cero: «9 de 10 con lender» y «9 buys con lender» dicen cosas distintas.
+    """
+    from motor.veredicto import OK, puede_contactarse
+
+    sin = REAL.replace("Guaranteed Rate Inc\n", "—\n", 1)
+    p = _p(sin)
+    assert p["completa"] is True, p["por_que_no_completa"]
+    assert p["por_que_no_completa"] == []
+    assert p["financiadas_sin_lender"] == 1
+    assert p["cobertura_lender"]["texto"] == "9 de 10 con lender"
+    assert p["cobertura_lender"]["sin_lender_identificado"] == 1
+
+    r = resumen(p)
+    assert r["compras_sin_lender_identificado"] == 1
+    assert r["cobertura_lender_compra"]["texto"] == "7 de 8 con lender"
+    # Y el veredicto sale, que es el punto de todo esto.
+    assert puede_contactarse({"transacciones": p}).estado == OK
+
+
+def test_la_cobertura_se_mide_sobre_las_FINANCIADAS_y_no_sobre_todas():
+    """Una compra cash no tiene lender que falte.
+
+    Con el denominador en «todas», una cartera con nueve cash daría una
+    cobertura del 60 % que no significa nada.
+    """
+    p = _p()
+    assert p["cobertura_lender"]["financiadas"] == 10
+    assert p["cobertura_lender"]["texto"] == "10 de 10 con lender"
+    assert p["leidas"] == 25
+
+
 def test_sin_pie_no_se_afirma_que_estan_todas():
     """`None` y no `True`: sin el pie no se puede confirmar."""
     from motor.veredicto import PENDIENTE, puede_contactarse
