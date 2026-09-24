@@ -51,6 +51,14 @@ create table if not exists pacs.census_reporte_estado (
     -- mismo repetido.
     constraint census_rpt_uno_por_texto unique (estado, texto),
 
+    -- El id y el estado no pueden discrepar. Pedido de Isabella, y cierra el
+    -- único hueco que dejaba guardar el id en vez de componerlo: una fila con
+    -- `estado = 'IL'` e `id_evidencia = 'CENSUS-RPT-TX'` metería el texto de
+    -- Texas en el paquete de un realtor de Illinois, y la ficha lo citaría con
+    -- el id equivocado sin que nada fallara.
+    constraint census_rpt_id_coincide check (
+        id_evidencia = 'CENSUS-RPT-' || estado),
+
     -- La guarda redundante, como en `paquetes_ficha`. Este texto se copia
     -- dentro del paquete, que es lo que lee Cowork: si algún día alguien pega
     -- aquí un recorte con un nombre o un barrio, falla ruidosamente en vez de

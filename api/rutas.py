@@ -1395,11 +1395,28 @@ def paquete_de_realtor(realtor_id: str) -> dict | None:
     ver = (ev or {}).get("veredicto_contacto") or puede_contactarse(
         perfil or None).a_dict()
 
+    # ── EL CENSUS DEL ESTADO ────────────────────────────────────────────────
+    #
+    # El reporte de mercado latino del estado donde opera. Describe el MERCADO,
+    # nunca a la persona: de «en Illinois el 18,8 % son latinos» a «sus buyers
+    # son latinos» hay un salto que nadie midió, así que el grado máximo que
+    # sostiene es Hipótesis -- igual que `MM-MK-*`, y por lo mismo.
+    #
+    # Se lee de `pacs.census_reporte_estado` y no de un archivo del repo: el
+    # paquete se arma en Vercel, donde el repo entero no viaja.
+    reporte = None
+    if realtor.get("estado"):
+        _c, rep, _ = leer(
+            "v_census_reporte_actual",
+            "?select=estado,id_evidencia,texto,fuente,cargado_en"
+            "&estado=eq.%s" % urllib.parse.quote(str(realtor["estado"])))
+        reporte = (rep or [None])[0]
+
     return construir(
         realtor=realtor, evaluacion=ev, perfil_mm=perfil or None,
         resumen_tx=resumen, filas_tx=(tx or {}).get("filas"),
         mercados=mercados, ig=ig, contactos=cts or [],
-        census=None, veredicto=ver, salesforce=None)
+        census=None, censo_estado=reporte, veredicto=ver, salesforce=None)
 
 
 def guardar_paquete(realtor_id: str) -> dict:
