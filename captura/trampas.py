@@ -304,6 +304,29 @@ def es_de_la_casa(originador: dict) -> bool:
     return any(n in empresa for n in NOMBRES_DE_LA_CASA)
 
 
+def lender_es_de_la_casa(lender: dict) -> bool:
+    """¿Esta fila de la pestaña Lenders es Everett / Supreme Lending?
+
+    La decision de excluir la toma el NMLS 2129 cuando esta, y el nombre
+    COMPLETO cuando no. **Nunca una subcadena suelta**: «Supreme Mortgage» (PA)
+    no es Supreme Lending, y buscar «supreme» la excluiria por compartir una
+    palabra con otra empresa del rubro.
+
+    Por eso `NOMBRES_DE_LA_CASA` son frases de dos palabras y no una. El riesgo
+    va en la direccion cara: excluir a un realtor que si podemos atender.
+    """
+    if (lender.get("nmls") or "").strip() == NMLS_DE_LA_CASA:
+        return True
+    nombre = " ".join((lender.get("nombre") or "").lower().split())
+    return any(n in nombre for n in NOMBRES_DE_LA_CASA)
+
+
+def lenders_de_la_casa(perfil: dict) -> list[str]:
+    """Los nombres de la pestaña Lenders que son la casa. Vacio si no hay."""
+    return [l.get("nombre") for l in (perfil.get("tabla_lenders") or [])
+            if lender_es_de_la_casa(l)]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 6 · Produccion: solo el lado comprador, y nunca se pisa el lote
 # ══════════════════════════════════════════════════════════════════════════════

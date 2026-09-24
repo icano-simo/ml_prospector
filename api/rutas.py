@@ -520,6 +520,18 @@ def resumen_de_captura(filas: list[dict], perfil_unido: dict,
     }
 
 
+class _LectorPostgREST:
+    """Lo que `motor.reevaluacion` necesita, hablando PostgREST.
+
+    Es una clase de cuatro lineas a proposito: el modulo del motor no tiene que
+    saber si detras hay un driver, una conexion directa o HTTP. La consola le
+    pasa otro adaptador y el codigo del calculo es el mismo.
+    """
+
+    leer = staticmethod(leer)
+    escribir = staticmethod(escribir)
+
+
 def _cajas_con_overview(cajas, tipos):
     """El resumen, con las cajas que el Overview ya resolvió marcadas."""
     marcar_del_overview(cajas, tipos)
@@ -1057,12 +1069,13 @@ def guardar(d: dict) -> tuple[int, dict]:
     # Va DESPUES de todo lo demas y en su propio try: el crudo ya esta
     # guardado, y perder la captura por un error al recalcular seria cambiar un
     # problema chico por uno caro.
+    # Va por PostgREST, igual que todo lo demas de esta ruta. La primera
+    # version usaba psycopg y conexion directa, que en Vercel no existe -- ni
+    # queremos que exista: serian credenciales de base en una funcion publica.
     reevaluacion = None
     try:
-        from supabase.cargar import conectar
-        from supabase.reevaluar import reevaluar as _reevaluar
-        with conectar() as _con:
-            reevaluacion = _reevaluar(realtor_id, conexion=_con)
+        from motor.reevaluacion import reevaluar as _reevaluar
+        reevaluacion = _reevaluar(realtor_id, lector=_LectorPostgREST())
         if reevaluacion.get("cambio"):
             avisos.append(
                 "El diagnóstico se recalculó con esta captura: dolor %s → %s · "
@@ -1072,9 +1085,14 @@ def guardar(d: dict) -> tuple[int, dict]:
                    reevaluacion["veredicto_antes"] or "—",
                    reevaluacion["veredicto_ahora"]))
     except Exception as exc:  # noqa: BLE001
+        # En lenguaje de negocio. El detalle tecnico viaja aparte, entero: el
+        # mensaje anterior hacia `split("\n")[0]` y tiraba justo la mitad
+        # accionable -- «Falta el driver. Instalalo con:» y ahi terminaba.
         avisos.append(
-            "La captura se guardó, pero el diagnóstico NO se pudo recalcular: "
-            "%s. Sigue mostrando el anterior." % str(exc).split("\n")[0][:150])
+            "La captura se guardó. El diagnóstico se actualizará en la "
+            "próxima corrida.")
+        reevaluacion = {"error": " ".join(str(exc).split())[:400],
+                        "cambio": False}
 
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
                  "reevaluacion": reevaluacion,

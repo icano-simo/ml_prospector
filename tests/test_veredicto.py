@@ -256,6 +256,69 @@ def test_armando_ochoa_sigue_excluido():
     assert v.evidencia["unidades_de_la_casa"] == 1
 
 
+# ══ LA PESTAÑA LENDERS ENTRA A LA COMPUERTA ══════════════════════════════════
+#
+# Decisión de Isabella, 2026-09-23: si Lenders muestra Everett o Supreme
+# Lending, el veredicto es `excluido`. La casa ya está en esa operación.
+
+def test_everett_como_lender_excluye():
+    v = puede_contactarse({"tabla_lenders": [
+        {"nombre": "United Wholesale Mortgage", "unidades": 2},
+        {"nombre": "Everett Financial, Inc.", "unidades": 1}]})
+    assert v.estado == EXCLUIDO, v.a_dict()
+    assert "aparece como lender" in v.motivo
+    assert v.evidencia["lenders_de_la_casa"] == ["Everett Financial, Inc."]
+
+
+def test_supreme_lending_como_lender_excluye():
+    v = puede_contactarse({"tabla_lenders": [
+        {"nombre": "Supreme Lending", "unidades": 3}]})
+    assert v.estado == EXCLUIDO
+    assert "Supreme Lending" in v.motivo
+
+
+def test_SUPREME_MORTGAGE_no_es_la_casa():
+    """El control. «Supreme Mortgage» (PA) comparte una palabra y nada más.
+
+    Buscar «supreme» suelto la excluiría, y el error va en la dirección cara:
+    dejar fuera a un realtor que sí podemos atender. Por eso los nombres de la
+    casa son frases de dos palabras.
+    """
+    perfil = {"tabla_lenders": [{"nombre": "Supreme Mortgage", "unidades": 4}],
+              "orig_buyer": [{"nombre": "Otro", "empresa": "Otro LLC",
+                              "unidades": 4, "share": 100.0}]}
+    v = puede_contactarse(perfil)
+    assert v.estado == OK, v.a_dict()
+
+
+def test_el_NMLS_2129_excluye_aunque_el_nombre_no_diga_nada():
+    v = puede_contactarse({"tabla_lenders": [
+        {"nombre": "Una Marca Cualquiera", "nmls": "2129", "unidades": 1}]})
+    assert v.estado == EXCLUIDO
+
+
+def test_lenders_manda_aunque_no_haya_reparto_por_unidades():
+    """Un dato que está a la vista no se deja en `pendiente`."""
+    v = puede_contactarse({"buyer_units": 12.0, "tabla_lenders": [
+        {"nombre": "Everett Financial Inc", "unidades": 1}]})
+    assert v.estado == EXCLUIDO, v.a_dict()
+
+
+# ══ LAS COMPRAS SIN ORIGINADOR IDENTIFICADO NO BLOQUEAN ══════════════════════
+
+def test_siete_de_dieciocho_identificadas_queda_ok():
+    """El caso de Abby Grimaldi. Decisión de Isabella, 2026-09-23."""
+    perfil = {"buyer_units": 18.0, "orig_buyer": [
+        {"nombre": "A", "empresa": "Chase Home Lending", "unidades": 5,
+         "share": 71.0},
+        {"nombre": "B", "empresa": "Guild Mortgage", "unidades": 2,
+         "share": 29.0}]}
+    v = puede_contactarse(perfil)
+    assert v.estado == OK, v.a_dict()
+    assert v.evidencia["compras_con_originador"] == 7
+    assert v.evidencia["compras_totales"] == 18.0
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

@@ -42,7 +42,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from captura.trampas import TrampaDetectada, es_de_la_casa, share_de_la_casa
+from captura.trampas import (
+    TrampaDetectada,
+    es_de_la_casa,
+    lenders_de_la_casa,
+    share_de_la_casa,
+)
 
 EXCLUIDO = "excluido"
 PENDIENTE = "pendiente_modelmatch"
@@ -112,6 +117,24 @@ def puede_contactarse(perfil: dict | None, *,
                     "qué originadores trabaja, y no saberlo no es poder"),
             evidencia=_evidencia_base(None, capturado_en))
 
+    # 2b · LA PESTAÑA LENDERS. Everett/Supreme ahi es exclusion igual que en
+    #      originadores: la casa ya esta en esa operacion.
+    #
+    #      Se mira ANTES del reparto por unidades porque no depende de el: un
+    #      perfil sin `Buyer Side Relationships` pero con Everett en Lenders es
+    #      una exclusion que se sabe, y dejarla en `pendiente` seria no usar un
+    #      dato que esta a la vista.
+    de_la_casa_en_lenders = lenders_de_la_casa(perfil)
+    if de_la_casa_en_lenders:
+        evidencia = _evidencia_base(perfil.get("orig_buyer"), capturado_en)
+        evidencia.update({"lenders_de_la_casa": de_la_casa_en_lenders,
+                          "origen": "pestaña Lenders de Model Match"})
+        return Veredicto(
+            estado=EXCLUIDO,
+            motivo="%s aparece como lender en Model Match"
+                   % ", ".join(de_la_casa_en_lenders),
+            evidencia=evidencia)
+
     # 3 · «Model Match no muestra originadores para este agente», declarado con
     #     la casilla de la pantalla de captura.
     #
@@ -171,6 +194,12 @@ def puede_contactarse(perfil: dict | None, *,
             if es_de_la_casa(o)],
         "unidades_de_la_casa": unidades,
         "unidades_totales": reparto.get("unidades_totales"),
+        # Las compras SIN originador identificado NO bloquean (decision de
+        # Isabella, 2026-09-23). Abby Grimaldi tiene 7 de 18 identificadas y
+        # ninguna de la casa: queda `ok`. Pero el numero viaja, porque «7» y
+        # «18» leidos sin el otro dicen cosas distintas.
+        "compras_con_originador": reparto.get("unidades_totales"),
+        "compras_totales": perfil.get("buyer_units"),
         "share_de_la_casa": reparto.get("share"),
     })
 

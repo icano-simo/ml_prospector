@@ -31,6 +31,12 @@ sys.path.insert(0, RAIZ)
 #: conexión. Una guarda que grita sobre lo bueno se termina apagando.
 #:
 #: Lo que se busca es el ACTO de conectar, no la cercanía al módulo que sabe.
+#:
+#: Y se miran solo las líneas de CÓDIGO: un comentario que cita la llamada para
+#: explicar por qué no se hace no es una llamada. Pasó con `test_reevaluacion`,
+#: y el primer arreglo fue partir el nombre en dos trozos para que el patrón no
+#: lo viera -- o sea esquivar la guarda en vez de corregirla, que es peor que
+#: no tenerla: la siguiente persona copia el truco.
 SEÑALES = (
     r"psycopg\.connect",
     r"SUPABASE_DB_URL",
@@ -49,11 +55,28 @@ def _archivos():
             if os.path.basename(r) not in SE_EXCLUYE]
 
 
+def _solo_codigo(texto: str) -> str:
+    """El archivo sin sus comentarios de línea.
+
+    No quita docstrings: una llamada dentro de un docstring tampoco se ejecuta,
+    pero ahí sí conviene que moleste -- un ejemplo copiable en la documentación
+    de una prueba es lo que alguien va a copiar.
+    """
+    return "\n".join(l.split("#", 1)[0] if "#" in l and not _en_cadena(l) else l
+                     for l in texto.splitlines())
+
+
+def _en_cadena(linea: str) -> bool:
+    """¿El primer `#` de la línea está dentro de comillas? Entonces no es comentario."""
+    antes = linea.split("#", 1)[0]
+    return antes.count('"') % 2 == 1 or antes.count("'") % 2 == 1
+
+
 def test_ninguna_prueba_abre_una_conexion():
     culpables = []
     for ruta in _archivos():
         with open(ruta, encoding="utf-8") as fh:
-            texto = fh.read()
+            texto = _solo_codigo(fh.read())
         for patron in SEÑALES:
             if re.search(patron, texto):
                 culpables.append((os.path.basename(ruta), patron))
@@ -63,20 +86,25 @@ def test_ninguna_prueba_abre_una_conexion():
         "append-only, y lo que entra ahí no se borra." % culpables)
 
 
-def test_el_modulo_que_escribe_pide_la_conexion_de_afuera():
-    """`reevaluar` no abre la conexión: se la pasan.
+def test_el_modulo_que_escribe_pide_el_lector_de_afuera():
+    """`reevaluar` no abre nada: se le pasa con qué leer y escribir.
 
     Un módulo que se conecta solo se puede llamar sin querer desde cualquier
     parte, y la única pista de contra qué base escribió es el `.env` que
-    hubiera cargado. Recibirla obliga a que quien lo llame diga contra qué.
+    hubiera cargado. Recibirlo obliga a que quien lo llame diga contra qué.
+
+    Y es lo que permite que la API use PostgREST y la consola el mismo
+    PostgREST, sin que el cálculo sepa de drivers: en Vercel no hay psycopg, y
+    no queremos credenciales de conexión directa en una función pública.
     """
     import inspect
 
-    from supabase.reevaluar import reevaluar
+    from motor.reevaluacion import reevaluar
 
     firma = inspect.signature(reevaluar).parameters
-    assert "conexion" in firma
-    assert firma["conexion"].default is inspect.Parameter.empty
+    assert "lector" in firma
+    assert firma["lector"].default is inspect.Parameter.empty
+    assert "conexion" not in firma
 
 
 def test_la_suite_declara_que_corre_sin_red():
