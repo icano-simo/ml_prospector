@@ -58,28 +58,57 @@ def main() -> int:
             return 2
         objetivos = [(i, i[:8]) for i in ids]
 
-    print("a re-evaluar: %d" % len(objetivos))
+    # `--simular` hace todo menos escribir. Es para medir el impacto de un
+    # cambio de reglas ANTES de desplegarlo: una evaluación escrita con una
+    # versión que producción todavía no corre sale en la pantalla marcada como
+    # «de una versión anterior», que es justo al revés.
+    guardar = "--simular" not in sys.argv
+
+    print("a re-evaluar: %d%s" % (len(objetivos),
+                                  "" if guardar else "  (SIMULACIÓN: no escribe)"))
     print("")
-    print("%-24s %-22s %-22s %s"
-          % ("realtor", "dolor", "veredicto", "mm_buyside_anualizado"))
-    print("-" * 92)
+    print("%-22s %-24s %-20s %-16s %s"
+          % ("realtor", "dolor", "apertura", "J-Q01", "veredicto"))
+    print("-" * 104)
     fallos = 0
+    cambios = 0
     for rid, nombre in objetivos:
         try:
-            r = reevaluar(rid, lector=Lector())
+            r = reevaluar(rid, lector=Lector(), guardar=guardar)
         except NoSePudoReevaluar as exc:
             fallos += 1
-            print("%-24s NO SE PUDO: %s" % (nombre[:24], str(exc)[:60]))
+            print("%-22s NO SE PUDO: %s" % (nombre[:22], str(exc)[:60]))
             continue
-        print("%-24s %-22s %-22s %s"
-              % (nombre[:24],
+        cambios += 1 if r["cambio"] else 0
+        share = r.get("mm_share_buy")
+        print("%-22s %-24s %-20s %-16s %s"
+              % (nombre[:22],
                  "%s → %s" % (r["dolor_antes"] or "—", r["dolor_ahora"] or "—"),
-                 "%s → %s" % (r["veredicto_antes"] or "—", r["veredicto_ahora"]),
-                 r["mm_buyside_anualizado"] if r["mm_buyside_anualizado"]
-                 is not None else "—"))
+                 "%s → %s" % (_corto(r["apertura_antes"]),
+                              _corto(r["apertura_ahora"])),
+                 "%s → %s%s" % (r["gating_antes"] if r["gating_antes"]
+                                is not None else "—",
+                                r["gating_ahora"] if r["gating_ahora"]
+                                is not None else "—",
+                                "" if share is None else " (%.0f%% buy)"
+                                % (100 * share)),
+                 "%s → %s" % (r["veredicto_antes"] or "—",
+                              r["veredicto_ahora"])))
     print("")
-    print("fallos: %d" % fallos)
+    print("cambiaron: %d de %d · fallos: %d"
+          % (cambios, len(objetivos), fallos))
+    if not guardar:
+        print("NO se escribió nada: fue una simulación.")
     return 1 if fallos else 0
+
+
+#: Los códigos de apertura, acortados para que la tabla se lea.
+_CORTOS = {"sin_apertura_hipotecaria": "sin hipoteca",
+           "pregunta_de_cierre_de_brecha_lender": "preg. lender"}
+
+
+def _corto(cod) -> str:
+    return _CORTOS.get(cod, "dolor") if cod else "dolor"
 
 
 if __name__ == "__main__":

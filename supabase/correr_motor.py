@@ -89,6 +89,36 @@ FALTAN_HOY = ("contrastes_de_mercado",)
 #: unia. Nada fallaba.
 DEL_PERFIL_MM = {"buyside_anualizado": "mm_buyside_anualizado"}
 
+#: Los `mm_*` que NO se copian de un campo sino que se calculan aqui.
+DERIVADOS_MM = ("mm_share_buy",)
+
+#: Todos los `mm_*` que este modulo puede producir. `motor.reevaluacion` lo usa
+#: para saber que NO heredar de la evaluacion anterior: un campo de Model Match
+#: que no este aca se arrastraria para siempre desde la `entrada` vieja, y una
+#: captura nueva no lo movería.
+CAMPOS_MM = tuple(DEL_PERFIL_MM.values()) + DERIVADOS_MM
+
+
+def share_del_lado_comprador(perfil: dict | None) -> float | None:
+    """Fraccion de operaciones del lado comprador, segun `Side Focus`.
+
+    Sale de «3 buy / 6 sell» y de nada mas. `buyer_units` y `listing_sold`
+    cuentan otras cosas con otro denominador, y una segunda derivacion que da
+    un numero parecido pero distinto es peor que no tenerla: cuando las dos no
+    coinciden, nadie sabe cual leyo el motor.
+
+    Devuelve `None` --no cero-- cuando Side Focus no vino. Sin el dato, la
+    compuerta la decide la bio, que es lo que habia antes.
+    """
+    buy = (perfil or {}).get("sf_buy")
+    sell = (perfil or {}).get("sf_sell")
+    if buy is None or sell is None:
+        return None
+    total = buy + sell
+    if total <= 0:
+        return None
+    return round(buy / float(total), 4)
+
 
 def campos_de_modelmatch(perfil: dict | None) -> dict:
     """Los `mm_*` que el motor entiende. Solo lo que tiene valor."""
@@ -97,6 +127,9 @@ def campos_de_modelmatch(perfil: dict | None) -> dict:
         v = (perfil or {}).get(origen)
         if v is not None:
             salida[campo] = v
+    share = share_del_lado_comprador(perfil)
+    if share is not None:
+        salida["mm_share_buy"] = share
     return salida
 
 #: Las dos columnas del libro que deciden si una persona es contactable. NO

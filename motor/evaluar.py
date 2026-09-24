@@ -32,9 +32,14 @@ from pacs.guardas import (
 #: que reglas se produjo un diagnostico viejo.
 #: Sube cuando cambia CUALQUIER cosa que el lector vea, no solo la lógica: el
 #: `texto` de una regla es lo que el BD lee en la ficha, así que corregirlo es
-#: un cambio declarado. Esta subida arregla cinco textos que usaban vocabulario
-#: que no se usa en el sector -- `enganche`, `pre-aprobación`, `precalificación`.
-VERSION_REGLAS = "2026.09.23-sin-r7"
+#: un cambio declarado.
+#:
+#: `-compuertas` es el 2026-09-23 por la tarde, y cambia dos cosas que un
+#: diagnóstico viejo no tiene: J-Q01 sale del registro buy/sell de Model Match
+#: y cierra la apertura hipotecaria en <= 1, y P-Q14 sale del idioma medido del
+#: muro y deja la bio sola en 1/E1. Una evaluación de antes y una de después no
+#: son comparables en esos dos números, y sin la versión nadie podría saberlo.
+VERSION_REGLAS = "2026.09.23-compuertas"
 
 
 def huella_del_catalogo() -> str:
@@ -189,6 +194,24 @@ def evaluar(
                   None)
     dolores = _ordenar_dolores(activaciones)
 
+    # ── LA COMPUERTA J-Q01, APLICADA ────────────────────────────────────────
+    #
+    # J-Q01 mide cuanto depende su negocio del financiamiento del comprador.
+    # Con J-Q01 <= 1 --seller heavy-- ningun dolor hipotecario puede ser el
+    # primario: el angulo no le aplica, porque su negocio no pasa por ahi.
+    #
+    # Estaba declarado como compuerta y no se aplicaba. Aaron Gaston cierra 3
+    # del lado comprador y 6 del vendedor, J-Q01 = 1, y el motor le ponia P-Q06
+    # como dolor primario -- un angulo hipotecario a alguien que vive de
+    # listings.
+    #
+    # Los dolores NO se borran: siguen en `activaciones` y pasan a secundarios.
+    # Lo que cambia es que ninguno se presenta como el primario, y la apertura
+    # lo dice.
+    sin_apertura = bool(gating and gating.intensidad <= UMBRAL_APERTURA)
+    if sin_apertura:
+        dolores = [q for q in dolores if not q.startswith("P-")]
+
     campos_declarados = {c for r in reglas for c in r.campos}
     ausentes = tuple(sorted(
         c for c in campos_declarados if registro.get(c) is None
@@ -207,7 +230,8 @@ def evaluar(
         dolor_primario=dolores[0] if dolores else None,
         dolores_secundarios=tuple(dolores[1:3]),
         gating=gating,
-        apertura=None if dolores else APERTURA_SIN_DOLOR,
+        apertura=(APERTURA_SIN_HIPOTECA if sin_apertura and not dolores
+                  else None if dolores else APERTURA_SIN_DOLOR),
         moduladores=tuple(
             a.qualifier for a in sorted(
                 (x for x in activaciones
@@ -252,3 +276,11 @@ def _ordenar_dolores(activaciones: list[Activacion]) -> list[str]:
 #: Cuando no hay ningun dolor de familia P, el primer mensaje abre con esto.
 #: No es un dolor diagnosticado: es la pregunta que cierra la brecha.
 APERTURA_SIN_DOLOR = "pregunta_de_cierre_de_brecha_lender"
+
+#: Con J-Q01 en esta intensidad o menos, su negocio NO pasa por el
+#: financiamiento del comprador y ningun angulo hipotecario le aplica.
+UMBRAL_APERTURA = 1
+
+#: Lo que se dice en vez de un dolor primario cuando la compuerta cierra.
+#: No es «no lo sabemos»: se sabe, y lo que se sabe es que este angulo no va.
+APERTURA_SIN_HIPOTECA = "sin_apertura_hipotecaria"

@@ -57,6 +57,9 @@ DISPARA: dict[str, dict] = {
     "P-Q01-3": {"R5_espanol": 8, "R4_comunidad_fhb": 7},
     "P-Q01-4": {"R5_espanol": 6},
 
+    # P-Q14-IG mide el muro; las dos de la bio solo hablan cuando NO hay
+    # medicion, asi que su dato de disparo NO lleva `ig_idioma_es`.
+    "P-Q14-IG": {"ig_idioma_es": True, "ig_idioma_posts": 20},
     "P-Q14-1": {"ev2_espanol_decl": True, "ev_caracteres_espanol": 1},
     "P-Q14-2": {"R5_espanol": 6},
     # P-Q14-3 y P-Q13-2 se eliminaron el 2026-09-23 con R7.
@@ -94,6 +97,11 @@ DISPARA: dict[str, dict] = {
 
     "P-Q21-1": {"ev2_equipo": True, "ig_seguidores": 3000},
 
+    # Gaston y Ochoa, los dos casos medidos. 9 / 3 -> 0,75 -> MM1;
+    # 3 buy / 6 sell -> 0,33 -> MM2. Las tres de la bio quedan abajo, sin
+    # `mm_share_buy`: solo hablan cuando Model Match no midio.
+    "J-Q01-MM1": {"mm_share_buy": 0.75},
+    "J-Q01-MM2": {"mm_share_buy": 0.3333},
     "J-Q01-1": {"ev2_buy_side": True, "ev2_listing_side": False},
     "J-Q01-2": {"ev2_primera_casa": True},
     "J-Q01-3": {"ev2_listing_side": True, "ev2_buy_side": False},
@@ -119,6 +127,7 @@ NO_DISPARA: dict[str, dict] = {
     "P-Q01-3": {"R5_espanol": 7, "R4_comunidad_fhb": 7},
     "P-Q01-4": {"R5_espanol": 5},
 
+    "P-Q14-IG": {"ig_idioma_es": False, "ig_idioma_posts": 20},
     "P-Q14-1": {"ev2_espanol_decl": True, "ev_caracteres_espanol": 0},
     "P-Q14-2": {"R5_espanol": 5},
 
@@ -155,6 +164,8 @@ NO_DISPARA: dict[str, dict] = {
 
     "P-Q21-1": {"ev2_equipo": True, "ig_seguidores": 2999},
 
+    "J-Q01-MM1": {"mm_share_buy": 0.3333},
+    "J-Q01-MM2": {"mm_share_buy": 0.75},
     "J-Q01-1": {"ev2_buy_side": True, "ev2_listing_side": True},
     "J-Q01-2": {"ev2_primera_casa": False},
     "J-Q01-3": {"ev2_listing_side": True, "ev2_buy_side": True},
@@ -237,7 +248,7 @@ def test_toda_regla_tiene_su_dato_de_prueba():
     assert not sobran, "datos de reglas que ya no existen: %s" % sorted(sobran)
 
 
-def test_son_36_reglas_sobre_19_qualifiers():
+def test_son_39_reglas_sobre_19_qualifiers():
     """El conteo exacto. Si cambia, que se vea en el diff.
 
     Fueron 38 desde que P-Q11 se partio en dos: la produccion que manda es la
@@ -251,8 +262,13 @@ def test_son_36_reglas_sobre_19_qualifiers():
     **Siguen siendo 19 qualifiers**: P-Q14 conserva P-Q14-1 y P-Q14-2, y P-Q13
     conserva P-Q13-1. Ningun qualifier se quedo sin regla, que es lo que habria
     dejado un dolor imposible de activar con su ficha y su gancho colgando.
+
+    39 desde mas tarde ese mismo dia, y las tres nuevas son la misma idea:
+    cuando hay una MEDICION, la declaracion no manda. Dos para J-Q01 desde el
+    registro buy/sell de Model Match, una para P-Q14 desde el idioma del muro.
+    Siguen siendo 19 qualifiers: ninguna abre uno nuevo.
     """
-    assert len(REGLAS) == 36, len(REGLAS)
+    assert len(REGLAS) == 39, len(REGLAS)
     assert len({r.qualifier for r in REGLAS}) == 19, sorted(
         {r.qualifier for r in REGLAS})
     assert len(por_qualifier()) == 19, sorted(por_qualifier())
@@ -638,8 +654,19 @@ CONCLUYEN_DESDE_AUSENCIA = {
     "P-Q09-2": ("`ev_hits_lujo_inversion` sale del mismo texto que "
                 "`ev2_inversion`: si no se leyo, faltan los dos"),
     "J-Q01-1": ("`ev2_listing_side` y `ev2_buy_side` salen de la misma bio: "
-                "si no se leyo, faltan los dos"),
+                "si no se leyo, faltan los dos. Y desde el 2026-09-23 exige "
+                "ademas que NO haya `mm_share_buy`, que es la otra forma "
+                "segura: la ausencia elige la fuente, no diagnostica"),
+    "J-Q01-2": ("misma eleccion de fuente que J-Q01-1: la bio solo habla "
+                "cuando Model Match no midio"),
     "J-Q01-3": ("simetrica de J-Q01-1, misma bio"),
+    "J-Q01-MM2": ("no concluye desde una ausencia: `_ge` ya devuelve None "
+                  "cuando `mm_share_buy` falta y `_no` lo propaga, asi que sin "
+                  "Model Match la regla queda sin evaluar, no en False"),
+    "P-Q14-1": ("la bio solo habla cuando Instagram NO midio el idioma del "
+                "muro. La ausencia elige la fuente; con medicion en contra, "
+                "P-Q14 no se activa"),
+    "P-Q14-2": ("misma eleccion de fuente que P-Q14-1"),
     "P-Q10-2": ("EXIGE estado_perfil = publico_leido. Es la unica cuya "
                 "ausencia viene de otra fuente que la que la habilita"),
     "P-Q11-3": ("la ausencia ES la pregunta: elige la fuente, no diagnostica "

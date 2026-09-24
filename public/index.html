@@ -606,18 +606,45 @@ function vistaZona(d){
   </div>`;
 }
 
+/* Las DOS formas de no tener dolor primario, que no son la misma cosa.
+ *
+ * Una es no saber nada todavía. La otra es saber que el ángulo hipotecario no
+ * le aplica, porque su registro de Model Match dice que vive de listings. Con
+ * el mismo encabezado las dos, la segunda se lee como la primera: «no sabemos
+ * nada de este señor» sobre alguien del que sabemos bastante. */
+const RAMA_COMPUERTA = 'sin apertura hipotecaria';
+
+function tituloSinDolor(sd){
+  return sd && sd.rama === RAMA_COMPUERTA
+    ? 'Sabemos por dónde NO abrirle'
+    : 'El caso más frecuente del lote';
+}
+
+function notaApertura(sd){
+  return sd && sd.rama === RAMA_COMPUERTA
+    ? 'No es la pregunta del lender: a un agente de listings esa pregunta no le toca el negocio. Esta sí, porque la venta que se le cae es suya.'
+    : 'Es la pregunta del lender, y va igual en todas: cierra la categoría vacía en el 100% de las filas.';
+}
+
+/* El motor guarda un código; la pantalla no lo muestra. */
+function aperturaLegible(cod){
+  if(!cod) return '—';
+  if(cod === 'sin_apertura_hipotecaria') return 'su negocio no pasa por la hipoteca';
+  if(cod === 'pregunta_de_cierre_de_brecha_lender') return 'la pregunta del lender';
+  return cod;
+}
+
 function vistaSinDolor(d){
   return `
     <div class="banner">
-      <div class="seccion">El caso más frecuente del lote</div>
+      <div class="seccion">${tituloSinDolor(d.sin_dolor)}</div>
       <div style="font-size:15px;font-weight:700;line-height:1.45">${esc(d.sin_dolor.titular)}</div>
       <div class="pista" style="margin-top:10px">${esc(d.sin_dolor.cuerpo)}</div>
     </div>
     <div class="tarjeta">
       <div class="seccion">Por dónde abrir</div>
       <h2>${esc(d.sin_dolor.apertura)}</h2>
-      <p class="sub">Es la pregunta del lender, y va igual en todas: cierra la
-        categoría vacía en el 100% de las filas.</p>
+      <p class="sub">${notaApertura(d.sin_dolor)}</p>
       <div style="margin-top:10px">
         <span class="badge bloqueado"><i>▲</i>cola de ${esc(d.sin_dolor.cola)}</span>
         <span class="badge sin-evaluar"><i>▣</i>rama: ${esc(d.sin_dolor.rama)}</span>
@@ -631,15 +658,14 @@ function vistaLecturaVieja(d){
   /* El caso más frecuente va PRIMERO y como titular, no como nota al pie. */
   const sd = d.sin_dolor ? `
     <div class="banner">
-      <div class="seccion">El caso más frecuente del lote</div>
+      <div class="seccion">${tituloSinDolor(d.sin_dolor)}</div>
       <div style="font-size:15px;font-weight:700;line-height:1.45">${esc(d.sin_dolor.titular)}</div>
       <div class="pista" style="margin-top:10px">${esc(d.sin_dolor.cuerpo)}</div>
     </div>
     <div class="tarjeta">
       <div class="seccion">Por dónde abrir</div>
       <h2>${esc(d.sin_dolor.apertura)}</h2>
-      <p class="sub">Es la pregunta del lender, y va igual en todas: cierra la
-        categoría vacía en el 100% de las filas.</p>
+      <p class="sub">${notaApertura(d.sin_dolor)}</p>
       <div style="margin-top:10px">
         <span class="badge bloqueado"><i>▲</i>cola de ${esc(d.sin_dolor.cola)}</span>
         <span class="badge sin-evaluar"><i>▣</i>rama: ${esc(d.sin_dolor.rama)}</span>
@@ -698,7 +724,7 @@ function vistaCalculo(d){
           <b style="color:var(--navy)">${esc(ev.gating_qualifier || '—')}</b>
           <span class="num">${ev.gating_intensidad ?? ''}</span></div>
         <div><span class="pista">apertura</span><br>
-          <b style="color:var(--navy)">${esc(ev.apertura || '—')}</b></div>
+          <b style="color:var(--navy)">${esc(aperturaLegible(ev.apertura))}</b></div>
         <div><span class="pista">reglas</span><br>
           <code>${esc(ev.version_reglas || '')}</code></div>
       </div>

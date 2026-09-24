@@ -907,6 +907,19 @@ def parsear_perfil(crudo: str) -> dict:
         if int(m_tot.group(1)) == 0:
             o["sin_originadores_declarado"] = True
             o["declarado_por"] = "Model Match: «Total Originators 0»"
+
+    # La OTRA forma en que Model Match declara que no hay: la frase dentro de
+    # `Buyer Side Relationships`. Es el caso real de Aaron Gaston (lote
+    # 73c72184): la seccion esta pegada entera y dice que no encontro
+    # relaciones en el periodo. Eso es «se miro y no hay», no «falta pegar».
+    #
+    # Las dos formas dicen lo mismo y hay que leer las dos: con solo el conteo,
+    # un perfil cuyo Model Match usa la frase se queda en `pendiente` para
+    # siempre pidiendo algo que ya esta.
+    if re.search(r"no originator relationships? found", txt, re.I):
+        o["sin_originadores_declarado"] = True
+        o["declarado_por"] = ("Model Match: «No originator relationships "
+                              "found for this period»")
     # MEDIDA, no declarada: el dict fijo de antes decia "volumen" sobre
     # porcentajes de unidades y nada fallaba.
     o["wallet_share_base"] = {

@@ -38,7 +38,27 @@ from motor.veredicto import puede_contactarse
 
 #: Lo que NO se hereda de la evaluación anterior porque se recalcula.
 #: Todo lo demás --los `ev2_*`, las R y las E del libro-- se conserva tal cual.
-SE_RECALCULAN = ("mm_buyside_anualizado", "ig_seguidores")
+#:
+#: Solo van aquí los campos que **el libro no produce**. Esta lista tiene que
+#: cubrir TODOS los `mm_*` que `campos_de_modelmatch` produce: uno que falte se
+#: heredaría de la `entrada` vieja y la captura nueva no lo movería -- el valor
+#: viejo ganaría en silencio, que es la peor forma. `test_reevaluacion` lo
+#: comprueba contra `CAMPOS_MM`.
+SE_RECALCULAN = ("mm_buyside_anualizado", "mm_share_buy",
+                 "ig_idioma_es", "ig_idioma_posts")
+
+#: `ig_seguidores` SALIO de esa lista el 2026-09-23, y no para recalcularlo de
+#: otra forma sino para dejar de tocarlo.
+#:
+#: El libro v3 trae la columna `IG seguidores`, y en la corrida completa el
+#: libro gana: `combinar_con_el_libro` no pisa un número que ya está. Isabella
+#: decidió dejar eso como está. Pero la re-evaluación lo borraba de la base
+#: heredada, así que a quien no tiene muro leído se le perdían los seguidores
+#: del libro en cada captura, y las reglas que los leen pasaban de activarse a
+#: «no evaluada» sin que nadie tocara un dato.
+#:
+#: Ahora las dos vías dicen lo mismo, que es el punto: una re-evaluación no
+#: puede diferir de la corrida completa en algo que nadie decidió.
 
 
 class NoSePudoReevaluar(RuntimeError):
@@ -55,10 +75,20 @@ def base_del_libro(entrada_anterior: dict | None) -> dict:
             if k not in SE_RECALCULAN}
 
 
-def reevaluar(realtor_id: str, *, lector) -> dict:
+def reevaluar(realtor_id: str, *, lector, guardar: bool = True) -> dict:
     """Recalcula y escribe UNA evaluación. Devuelve qué cambió.
 
     `lector` expone `leer(tabla, consulta)` y `escribir(tabla, filas)`.
+
+    Con `guardar=False` hace todo menos la escritura: lee los mismos datos,
+    aplica las mismas reglas y devuelve el mismo dict. Existe para medir el
+    impacto de un cambio de reglas ANTES de que ese cambio esté desplegado --
+    escribir una evaluación con una versión que producción todavía no corre
+    deja el diagnóstico más nuevo marcado como «de una versión anterior» en la
+    pantalla, que es peor que no tenerlo.
+
+    Es el mismo camino, no una copia: una medición por un camino paralelo mide
+    el camino paralelo.
     """
     from captura.parser_mm import unir_perfiles
     from supabase.correr_motor import campos_de_modelmatch
@@ -66,7 +96,8 @@ def reevaluar(realtor_id: str, *, lector) -> dict:
     _c, evs, _ = lector.leer(
         "v_evaluacion_actual",
         "?select=entrada,dolor_primario,excluido,excluido_motivo,"
-        "veredicto_contacto&realtor_id=eq.%s" % realtor_id)
+        "veredicto_contacto,apertura,gating_intensidad,version_reglas"
+        "&realtor_id=eq.%s" % realtor_id)
     anterior = (evs or [None])[0]
     if not anterior:
         # El MISMO mensaje que `base_del_libro`: son la misma causa, y dos
@@ -138,14 +169,23 @@ def reevaluar(realtor_id: str, *, lector) -> dict:
         "excluido_motivo": motivo_libro if excluido else None,
         "veredicto_contacto": ver.a_dict(),
     }
-    cod, resp, _ = lector.escribir("evaluaciones", [fila], devolver=False)
-    if cod >= 400:
-        raise NoSePudoReevaluar("no se pudo escribir: %s" % str(resp)[:150])
+    if guardar:
+        cod, resp, _ = lector.escribir("evaluaciones", [fila], devolver=False)
+        if cod >= 400:
+            raise NoSePudoReevaluar("no se pudo escribir: %s" % str(resp)[:150])
 
     antes_ver = (anterior.get("veredicto_contacto") or {}).get("estado")
     return {
+        "guardado": guardar,
         "dolor_antes": anterior.get("dolor_primario"),
         "dolor_ahora": ev.dolor_primario,
+        "apertura_antes": anterior.get("apertura"),
+        "apertura_ahora": ev.apertura,
+        "gating_antes": anterior.get("gating_intensidad"),
+        "gating_ahora": (ev.gating.intensidad if ev.gating else None),
+        "gating_regla": (ev.gating.regla_id if ev.gating else None),
+        "version_antes": anterior.get("version_reglas"),
+        "mm_share_buy": reg.get("mm_share_buy"),
         "veredicto_antes": antes_ver,
         "veredicto_ahora": ver.estado,
         "version_reglas": VERSION_REGLAS,

@@ -138,11 +138,13 @@ def test_la_regla_que_lo_pide_existe_y_lo_nombra_igual():
     from motor.reglas import REGLAS
 
     piden = {c for r in REGLAS for c in r.campos if c.startswith("mm_")}
-    from supabase.correr_motor import DEL_PERFIL_MM
+    from supabase.correr_motor import CAMPOS_MM
 
     assert piden, "ninguna regla pide campos de Model Match"
-    assert piden <= set(DEL_PERFIL_MM.values()), (
-        piden - set(DEL_PERFIL_MM.values()))
+    # `CAMPOS_MM` y no `DEL_PERFIL_MM`: `mm_share_buy` no se copia de un campo
+    # del perfil, se calcula de `sf_buy`/`sf_sell`. Un `mm_*` que una regla
+    # pida y este modulo no produzca deja la regla sin evaluar para siempre.
+    assert piden <= set(CAMPOS_MM), piden - set(CAMPOS_MM)
 
 
 def test_modelmatch_salio_de_los_campos_ausentes():
@@ -151,6 +153,72 @@ def test_modelmatch_salio_de_los_campos_ausentes():
 
     assert "modelmatch" not in FALTAN_HOY
     assert "contrastes_de_mercado" in FALTAN_HOY
+
+
+# ══ MODEL MATCH DECLARA QUE NO HAY, DE DOS FORMAS ════════════════════════════
+
+TEXTO_SIN_RELACIONES = """Buyer Side Relationships
+No originator relationships found for this period.
+Seller Side Relationships
+Total Originators 0
+"""
+
+
+def test_no_originator_relationships_found_es_vacio_declarado():
+    """Caso real: Aaron Gaston, lote 73c72184.
+
+    La sección está pegada ENTERA y dice que no encontró relaciones en el
+    periodo. Es «se miró y no hay», no «falta pegar» — y el motor lo leía como
+    falta, dejándolo en `pendiente_modelmatch` pidiendo algo que ya estaba.
+    """
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil(TEXTO_SIN_RELACIONES)
+    assert p["sin_originadores_declarado"] is True
+    assert "No originator relationships" in p["declarado_por"]
+    v = puede_contactarse(p)
+    assert v.estado == OK, v.a_dict()
+    assert v.evidencia["vacio_declarado"] is True
+
+
+def test_total_originators_cero_tambien_es_vacio_declarado():
+    """La otra forma. Hay que leer las dos: con una sola, el perfil cuyo Model
+    Match usa la otra se queda en `pendiente` para siempre."""
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil("Total Originators 0\nTop 3 Concentration 0.0%\n")
+    assert p["sin_originadores_declarado"] is True
+    assert puede_contactarse(p).estado == OK
+
+
+def test_con_originadores_de_verdad_no_se_declara_vacio():
+    """El control: la frase no puede aparecer donde sí hay reparto."""
+    from captura.parser_mm import parsear_perfil
+
+    p = parsear_perfil("Total Originators 4\nTop 3 Concentration 100.0%\n")
+    assert not p.get("sin_originadores_declarado")
+
+
+# ══ NINGUNA CAPTURA DE PRUEBA ENTRA A PRODUCCIÓN ═════════════════════════════
+
+def test_la_api_rechaza_una_captura_marcada_como_fixture():
+    """El lote 8dd94e61 entró porque el servidor no podía decir que no.
+
+    Un script de Playwright verificando la pantalla corrió contra el WSGI
+    local --que usa credenciales de producción-- y tocó «Guardar». No faltó
+    una advertencia: faltó que el servidor rechazara.
+    """
+    from api.rutas import guardar
+
+    cod, r = guardar({"fixture": True, "realtor_id": "r1",
+                      "overview": "Agents\nAlguien\n"})
+    assert cod == 400
+    assert r.get("fixture") is True
+
+    cod, r = guardar({"realtor_id": "r1",
+                      "overview": "Agents\nFulana de Tal\nBuyer Units\n9\n"})
+    assert cod == 400, r
+    assert "Fulana de Tal" in r["error"]
 
 
 def _correr():

@@ -227,18 +227,38 @@ REGLAS: tuple[Regla, ...] = (
     ),
 
     # ── P-Q14 · Sus clientes chocan con la barrera de idioma ────────────────
+    #
+    # CUANDO INSTAGRAM MIDIO, MANDA INSTAGRAM. Un muro utilizable con 10 posts
+    # o mas es una medicion del idioma en que publica de verdad; la bio es una
+    # frase sobre si mismo. Ochoa publica 0 de 20 en español y su bio declara
+    # atencion en español: el motor le ponia P-Q14 = 3 y AFIRMA.
+    #
+    # `combinar_con_el_libro` no podia arreglarlo -- no pisa un True del libro
+    # con un False-- y esta bien que no lo haga: la correccion va aca, en la
+    # regla, donde queda escrito cual gano y por que.
+    #
+    # Sin medicion, la bio sola llega a 1/E1 y no mas. Es una declaracion de
+    # intencion sin muro que la sostenga, y 3/E0 la convertia en AFIRMA.
     Regla(
-        id="P-Q14-1", qualifier="P-Q14", familia="P", intensidad=3, grado="E0",
-        texto="declara atención en español y además escribe en español",
-        campos=("ev2_espanol_decl", "ev_caracteres_espanol"),
-        condicion=lambda r: _y(_b(r, "ev2_espanol_decl"),
-                               _ge(r, "ev_caracteres_espanol", 1)),
+        id="P-Q14-IG", qualifier="P-Q14", familia="P", intensidad=3, grado="E0",
+        texto="publica en español en su propio muro",
+        campos=("ig_idioma_es", "ig_idioma_posts"),
+        condicion=lambda r: _b(r, "ig_idioma_es"),
     ),
     Regla(
-        id="P-Q14-2", qualifier="P-Q14", familia="P", intensidad=2, grado="E1",
+        id="P-Q14-1", qualifier="P-Q14", familia="P", intensidad=1, grado="E1",
+        texto="declara atención en español en su bio",
+        campos=("ev2_espanol_decl", "ev_caracteres_espanol", "ig_idioma_es"),
+        condicion=lambda r: _y(_no(_tiene(r, "ig_idioma_es")),
+                               _y(_b(r, "ev2_espanol_decl"),
+                                  _ge(r, "ev_caracteres_espanol", 1))),
+    ),
+    Regla(
+        id="P-Q14-2", qualifier="P-Q14", familia="P", intensidad=1, grado="E1",
         texto="contenido publicado en español",
-        campos=("R5_espanol",),
-        condicion=lambda r: _ge(r, "R5_espanol", 6),
+        campos=("R5_espanol", "ig_idioma_es"),
+        condicion=lambda r: _y(_no(_tiene(r, "ig_idioma_es")),
+                               _ge(r, "R5_espanol", 6)),
     ),
     # P-Q14-3 ELIMINADA el 2026-09-23. Decia «identidad hispana sin evidencia
     # de contenido en español» y se activaba SOLO con `R7 >= 8`, o sea solo por
@@ -449,25 +469,76 @@ REGLAS: tuple[Regla, ...] = (
     ),
 
     # ── J-Q01 · Dependencia del financiamiento · GATING ─────────────────────
+    #
+    # Cuando hay Model Match, MANDA su registro: `mm_share_buy` es la fracción
+    # de operaciones del lado comprador sobre el total, contada por unidades.
+    # La bio dice a qué se dedica; Model Match dice qué cerró.
+    #
+    # Gaston: 3 buy / 6 sell -> 0,33 -> J-Q01 = 1.  Ochoa: 9 / 3 -> 0,75 -> 3.
+    #
+    # Grado E1 y no E0: es un registro de un tercero, no su propio texto. La
+    # bio daba 3/E0 AFIRMA sobre «buyside sí, listing no», que es menos dato y
+    # más fuerza -- exactamente al revés de lo que corresponde.
+    # SON DOS BANDAS, NO TRES, y el motivo es el techo de E1.
+    #
+    # La version de tres --0,60 / 0,40 / resto, con intensidades 3, 2 y 1--
+    # declaraba un 3 que el techo de E1 recorta a 2, asi que las dos primeras
+    # bandas terminaban en el mismo numero y solo cambiaba el texto. Model
+    # Match es el registro de un tercero, no el texto propio de la persona:
+    # por definicion no es E0, y E1 no llega a 3 sin una excepcion declarada
+    # en el archivo 05 -- que es justo lo que el 2026-09-22 se decidio no abrir
+    # para J-Q04.
+    #
+    # Para lo que J-Q01 hace --abrir o cerrar la compuerta en <= 1-- las dos
+    # bandas dicen lo mismo que las tres. El unico corte que cambia algo es
+    # 0,40. Gaston: 3 buy / 6 sell -> 0,33 -> 1, compuerta cerrada. Ochoa:
+    # 9 / 3 -> 0,75 -> 2, compuerta abierta.
+    Regla(
+        id="J-Q01-MM1", qualifier="J-Q01", familia="J", intensidad=2,
+        grado="E1",
+        texto="su registro de Model Match incluye el lado comprador",
+        campos=("mm_share_buy",),
+        condicion=lambda r: _ge(r, "mm_share_buy", 0.40),
+    ),
+    Regla(
+        id="J-Q01-MM2", qualifier="J-Q01", familia="J", intensidad=1,
+        grado="E1",
+        texto="su registro de Model Match es mayoritariamente del lado vendedor",
+        campos=("mm_share_buy",),
+        # Sin `_tiene`: `_ge` ya devuelve None cuando el campo falta, y `_no`
+        # lo propaga. Con `_tiene` la regla daria False sobre un registro vacio
+        # -- «no aplica» en vez de «no se pudo evaluar», que es la distincion
+        # que sostiene todo lo demas.
+        condicion=lambda r: _no(_ge(r, "mm_share_buy", 0.40)),
+    ),
+
+    # Las tres de la BIO ceden cuando hay Model Match: sin esto, la bio de
+    # Ochoa daba 3/E0 y el registro 3/E1, y ganaba la bio por grado -- o sea
+    # que el dato mas fuerte perdia contra la declaracion. En Gaston era peor:
+    # la bio lo habria puesto por encima de su propio registro de 3 buy / 6
+    # sell, que es justo lo que la compuerta existe para leer.
     Regla(
         id="J-Q01-1", qualifier="J-Q01", familia="J", intensidad=3, grado="E0",
         texto="se declara agente de compradores",
-        campos=("ev2_buy_side", "ev2_listing_side"),
-        condicion=lambda r: _y(_b(r, "ev2_buy_side"),
-                               _no(_b(r, "ev2_listing_side"))),
+        campos=("ev2_buy_side", "ev2_listing_side", "mm_share_buy"),
+        condicion=lambda r: _y(_no(_tiene(r, "mm_share_buy")),
+                               _y(_b(r, "ev2_buy_side"),
+                                  _no(_b(r, "ev2_listing_side")))),
     ),
     Regla(
         id="J-Q01-2", qualifier="J-Q01", familia="J", intensidad=2, grado="E1",
         texto="libro predominantemente buyside",
-        campos=("ev2_primera_casa",),
-        condicion=lambda r: _b(r, "ev2_primera_casa"),
+        campos=("ev2_primera_casa", "mm_share_buy"),
+        condicion=lambda r: _y(_no(_tiene(r, "mm_share_buy")),
+                               _b(r, "ev2_primera_casa")),
     ),
     Regla(
         id="J-Q01-3", qualifier="J-Q01", familia="J", intensidad=1, grado="E1",
         texto="menor dependencia del financiamiento del comprador",
-        campos=("ev2_listing_side", "ev2_buy_side"),
-        condicion=lambda r: _y(_b(r, "ev2_listing_side"),
-                               _no(_b(r, "ev2_buy_side"))),
+        campos=("ev2_listing_side", "ev2_buy_side", "mm_share_buy"),
+        condicion=lambda r: _y(_no(_tiene(r, "mm_share_buy")),
+                               _y(_b(r, "ev2_listing_side"),
+                                  _no(_b(r, "ev2_buy_side")))),
     ),
 
     # ── J-Q03 · Percepción dentro de su comunidad ───────────────────────────

@@ -172,6 +172,17 @@ def senales_de(fila: dict, *, handles_repetidos=frozenset()) -> dict:
         en = _num(s.get("idioma_publica_en")) or 0
         if es + en > 0:
             salida["ev2_espanol_decl"] = es > en
+            # Y ADEMAS en su propio campo, que el libro no toca.
+            #
+            # `ev2_espanol_decl` no alcanza: `combinar_con_el_libro` no pisa un
+            # True del libro con un False, asi que una medicion de 0 de 20
+            # posts en español no podia contradecir a la bio -- y no debe
+            # poder, porque esa regla protege TODO lo demas que trae el libro.
+            #
+            # Un campo propio deja que P-Q14 elija la fuente en la regla, que
+            # es donde se puede escribir por que. Ver P-Q14-IG.
+            salida["ig_idioma_es"] = es > en
+            salida["ig_idioma_posts"] = captions
 
     if leido:
         if s.get("audiencia_dominante"):

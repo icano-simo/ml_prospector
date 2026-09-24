@@ -644,6 +644,30 @@ def guardar(d: dict) -> tuple[int, dict]:
         overview = d.get("overview") or ""
         ms = [str(x) for x in (d.get("market_signals") or [])]
 
+    # ── NINGUNA CAPTURA DE PRUEBA ENTRA A PRODUCCION ────────────────────────
+    #
+    # El lote 8dd94e61 llego asi: un script de Playwright verificando la
+    # pantalla de captura corrio contra el WSGI LOCAL -- que usa las
+    # credenciales de produccion-- y toco «Guardar». Quedo un Overview de
+    # «Fulana de Tal» con los condados de Ochoa pegado al realtor_id de Crespo,
+    # vigente, compitiendo con su captura real.
+    #
+    # No falto una advertencia: falto que el servidor pudiera decir que no. Por
+    # eso la marca va en el PAYLOAD y la rechaza la API, no un comentario en el
+    # script. Un script de prueba que manda `fixture: true` no puede escribir
+    # aunque apunte a produccion por error.
+    if d.get("fixture") or d.get("es_prueba"):
+        return 400, {"error": (
+            "Esta captura viene marcada como fixture y la base de producción "
+            "no las acepta. Si estás verificando la pantalla, apuntá a una "
+            "base de prueba."), "fixture": True}
+
+    # Y el nombre que usan todos los fixtures de este repo.
+    if "Fulana de Tal" in (d.get("overview") or ""):
+        return 400, {"error": (
+            "El Overview es el de «Fulana de Tal», que es el fixture de las "
+            "pruebas. No se guarda en producción."), "fixture": True}
+
     if not realtor_id:
         return 400, {"error": "falta realtor_id: se parte del realtor"}
     if not overview.strip():
@@ -1368,8 +1392,13 @@ def lectura(params: dict) -> tuple[int, dict]:
 
     sin_dolor = None
     if not (ev or {}).get("dolor_primario"):
+        # `apertura` distingue las dos formas de no tener dolor primario: no
+        # saber nada todavía, y saber que el ángulo hipotecario no le aplica.
+        # Sin pasarla, un agente de listings caía en el copy de «lo que falta
+        # es nuestro» y en la cola de enriquecimiento.
         c = copy_sin_dolor(realtor,
-                           nombre_estado=ESTADOS.get(realtor.get("estado")))
+                           nombre_estado=ESTADOS.get(realtor.get("estado")),
+                           apertura_motor=(ev or {}).get("apertura"))
         sin_dolor = {"titular": c.titular, "cuerpo": c.cuerpo,
                      "apertura": c.apertura, "cola": c.cola, "rama": c.rama,
                      "falta": list(c.falta)}

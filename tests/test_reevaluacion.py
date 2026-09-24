@@ -154,7 +154,37 @@ def test_la_evidencia_del_libro_se_hereda_sin_tocar_el_excel():
     # Lo que se recalcula NO se hereda: heredarlo dejaria el valor viejo si la
     # captura nueva no lo trae.
     assert "mm_buyside_anualizado" not in base
-    assert "ig_seguidores" not in base
+    assert "mm_share_buy" not in base
+    # `ig_seguidores` SI se hereda desde el 2026-09-23. El libro v3 trae la
+    # columna y en la corrida completa el libro gana --decisión de Isabella,
+    # sin cambios-- así que borrarlo aquí le quitaba los seguidores a todo el
+    # que no tiene muro leído, y las reglas que los leen pasaban a «no
+    # evaluada». Las dos vías tienen que decir lo mismo.
+    assert base["ig_seguidores"] == ENTRADA_ANTERIOR["ig_seguidores"]
+
+
+def test_la_simulacion_no_escribe_nada_y_calcula_igual():
+    """`--simular` mide el impacto de un cambio de reglas sin desplegarlo.
+
+    Una simulación que igual escribe es peor que no tenerla: deja en producción
+    evaluaciones de una versión que la pantalla todavía no corre, y ahí salen
+    marcadas como «de una versión anterior» siendo las más nuevas.
+
+    Y tiene que calcular lo MISMO: si la simulación tomara otro camino, estaría
+    midiendo el otro camino.
+    """
+    seco = _lector()
+    r = reevaluar("r-1", lector=seco, guardar=False)
+    assert seco.escrito == [], seco.escrito
+    assert r["guardado"] is False
+
+    mojado = _lector()
+    r2 = reevaluar("r-1", lector=mojado, guardar=True)
+    assert len(mojado.escrito) == 1
+    assert r2["guardado"] is True
+    # El mismo resultado por los dos caminos, salvo la marca de si guardó.
+    assert {k: v for k, v in r.items() if k != "guardado"} == {
+        k: v for k, v in r2.items() if k != "guardado"}
 
 
 def test_sin_evaluacion_anterior_se_dice_que_hacer():

@@ -78,8 +78,12 @@ def test_la_pantalla_pinta_el_aviso_y_la_marca():
 def test_la_version_actual_no_es_la_de_las_evaluaciones_guardadas():
     """El caso real, fijado: si alguien vuelve a correr el motor esto cambia,
     y entonces esta prueba hay que actualizarla A PROPOSITO."""
-    assert VERSION_REGLAS == "2026.09.23-sin-r7"
+    assert VERSION_REGLAS == "2026.09.23-compuertas"
     assert VERSION_REGLAS != "2026.09.23-vocabulario-de-oficio"
+    # Y las 4.187 evaluaciones guardadas son de `-sin-r7`, que ya no es la
+    # actual: hasta que se vuelva a correr el motor, la pantalla tiene que
+    # decir que ese diagnóstico es de una versión anterior.
+    assert VERSION_REGLAS != "2026.09.23-sin-r7"
 
 
 def _correr():

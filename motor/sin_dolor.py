@@ -21,6 +21,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+#: El codigo que pone `motor.evaluar` cuando la compuerta J-Q01 cierra. Se
+#: importa de alla, y no se copia, para que no haya dos literales que un dia
+#: puedan separarse sin que nada falle.
+from motor.evaluar import APERTURA_SIN_HIPOTECA as SIN_APERTURA_HIPOTECARIA
 from motor.lectura import de_cada_diez, verificar_vocabulario
 
 COLA_ENRIQUECIMIENTO = "enriquecimiento"
@@ -56,13 +60,38 @@ def _volumen(unidades: float | None) -> str:
     return "bajo"
 
 
-def copy_sin_dolor(realtor: dict, *, nombre_estado: str | None = None) -> CopySinDolor:
+def copy_sin_dolor(realtor: dict, *, nombre_estado: str | None = None,
+                   apertura_motor: str | None = None) -> CopySinDolor:
     """El copy del caso mas frecuente, ramificado por lo poco que sabemos."""
     nombre = (realtor.get("nombre_completo") or "").strip() or "este realtor"
     # Los nombres del libro vienen en mayusculas; en una frase eso grita.
     if nombre.isupper():
         nombre = nombre.title()
     estado = nombre_estado or realtor.get("estado") or "su estado"
+
+    # ── LA COMPUERTA J-Q01 NO ES «NO SABEMOS» ───────────────────────────────
+    #
+    # Sin esta rama, quien cierra la mayoria de sus operaciones del lado
+    # vendedor caeria en el copy de arriba --«lo que falta es nuestro»,
+    # cola de enriquecimiento-- y es exactamente al reves: de el sabemos
+    # bastante, incluido lo que lo descarta. Lo que no aplica es EL ANGULO.
+    #
+    # Y se puede contactar. La pregunta no es de financiamiento del comprador
+    # como producto suyo, es de una venta suya que se cae porque al comprador
+    # no le sale el prestamo -- que es el unico lugar donde una hipoteca le
+    # duele a un agente de listings.
+    if apertura_motor == SIN_APERTURA_HIPOTECARIA:
+        return CopySinDolor(
+            titular=("A %s no le abrimos por la hipoteca: su negocio no pasa "
+                     "por ahí." % nombre),
+            cuerpo=("Cierra la mayoría de sus operaciones del lado vendedor, "
+                    "según su propio registro de Model Match. Un ángulo de "
+                    "financiamiento del comprador no le toca el negocio, y "
+                    "abrirle con uno es decirle que no lo conocemos."),
+            apertura=("¿Se te ha caído alguna venta este año porque al "
+                      "comprador no le salió el préstamo?"),
+            cola=COLA_CONTACTO, rama="sin apertura hipotecaria",
+            falta=("con qué lender trabajan los compradores de sus listings",))
     brokerage = (realtor.get("brokerage") or "").strip()
     unidades = realtor.get("unidades_ano")
     rama_vol = _volumen(unidades)
