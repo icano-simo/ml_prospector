@@ -457,6 +457,12 @@
                 ? o.enganche_pct + ' % down · ' : '') +
               (o.tasa != null ? String(o.tasa).replace('.', ',') + ' %' : '') +
               '</span>' : '');
+          /* Financiada y sin importe: Model Match trae el loan type y el
+             lender pero no el monto. Se dice, no se deja en blanco -- un hueco
+             se lee como que no hubo loan, que es justo lo contrario. */
+          if (o.prestamo == null) {
+            loan += '<span class="s">monto no disponible</span>';
+          }
         } else if (o.estado_prestamo === 'cash_segun_mm') {
           loan = 'Cash';
         } else {
