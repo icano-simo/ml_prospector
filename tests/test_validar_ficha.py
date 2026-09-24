@@ -32,13 +32,20 @@ POST = ("How I meet my clients?? He kept it for a couple months. Worked on "
 PAQUETE = construir(
     realtor={"id": "r-1", "nombre_completo": "AGENTE DE PRUEBA",
              "brokerage": "Una Inmobiliaria", "estado": "IL",
-             "sf_lead_id": "00Q000000000000"},
+             "sf_lead_id": "00Q000000000000",
+             # El archivo original: un teléfono y un email que NO están en
+             # ninguna otra fuente. Son los que hay que poder marcar.
+             "telefono_e164": "+17735550100",
+             "email_principal": "viejo@ejemplo.com"},
     evaluacion={"resultado": {"activaciones": [
         {"qualifier": "P-Q01", "familia": "P", "intensidad": 2, "grado": "E1",
          "acto": "PREGUNTA", "regla_id": "P-Q01-2", "texto": "FHA o DPA",
          "campos_leidos": {"ev2_fha_gob": True}}]}},
     perfil_mm={"buyer_units": 18.0, "sf_buy": 18, "sf_sell": 7,
-               "capturado_en": "2026-09-23T23:54:00+00:00"},
+               "capturado_en": "2026-09-23T23:54:00+00:00",
+               "emails": ["agente@ejemplo.com"],
+               "contacto": {"telefono_directo": "(773) 362-5798",
+                            "oficina": "Una Inmobiliaria"}},
     resumen_tx={
         "compras": {"total": 18, "financiada": 8, "cash_segun_mm": 9,
                     "cash_provisional": 1, "no_leido": 0},
@@ -63,14 +70,18 @@ PAQUETE = construir(
     ig={"handle": "agente_de_prueba", "clase_perfil": "realtor_activo",
         "utilizable": True, "captions_n": 20, "comentarios_n": 12,
         "capturado_en": "2026-09-21T20:45:18+00:00",
-        "senales": {"captions_texto": "2026-05-15 | %s\"." % POST,
+        "senales": {"captions_texto": "2026-05-15 | %s Hablo Español. "
+                                      "Llámame al 773-362-5798 o escribe a "
+                                      "agente@ejemplo.com\"." % POST,
                     "comentarios_texto": "Sent you a dm 🙌 ¶ 🔥🔥🔥hmu",
                     "tema_dominante": "celebracion_cierre",
-                    "idioma_publica_es": "0", "idioma_publica_en": "19",
+                    "idioma_publica_es": "4", "idioma_publica_en": "16",
                     "marcadores_culturales": "familia:2 | cultura_latina:1",
                     "barrios_mencionados": "Pilsen:2"}},
+    # Las filas CRUDAS de `pacs.contactos`. El resto de las fuentes --archivo
+    # original, Model Match e Instagram-- las junta `construir`.
     contactos=[{"canal": "telefono", "valor": "(773) 362-5798",
-                "fuentes": ["Instagram"], "una_sola_fuente": True}],
+                "fuente": "Instagram"}],
     census=None, veredicto={"estado": "ok", "motivo": "sin operaciones con la casa"},
     salesforce=None)
 
@@ -474,6 +485,208 @@ def test_el_veredicto_va_en_el_paquete_y_dice_que_no_se_toca():
     ids = {e["id"]: e for e in PAQUETE["evidencias"]}
     assert ids["VEREDICTO"]["estado"] == "ok"
     assert "no lo cambia" in ids["VEREDICTO"]["nota"]
+
+
+# ══ 9 · LOS CONTACTOS, DE LAS CUATRO FUENTES ═════════════════════════════════
+
+def test_los_contactos_salen_de_las_cuatro_fuentes():
+    """El paquete traía 2 contactos y en la base había 7.
+
+    No faltaba el dato: faltaba juntarlo. Están en el archivo original, en
+    `pacs.contactos`, en el perfil de Model Match y en sus propios captions,
+    y ninguna de las cuatro los tiene todos.
+    """
+    cts = {e["id"]: e for e in PAQUETE["evidencias"]
+           if e["tipo"] == "contacto"}
+    fuentes = {f for e in cts.values() for f in e["fuentes"]}
+    assert "archivo original" in fuentes
+    assert "Instagram" in fuentes
+    assert any("Model Match" in f for f in fuentes)
+    assert {e["canal"] for e in cts.values()} >= {"telefono", "email",
+                                                  "instagram"}
+
+
+def test_el_mismo_telefono_en_varios_formatos_es_UN_contacto():
+    """`(773) 362-5798`, `773-362-5798` y `+17733625798` son el mismo número.
+
+    Sin normalizar antes de agrupar, la ficha mostraría cinco teléfonos donde
+    hay dos -- y ninguno tendría más de una fuente, así que la marca de «está
+    en una sola fuente» diría lo contrario de lo que pasa.
+    """
+    from motor.paquete import contactos_del_realtor
+
+    cs = contactos_del_realtor(
+        {"telefono_e164": "+17733625798"},
+        [{"canal": "telefono", "valor": "773.362.5798", "fuente": "lote"}],
+        {"contacto": {"telefono_directo": "(773) 362-5798"}},
+        {"senales": {"captions_texto": "2026-01-01 | Llámame al 773-362-5798"}})
+    tels = [c for c in cs if c["canal"] == "telefono"]
+    assert len(tels) == 1, tels
+    assert len(tels[0]["fuentes"]) == 4, tels[0]["fuentes"]
+    # Y se muestra la forma legible, no la normalizada.
+    assert not tels[0]["valor"].startswith("+")
+
+
+def test_se_marca_el_que_SOLO_esta_en_el_archivo_original():
+    """No es «está en una sola fuente» a secas: el teléfono que ella publica
+    hoy en Instagram también está en una sola, y ese es el bueno. El que hay
+    que mirar es el que solo sobrevive en el archivo."""
+    cts = [e for e in PAQUETE["evidencias"] if e["tipo"] == "contacto"]
+    viejo = next(c for c in cts if c["valor"] == "viejo@ejemplo.com")
+    nuevo = next(c for c in cts if c["valor"] == "agente@ejemplo.com")
+    assert viejo["difiere"] is True
+    assert nuevo["difiere"] is False
+    ig = next(c for c in cts if c["canal"] == "instagram")
+    assert ig["difiere"] is False, "su cuenta no es un dato dudoso"
+
+
+# ══ 10 · UN EXCLUIDO NO TIENE DOLORES NI MENSAJE ═════════════════════════════
+
+def _paquete_excluido():
+    return construir(
+        realtor={"id": "r-2", "nombre_completo": "EXCLUIDO DE PRUEBA"},
+        evaluacion={"resultado": {"activaciones": [
+            {"qualifier": "P-Q01", "familia": "P", "intensidad": 3,
+             "grado": "E0", "regla_id": "P-Q01-1", "texto": "x",
+             "campos_leidos": {}}]}},
+        perfil_mm=None, resumen_tx=None, filas_tx=None, mercados=None,
+        ig=None, contactos=None, census=None,
+        veredicto={"estado": "excluido",
+                   "motivo": "ya trabaja con Supreme Lending"})
+
+
+def test_el_paquete_de_un_excluido_no_lleva_activaciones():
+    """La guarda va en el DATO, no en el aviso.
+
+    Dejar las activaciones sería poner el material del que salen los dolores
+    encima de la mesa y confiar en que nadie lo use.
+    """
+    p = _paquete_excluido()
+    tipos = [e["tipo"] for e in p["evidencias"]]
+    assert "activacion_pacs" not in tipos
+    e = {x["id"]: x for x in p["evidencias"]}["PACS"]
+    assert e["tipo"] == "pendiente"
+    assert "EXCLUIDO" in e["pendiente"]
+
+
+def test_el_validador_rechaza_dolores_y_mensaje_de_un_excluido():
+    p = _paquete_excluido()
+    f = {"hash_paquete": p["hash_paquete"],
+         "dolores": [{"dolor": "x", "evidencia_texto": "y",
+                      "grado": ["Hipótesis"], "pregunta": "¿?",
+                      "evidencias": ["VEREDICTO"]}],
+         "mensaje": {"sms": {"texto": "Hi", "evidencias": ["VEREDICTO"]}}}
+    problemas = validar(f, p)
+    assert any(x["seccion"] == "dolores" and "excluido" in x["motivo"]
+               for x in problemas), problemas
+    assert any(x["seccion"] == "mensaje" and "excluido" in x["motivo"]
+               for x in problemas), problemas
+
+
+def test_un_excluido_SI_puede_tener_bio():
+    """«Solo la bio y lo que significa». No se apaga la ficha entera."""
+    p = _paquete_excluido()
+    f = {"hash_paquete": p["hash_paquete"],
+         "cabecera": {"bio": {"texto": "Trabaja con la casa.",
+                              "evidencias": ["VEREDICTO"]}}}
+    assert validar(f, p) == []
+
+
+# ══ 11 · EL GRADO, POR FUENTE EXACTA ═════════════════════════════════════════
+
+def test_el_mercado_y_el_Census_NO_sostienen_un_Dato():
+    """Son estadísticas del condado, no de esta persona.
+
+    De «en Cook el 14 % son FHA» a «sus buyers usan FHA» hay un salto que
+    alguien tiene que validar en la llamada, y llamarlo Dato lo borra.
+    """
+    f = _ficha()
+    f["dolores"][1]["grado"] = ["Dato"]
+    f["dolores"][1]["evidencias"] = ["MM-MK-17031"]
+    f["dolores"][1]["evidencia_texto"] = "el fallout del condado"
+    p = validar(f, PAQUETE)
+    assert any("el grado no corresponde" in x["motivo"] for x in p), p
+
+
+def test_MM_TX_y_MM_OV_si_sostienen_un_Dato():
+    f = _ficha()
+    for ident in ("MM-TX-RESUMEN", "MM-OV", "MM-TX-2026-07-30"):
+        f["dolores"][1]["grado"] = ["Dato"]
+        f["dolores"][1]["evidencias"] = [ident]
+        f["dolores"][1]["evidencia_texto"] = "su registro"
+        assert validar(f, PAQUETE) == [], ident
+
+
+# ══ 12 · EL IDIOMA DEL SMS ═══════════════════════════════════════════════════
+
+def test_un_SMS_en_espanol_con_evidencia_de_idioma_pasa():
+    """El fixture tiene 4 posts en español y un «Hablo Español» suyo."""
+    assert validar(_ficha(), PAQUETE) == []
+
+
+def test_un_SMS_en_espanol_SIN_evidencia_de_idioma_se_rechaza():
+    """Es la regla de compliance más fácil de romper sin darse cuenta.
+
+    Un apellido hispano y un SMS en español parecen una cortesía. No lo son:
+    es inferir origen y decidir el trato a partir de él.
+    """
+    p = construir(
+        realtor={"id": "r-3", "nombre_completo": "APELLIDO HISPANO"},
+        evaluacion=None, perfil_mm=None, resumen_tx=None, filas_tx=None,
+        mercados=None,
+        ig={"handle": "h", "senales": {
+            "captions_texto": "2026-01-01 | Just listed in Chicago",
+            "idioma_publica_es": "0", "idioma_publica_en": "20"}},
+        contactos=None, census=None, veredicto={"estado": "ok"})
+    f = {"hash_paquete": p["hash_paquete"], "mensaje": {
+        "sms": {"texto": "Hola, ¿tienes 15 min esta semana para un café?",
+                "evidencias": ["VEREDICTO"]}}}
+    problemas = validar(f, p)
+    assert any("evidencia de idioma" in x["motivo"] for x in problemas), problemas
+
+
+def test_un_SMS_en_ingles_no_necesita_evidencia_de_idioma():
+    """El control: la regla no es «no escribas en español», es «no lo decidas
+    por el nombre»."""
+    p = construir(
+        realtor={"id": "r-4", "nombre_completo": "APELLIDO HISPANO"},
+        evaluacion=None, perfil_mm=None, resumen_tx=None, filas_tx=None,
+        mercados=None, ig=None, contactos=None, census=None,
+        veredicto={"estado": "ok"})
+    f = {"hash_paquete": p["hash_paquete"], "mensaje": {
+        "sms": {"texto": "Hi, open to a quick 15 min chat this week?",
+                "evidencias": ["VEREDICTO"]}}}
+    assert validar(f, p) == []
+
+
+# ══ 13 · EL ENCAJE ═══════════════════════════════════════════════════════════
+
+def test_el_encaje_exige_una_de_las_tres_clases():
+    f = _ficha()
+    f["encaje"] = {"clase": "Buenísimo", "razones": [
+        {"texto": "a", "evidencias": ["MM-TX-RESUMEN"]},
+        {"texto": "b", "evidencias": ["MM-TX-RESUMEN"]}]}
+    p = validar(f, PAQUETE)
+    assert any("no es una de las tres" in x["motivo"] for x in p), p
+
+
+def test_las_razones_del_encaje_se_validan_como_cualquier_frase():
+    """El encaje es juicio, pero el juicio tiene que apoyarse en algo."""
+    f = _ficha()
+    f["encaje"] = {"clase": "Nutrición", "razones": [
+        {"texto": "Cierra 42 buys al año.", "evidencias": ["MM-TX-RESUMEN"]},
+        {"texto": "Un solo lender.", "evidencias": ["MM-TX-RESUMEN"]}]}
+    p = validar(f, PAQUETE)
+    assert any("no está en las evidencias" in x["motivo"] for x in p), p
+
+
+def test_un_encaje_correcto_pasa():
+    f = _ficha()
+    f["encaje"] = {"clase": "Cliente ideal", "razones": [
+        {"texto": "8 financed buys repartidos.",
+         "evidencias": ["MM-TX-RESUMEN"]},
+        {"texto": "Ningún lender pasa de 3.", "evidencias": ["MM-TX-RESUMEN"]}]}
+    assert validar(f, PAQUETE) == []
 
 
 def _correr():

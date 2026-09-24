@@ -41,10 +41,19 @@ HIPOTESIS = "Hipótesis"
 HIPOTESIS_PORQUE = "Hipótesis el porqué"
 
 #: Prefijo de evidencia -> qué grados puede sostener.
+#:
+#: `MM-MK-*` (mercado) y `CENSUS` NO sostienen un «Dato», y es la corrección
+#: del 2026-09-24: son estadísticas del condado, no de esta persona. De «en
+#: Cook el 14 % son FHA» a «sus buyers usan FHA» hay un salto que alguien tiene
+#: que validar en la llamada, y llamarlo Dato lo borra.
 _GRADO_POR_FUENTE = {
-    DATO: ("MM-", "SF-", "CENSUS"),
+    DATO: ("MM-TX", "MM-OV", "SF-"),
     LO_CUENTA_ELLA: ("IG-",),
 }
+
+#: Lo que NO escribe la ficha de un realtor excluido. Ya trabaja con la casa:
+#: escribirle es competirle su propia cartera a un colega.
+_PROHIBIDO_SI_EXCLUIDO = ("dolores", "mensaje")
 
 #: Vocabulario de lending traducido. El BD tiene que decirlo en inglés en la
 #: llamada; traducirlo aquí le obliga a volver a traducirlo.
@@ -289,6 +298,24 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
                 "ficha", "la ficha se escribió contra otro paquete",
                 "hay datos nuevos: ficha pendiente de actualizar"))
 
+    # ── UN EXCLUIDO NO TIENE DOLORES NI MENSAJE ─────────────────────────────
+    #
+    # El paquete ya no le manda las activaciones, así que no hay de dónde
+    # sacarlos. Esto es la segunda vuelta: si una ficha vieja los trae, o si
+    # alguien los escribe igual, la sección no se muestra.
+    #
+    # Es la única regla del validador que mira el CONTENIDO de una decisión de
+    # negocio, y puede porque la decisión ya está tomada: `VEREDICTO` viene
+    # calculado y la IA no lo toca.
+    excluido = (por_id.get("VEREDICTO") or {}).get("estado") == "excluido"
+    if excluido:
+        for seccion in _PROHIBIDO_SI_EXCLUIDO:
+            if ficha.get(seccion):
+                problemas.append(_problema(
+                    seccion, "el realtor está excluido y no lleva %s" % seccion,
+                    "ya trabaja con la casa: escribirle es competirle su "
+                    "propia cartera a un colega"))
+
     # ── cabecera ────────────────────────────────────────────────────────────
     cab = ficha.get("cabecera") or {}
     if cab.get("bio"):
@@ -358,6 +385,7 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
             "tiene %d" % len(sms)))
     if sms:
         problemas += _revisar_sms_sin_transacciones(sms, paquete)
+        problemas += _revisar_idioma_del_sms(sms, paquete)
 
     # ── el resto de las secciones de IA ─────────────────────────────────────
     prod = ficha.get("produccion") or {}
@@ -378,6 +406,24 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
                                    b.get("cita"), por_id)
     for i, c in enumerate(ig.get("que_cuenta_de_sus_clientes") or []):
         problemas += _revisar_cita("instagram.que_cuenta[%d]" % i, c, por_id)
+
+    # `encaje` es juicio de la IA y va siempre como Hipótesis. Lo que se
+    # comprueba es que las razones citen evidencia existente -- que el juicio
+    # se apoye en algo, no que el juicio sea el correcto.
+    enc = ficha.get("encaje") or {}
+    if enc:
+        if enc.get("clase") not in ("Cliente ideal", "Revisar", "Nutrición"):
+            problemas.append(_problema(
+                "encaje", "la clase de encaje no es una de las tres",
+                repr(enc.get("clase"))))
+        razones_enc = enc.get("razones") or []
+        if not (2 <= len(razones_enc) <= 3):
+            problemas.append(_problema("encaje", "tienen que ser 2 o 3 razones",
+                                       "hay %d" % len(razones_enc)))
+        for i, r in enumerate(razones_enc):
+            s = "encaje.razones[%d]" % i
+            problemas += _revisar_frase(s, r, i)
+            problemas += _revisar_evidencias(s, r, por_id)
 
     ctx = ficha.get("contexto") or {}
     for clave in ("mercado_resumen", "mercado_texto", "census_resumen",
@@ -417,6 +463,58 @@ def _revisar_sms_sin_transacciones(sms: str, paquete: dict) -> list[dict]:
                 "mensaje.sms", "el SMS menciona sus transacciones",
                 "nombra «%s», que sale de su Transactions" % cosa)]
     return []
+
+
+#: Palabras que solo existen en español. Detectan el idioma del SMS sin
+#: adivinar: no hay que clasificar el texto, basta con que aparezca una.
+_MARCAS_DE_ESPANOL = (
+    "hola", "gracias", "cómo", "como estás", "café", "cafecito", "tienes",
+    "tus", "tu ", "quieres", "podemos", "conocernos", "ayudamos", "sirve",
+    "semana", "llamada", "mensaje", "escríbeme", "cuéntame", "vi tu",
+)
+
+
+def _revisar_idioma_del_sms(sms: str, paquete: dict) -> list[dict]:
+    """El SMS va en español solo si hay EVIDENCIA de idioma. Nunca por el nombre.
+
+    Es la regla de compliance más fácil de romper sin darse cuenta: un apellido
+    hispano y un SMS en español parecen una cortesía. No lo son -- es inferir
+    origen y decidir el trato a partir de él, que es exactamente lo que ECOA
+    Regulation B prohíbe, y además sale mal: hay realtors de apellido hispano
+    que no hablan español y se ofenden.
+
+    Lo que SÍ vale como evidencia:
+      · `PACS-P-Q14` activado --el motor midió el idioma--;
+      · posts en español contados en `IG-RESUMEN`;
+      · que ella lo declare en un post (`IG-*` con «hablo español» o similar).
+    """
+    from motor.paquete import por_id as indice
+
+    plano = _plano(sms)
+    if not any(re.search(r"\b%s" % re.escape(_plano(m)), plano)
+               for m in _MARCAS_DE_ESPANOL):
+        return []          # no está en español: no hay nada que justificar
+
+    ev = indice(paquete)
+    if "PACS-P-Q14" in ev:
+        return []
+    resumen = ev.get("IG-RESUMEN") or {}
+    try:
+        if float(resumen.get("idioma_publica_es") or 0) > 0:
+            return []
+    except (TypeError, ValueError):
+        pass
+    for e in ev.values():
+        if e.get("tipo") != "post_instagram":
+            continue
+        t = _plano(e.get("texto") or "")
+        if ("hablo espanol" in t or "habla espanol" in t
+                or "speak spanish" in t or "en espanol" in t):
+            return []
+    return [_problema(
+        "mensaje.sms", "el SMS está en español y no hay evidencia de idioma",
+        "hace falta P-Q14, posts en español contados en IG-RESUMEN, o que "
+        "ella lo declare en un post. Nunca por el nombre (ECOA Reg. B).")]
 
 
 def secciones_con_problema(problemas: list[dict]) -> dict:

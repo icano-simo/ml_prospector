@@ -409,6 +409,32 @@
   "pendientes": {
    "escribe": "codigo",
    "description": "codigo: [{item, motivo, texto_visible}] p.ej. {item:'LO asignado', texto_visible:'Qué LO de HOMESÍ la atiende (con licencia en Illinois y que hable español)'}"
+  },
+  "encaje": {
+   "escribe": "ia",
+   "type": "object",
+   "required": [
+    "clase",
+    "razones"
+   ],
+   "properties": {
+    "clase": {
+     "enum": [
+      "Cliente ideal",
+      "Revisar",
+      "Nutrición"
+     ]
+    },
+    "razones": {
+     "type": "array",
+     "minItems": 2,
+     "maxItems": 3,
+     "items": {
+      "$ref": "#/$defs/frase"
+     }
+    }
+   },
+   "description": "Juicio de la IA sobre el encaje ICP; siempre grado Hipótesis. Se pinta junto a 'Por qué ella'."
   }
  }
 }

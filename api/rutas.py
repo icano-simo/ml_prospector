@@ -290,7 +290,6 @@ def ficha_v3(params: dict) -> tuple[int, dict]:
 
     _c, cts, _ = leer("contactos",
                       "?select=canal,valor,fuente,vigente&realtor_id=eq.%s" % rid)
-    contactos = contactos_por_canal(cts or [])
 
     # ── Model Match, del lote que manda ─────────────────────────────────────
     crudas, cuantas = capturas_que_mandan(realtor_id)
@@ -321,6 +320,13 @@ def ficha_v3(params: dict) -> tuple[int, dict]:
         ig["clase_perfil"] = cls[0].get("clase")
         ig["clase_motivo"] = cls[0].get("motivo")
         ig.setdefault("handle", cls[0].get("handle"))
+
+    # Los contactos van DESPUÉS de leer Model Match e Instagram, porque salen
+    # de las cuatro fuentes. Y usan el MISMO agrupado que el paquete: si la
+    # pantalla usara otro, ella y lo que Cowork lee dirían cosas distintas
+    # sobre el mismo teléfono.
+    from motor.paquete import contactos_del_realtor
+    contactos = contactos_del_realtor(realtor, cts or [], perfil or None, ig)
 
     ganchos = {}
     for a in activaciones:
@@ -1099,6 +1105,110 @@ def _en_orden(filas: list[dict]) -> list[dict]:
     return sorted(filas, key=lambda f: (
         _ORDEN_SECCION.get(f["parseado"].get("seccion"), 9),
         f["parseado"].get("orden") or 0))
+
+
+def paquete_de_realtor(realtor_id: str) -> dict | None:
+    """El paquete de evidencia de un realtor, leyendo lo mismo que la ficha.
+
+    Vive AQUÍ y no en `supabase/` porque lo llaman los dos: el guardado de una
+    captura --que corre en Vercel, donde `supabase/` no viaja-- y el script que
+    genera los 9. Dos implementaciones serían dos paquetes distintos para el
+    mismo realtor según quién lo pidiera, y el `hash` dejaría de significar
+    nada.
+
+    Devuelve `None` si el realtor no existe. Un realtor sin Model Match SÍ
+    tiene paquete: lo que le falta entra como `Pendiente` declarado.
+    """
+    from captura.transacciones import resumen as resumen_tx
+    from motor.paquete import construir
+    from motor.veredicto import puede_contactarse
+
+    rid = urllib.parse.quote(realtor_id)
+    _c, filas, _ = leer("realtors", "?select=%s&id=eq.%s" % (CAMPOS_LISTA, rid))
+    realtor = (filas or [None])[0]
+    if not realtor:
+        return None
+
+    _c, evs, _ = leer(
+        "v_evaluacion_actual",
+        "?select=resultado,dolor_primario,veredicto_contacto,version_reglas,"
+        "evaluado_en&realtor_id=eq.%s" % rid)
+    ev = (evs or [None])[0]
+
+    crudas, _cuantas = capturas_que_mandan(realtor_id)
+    perfiles, mercados = [], []
+    for f in crudas or []:
+        p = f.get("parseado") or {}
+        if p.get("perfil"):
+            perfiles.append(p["perfil"])
+        if p.get("metricas"):
+            mercados.append({"nivel": f.get("geografia_nivel"),
+                             "estado": f.get("estado"),
+                             "etiqueta": f.get("geografia_etiqueta"),
+                             "metricas": p["metricas"],
+                             "capturado_en": f.get("capturado_en")})
+    mercados.extend(_mercados_enlazados(crudas))
+    perfil = unir_perfiles(perfiles) if perfiles else {}
+    tx = perfil.get("transacciones") if isinstance(perfil, dict) else None
+    resumen = resumen_tx(tx) if (tx or {}).get("filas") else None
+
+    _c, sen, _ = leer("v_ig_senales_current",
+                      "?select=handle,estado_perfil,captions_n,comentarios_n,"
+                      "senales,capturado_en&realtor_id=eq.%s" % rid)
+    _c, cls, _ = leer("v_ig_clase_actual",
+                      "?select=clase,motivo,handle&realtor_id=eq.%s" % rid)
+    ig = dict(sen[0]) if sen else None
+    if ig and cls:
+        from ingest.instagram.clase_perfil import CLASES_UTILIZABLES
+        ig["clase_perfil"] = cls[0].get("clase")
+        ig["utilizable"] = (cls[0].get("clase") in CLASES_UTILIZABLES
+                            and cls[0].get("clase") != "otro_perfil")
+
+    _c, cts, _ = leer("contactos",
+                      "?select=canal,valor,fuente&realtor_id=eq.%s" % rid)
+
+    ver = (ev or {}).get("veredicto_contacto") or puede_contactarse(
+        perfil or None).a_dict()
+
+    return construir(
+        realtor=realtor, evaluacion=ev, perfil_mm=perfil or None,
+        resumen_tx=resumen, filas_tx=(tx or {}).get("filas"),
+        mercados=mercados, ig=ig, contactos=cts or [],
+        census=None, veredicto=ver, salesforce=None)
+
+
+def guardar_paquete(realtor_id: str) -> dict:
+    """Regenera el paquete y lo guarda si CAMBIÓ. Nunca revienta hacia fuera.
+
+    Se llama al guardar una captura: cuando Isabella pega Transactions, lo que
+    Cowork lee tiene que reflejarlo sin que nadie corra un script. Sin esto, la
+    ficha se redactaría contra el paquete de antes y el `hash` diría que está
+    al día -- porque nadie lo habría vuelto a calcular.
+
+    Si el hash no cambió no se escribe: la tabla es append-only, y guardar dos
+    veces el mismo contenido es contar la misma evidencia dos veces.
+    """
+    try:
+        p = paquete_de_realtor(realtor_id)
+        if not p:
+            return {"guardado": False, "motivo": "el realtor no existe"}
+        _c, ya, _ = leer("v_paquete_ficha",
+                         "?select=hash_paquete&realtor_id=eq.%s"
+                         % urllib.parse.quote(realtor_id))
+        if (ya or [{}])[0].get("hash_paquete") == p["hash_paquete"]:
+            return {"guardado": False, "motivo": "sin cambios",
+                    "hash_paquete": p["hash_paquete"]}
+        cod, det, _ = escribir("paquetes_ficha", [{
+            "realtor_id": realtor_id, "version_paquete": p["version_paquete"],
+            "hash_paquete": p["hash_paquete"], "paquete": p}], devolver=False)
+        if cod >= 400:
+            return {"guardado": False, "error": str(det)[:200]}
+        return {"guardado": True, "hash_paquete": p["hash_paquete"],
+                "evidencias": len(p["evidencias"])}
+    except Exception as exc:  # noqa: BLE001
+        # El crudo ya está guardado. Perder la captura por un error al armar el
+        # paquete sería cambiar un problema chico por uno caro.
+        return {"guardado": False, "error": " ".join(str(exc).split())[:200]}
 
 
 def _mercados_enlazados(filas_de_captura: list) -> list[dict]:
@@ -1988,8 +2098,23 @@ def guardar(d: dict) -> tuple[int, dict]:
         reevaluacion = {"error": " ".join(str(exc).split())[:400],
                         "cambio": False}
 
+    # ── EL PAQUETE DE EVIDENCIA, REGENERADO ─────────────────────────────────
+    #
+    # Va DESPUÉS de la re-evaluación porque lee su resultado, y en su propia
+    # función que no puede tumbar el guardado: el crudo ya está.
+    #
+    # Sin esto, pegar Transactions no movía lo que Cowork lee: la ficha se
+    # redactaría contra el paquete de antes y el `hash` diría que está al día,
+    # porque nadie lo habría vuelto a calcular.
+    paquete = guardar_paquete(realtor_id)
+    if paquete.get("guardado"):
+        avisos.append(
+            "El paquete de evidencia se regeneró con esta captura: %d hechos. "
+            "La ficha redactada queda marcada como pendiente de actualizar."
+            % paquete["evidencias"])
+
     return 200, {"upload_batch_id": lote, "bloques": len(filas),
-                 "reevaluacion": reevaluacion,
+                 "reevaluacion": reevaluacion, "paquete": paquete,
                  "transacciones": (None if not tx_parseado else {
                      "leidas": tx_parseado.get("leidas"),
                      "escritas": transacciones_escritas,
