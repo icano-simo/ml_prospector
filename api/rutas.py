@@ -679,7 +679,7 @@ def _ficha_solo_codigo(base: dict) -> dict:
             # Guaranteed Rate» de ocho financiadas se lee como si de las otras
             # cinco supiéramos algo; y desde que no bloquea la lectura, puede
             # haber compras financiadas sin originador en una ficha `ok`.
-            "cobertura_lender": _texto_de_cobertura(r),
+            "cobertura_lender_compra": _texto_de_cobertura(r),
             "operaciones": filas,
         }),
         "instagram": {"encabezado": (
@@ -724,17 +724,23 @@ def _loan_mix(mix: dict, compras: dict) -> list[dict]:
 
 
 def _texto_de_cobertura(r: dict) -> str:
-    """«7 de 8 con lender · 1 sin lender identificado», o vacío si están todos.
+    """«7 de 8 financed buys con lender · 1 sin lender en Model Match».
+
+    Dice el DENOMINADOR en el texto, y no solo el número. «7 de 8 con lender»
+    no se sostiene solo: hay dos coberturas posibles --la del lado comprador y
+    la de todas las operaciones-- y en esta caja, que se llama «Lenders y LOs
+    de sus buyers», la que vale es la del lado comprador. Sin nombrarlo, el
+    mismo número se lee como el otro.
 
     Cuando la cobertura es completa no se dice nada: una línea que repite que
     no falta nada es ruido en la única caja donde el BD busca un nombre.
     """
     cob = (r or {}).get("cobertura_lender_compra") or {}
     sin = cob.get("sin_lender_identificado") or 0
-    if not cob.get("texto") or not sin:
+    if not cob.get("financiadas") or not sin:
         return ""
-    return "%s · %d sin lender identificado en Model Match" % (cob["texto"],
-                                                               sin)
+    return ("%d de %d financed buys con lender · %d sin lender en Model Match"
+            % (cob.get("con_lender") or 0, cob["financiadas"], sin))
 
 
 def _los_del_lender(filas: list[dict], lender: str) -> str:

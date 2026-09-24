@@ -413,7 +413,7 @@
   "instagram_analisis": {
    "escribe": "ia",
    "type": "object",
-   "description": "La pestaña Instagram, redactada. Nueve frases y un juicio. Cada frase cita IG-* (posts, IG-RESUMEN, IG-COMENTARIOS); lo que no salga de su cuenta no va aquí.",
+   "description": "La pestaña Instagram, redactada. Nueve frases y un juicio. Cada frase cita IG-* (posts, IG-RESUMEN, IG-COMENTARIOS); lo que no salga de su cuenta no va aquí. Si su Instagram no aporta --sin datos, no utilizable, personal, o la cuenta mapeada es de otra persona-- se escribe `aporta: false` con el motivo en `prioridad_ig.razones` y NO se escriben las nueve frases.",
    "required": [
     "quien_es",
     "con_quien_se_relaciona",
@@ -427,6 +427,11 @@
     "prioridad_ig"
    ],
    "properties": {
+    "aporta": {
+     "type": "boolean",
+     "escribe": "ia",
+     "description": "false cuando su Instagram no sirve para abrir una conversación. Con false NO se exigen las nueve frases: se exige el MOTIVO en prioridad_ig.razones, y opcionalmente que_verificar. «No miramos su Instagram» y «su Instagram no sirve» son cosas distintas, y la segunda le ahorra el viaje al BD."
+    },
     "quien_es": {
      "$ref": "#/$defs/frase",
      "description": "Cómo se presenta ELLA en su cuenta: bio, oficio, equipo. Solo lo que escribe."

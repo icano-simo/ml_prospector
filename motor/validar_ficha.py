@@ -145,8 +145,11 @@ def _numero_esta(n: str, texto_ev: str) -> bool:
     correcto, y aceptar cualquier cosa sería no comprobar nada.
     """
     plano = texto_ev.lower()
+    # Las dos direcciones del decimal: `44.8` contra `44,8` y al revés. Con
+    # una sola, la ficha que escribe el decimal con punto contra una evidencia
+    # que lo guarda con coma se rechazaba por la coma.
     candidatos = {n, n.replace(".", ""), n.replace(",", ""),
-                  n.replace(",", ".")}
+                  n.replace(",", "."), n.replace(".", ",")}
     seco = n.replace(",", "").replace(".", "")
     if seco.isdigit():
         candidatos.add(seco)
@@ -196,11 +199,16 @@ def _revisar_frase(seccion, frase, indice, *, es_mensaje=False,
     texto = (frase or {}).get("texto") or (frase or {}).get("texto_literal") or ""
     plano = _plano(texto)
 
-    for traducido, en_ingles in _TRADUCIDOS.items():
-        if _plano(traducido) in plano:
-            problemas.append(_problema(
-                seccion, "vocabulario de lending traducido",
-                "dice «%s»; va «%s»" % (traducido, en_ingles)))
+    # El vocabulario NO se le exige a una cita literal. «$0 de enganche … al
+    # cierre» es palabra de Julissa: corregirla sería reescribir lo que ella
+    # escribió, y entonces deja de ser una cita. La regla existe para que el BD
+    # diga «down payment» en la llamada, no para editar a nadie.
+    if not es_cita:
+        for traducido, en_ingles in _TRADUCIDOS.items():
+            if _plano(traducido) in plano:
+                problemas.append(_problema(
+                    seccion, "vocabulario de lending traducido",
+                    "dice «%s»; va «%s»" % (traducido, en_ingles)))
 
     for frase_cash in _CASH_AFIRMADO:
         if _plano(frase_cash) in plano:
@@ -453,8 +461,8 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
 
     # ── las tres pestañas redactadas ────────────────────────────────────────
     problemas += _revisar_instagram_analisis(ficha, por_id)
-    problemas += _revisar_dossier(ficha, por_id, excluido)
-    problemas += _revisar_secuencia(ficha, por_id)
+    problemas += _revisar_dossier(ficha, por_id, excluido, paquete)
+    problemas += _revisar_secuencia(ficha, por_id, paquete)
 
     ctx = ficha.get("contexto") or {}
     for clave in ("mercado_resumen", "mercado_texto", "census_resumen",
@@ -495,6 +503,33 @@ def _revisar_instagram_analisis(ficha: dict, por_id: dict) -> list[dict]:
     if not ia:
         return []
     problemas = []
+
+    # ── «SU INSTAGRAM NO APORTA» ────────────────────────────────────────────
+    #
+    # Cinco realtors tienen la cuenta sin datos, no utilizable, o personal. Uno
+    # --Claudia-- tiene mapeada la cuenta de OTRA persona. Exigirles las nueve
+    # frases es pedir que se escriba sobre lo que no hay, y lo que sale de ahí
+    # es relleno con evidencias forzadas.
+    #
+    # Con `aporta: false` se exige lo contrario: el MOTIVO. La pantalla enseña
+    # un sello «IG no aporta» con la razón y lo que habría que verificar, que
+    # es información de verdad -- «no miramos su Instagram» y «su Instagram no
+    # sirve» son dos cosas distintas, y la segunda le ahorra el viaje al BD.
+    if ia.get("aporta") is False:
+        pr = ia.get("prioridad_ig") or {}
+        if not (pr.get("razones") or []):
+            problemas.append(_problema(
+                "instagram_analisis.prioridad_ig",
+                "dice que no aporta y no dice por qué",
+                "un «no aporta» sin motivo no se distingue de un hueco"))
+        problemas += _revisar_prioridad_ig(pr, por_id)
+        for clave in ("que_verificar",):
+            if ia.get(clave):
+                s = "instagram_analisis.%s" % clave
+                problemas += _revisar_frase(s, ia[clave], 0)
+                problemas += _revisar_evidencias(s, ia[clave], por_id)
+        return problemas
+
     for clave in _CAMPOS_IG_ANALISIS:
         s = "instagram_analisis.%s" % clave
         f = ia.get(clave)
@@ -507,19 +542,31 @@ def _revisar_instagram_analisis(ficha: dict, por_id: dict) -> list[dict]:
     # `prioridad_ig` es juicio, y va siempre como Hipótesis: lo que se
     # comprueba no es que la clase sea la correcta --eso no es decidible-- sino
     # que la clase exista y que cada razón se apoye en algo del paquete.
-    pr = ia.get("prioridad_ig") or {}
-    if pr:
-        s = "instagram_analisis.prioridad_ig"
-        if pr.get("clase") not in ("A", "B", "C", "D"):
-            problemas.append(_problema(s, "la clase no es A, B, C ni D",
-                                       repr(pr.get("clase"))))
-        razones = pr.get("razones") or []
-        if not razones:
-            problemas.append(_problema(s, "la prioridad no trae razones"))
-        for i, r in enumerate(razones):
-            sr = "%s.razones[%d]" % (s, i)
-            problemas += _revisar_frase(sr, r, i)
-            problemas += _revisar_evidencias(sr, r, por_id)
+    problemas += _revisar_prioridad_ig(ia.get("prioridad_ig") or {}, por_id)
+    return problemas
+
+
+def _revisar_prioridad_ig(pr: dict, por_id: dict) -> list[dict]:
+    """La clase existe y cada razón se apoya en algo. El juicio no se valida.
+
+    `prioridad_ig` va siempre como Hipótesis: lo que se comprueba no es que la
+    clase sea la correcta --eso no es decidible-- sino que exista y que las
+    razones citen evidencia del paquete.
+    """
+    if not pr:
+        return []
+    s = "instagram_analisis.prioridad_ig"
+    problemas = []
+    if pr.get("clase") not in ("A", "B", "C", "D"):
+        problemas.append(_problema(s, "la clase no es A, B, C ni D",
+                                   repr(pr.get("clase"))))
+    razones = pr.get("razones") or []
+    if not razones:
+        problemas.append(_problema(s, "la prioridad no trae razones"))
+    for i, r in enumerate(razones):
+        sr = "%s.razones[%d]" % (s, i)
+        problemas += _revisar_frase(sr, r, i)
+        problemas += _revisar_evidencias(sr, r, por_id)
     return problemas
 
 
@@ -527,8 +574,27 @@ def _revisar_instagram_analisis(ficha: dict, por_id: dict) -> list[dict]:
 #: lo escribe la IA.
 _BLOQUES_FRASE = ("A", "B", "C", "E", "E2", "G")
 
+#: Los que se LE DICEN a ella. El resto es para el BD.
+_BLOQUES_QUE_SE_ENVIAN = ("E", "G")
 
-def _revisar_dossier(ficha: dict, por_id: dict, excluido: bool) -> list[dict]:
+
+def _revisar_lo_que_se_envia(seccion: str, texto, paquete: dict) -> list[dict]:
+    """Las dos reglas de lo que sale hacia el realtor, en un solo sitio.
+
+    No nombra sus transacciones --sus lenders, sus ZIPs, ni el principio del
+    nombre de un lender-- y no va en español sin evidencia de idioma. Estaban
+    solo en el SMS; el toque, el bloque E y el G se envían igual.
+    """
+    texto = texto or ""
+    if not texto.strip() or not paquete:
+        return []
+    return (_revisar_sms_sin_transacciones(texto, paquete, seccion)
+            + [dict(p, seccion=seccion)
+               for p in _revisar_idioma_del_sms(texto, paquete)])
+
+
+def _revisar_dossier(ficha: dict, por_id: dict, excluido: bool,
+                     paquete: dict | None = None) -> list[dict]:
     """Los bloques A–G, y la regla del acto de habla en D."""
     dos = ficha.get("dossier") or {}
     if not dos:
@@ -550,8 +616,16 @@ def _revisar_dossier(ficha: dict, por_id: dict, excluido: bool) -> list[dict]:
         if not f:
             continue
         s = "dossier.%s" % letra
-        problemas += _revisar_frase(s, f, 0)
+        # E y G SE ENVÍAN: E es la primera frase, tal cual se dice, y G es la
+        # pregunta con la que se cierra. Las dos pasan por las reglas del
+        # mensaje --RESPA, origen, sus transacciones, el idioma-- y no por las
+        # de la prosa interna. A, B, C y E2 son para el BD.
+        se_envia = letra in _BLOQUES_QUE_SE_ENVIAN
+        problemas += _revisar_frase(s, f, 0, es_mensaje=se_envia)
         problemas += _revisar_evidencias(s, f, por_id)
+        if se_envia:
+            problemas += _revisar_lo_que_se_envia(s, (f or {}).get("texto"),
+                                                  paquete)
 
     d = dos.get("D") or {}
     if d:
@@ -627,7 +701,8 @@ def _revisar_acto_de_habla(d: dict, por_id: dict) -> list[dict]:
     return problemas
 
 
-def _revisar_secuencia(ficha: dict, por_id: dict) -> list[dict]:
+def _revisar_secuencia(ficha: dict, por_id: dict,
+                       paquete: dict | None = None) -> list[dict]:
     """Los 7 toques: días de PACS, canal, el toque 1, y las reglas del copy."""
     from motor.nunca import NuncaSeDice, verificar_nunca
     from motor.secuencia import (
@@ -687,10 +762,13 @@ def _revisar_secuencia(ficha: dict, por_id: dict) -> list[dict]:
                 "una secuencia sin eso deja al BD con la respuesta en la mano "
                 "y sin el siguiente paso"))
 
-        # Es texto que se ENVÍA: las reglas del mensaje valen enteras, RESPA y
-        # origen incluidos.
+        # Es texto que se ENVÍA: las reglas del mensaje valen enteras. RESPA y
+        # origen, y también las dos que hasta ahora solo miraban el SMS -- no
+        # nombrarle sus transacciones y no escribirle en español sin evidencia
+        # de idioma. Un toque se envía igual que el SMS.
         problemas += _revisar_frase(s, t, i, es_mensaje=True)
         problemas += _revisar_evidencias(s, t, por_id)
+        problemas += _revisar_lo_que_se_envia(s, texto, paquete)
 
         for regla, motivo in reglas:
             try:
@@ -712,26 +790,43 @@ def _revisar_secuencia(ficha: dict, por_id: dict) -> list[dict]:
     return problemas
 
 
-def _revisar_sms_sin_transacciones(sms: str, paquete: dict) -> list[dict]:
-    """El mensaje no menciona las transacciones del realtor.
+def _revisar_sms_sin_transacciones(sms: str, paquete: dict,
+                                   seccion: str = "mensaje.sms") -> list[dict]:
+    """Lo que se ENVÍA no menciona las transacciones del realtor.
 
     Se comprueba contra los lenders y los ZIPs que están en SU paquete, no
     contra una lista de palabras: lo prohibido no es hablar de lenders en
     abstracto, es nombrarle los suyos -- que es decirle que le miramos las
     operaciones antes de escribirle.
+
+    **Y también por las dos primeras palabras del lender.** «Angel Oak» se
+    escapaba de «Angel Oak Mortgage Solutions»: nadie escribe la razón social
+    entera en un SMS, así que la comprobación por el nombre completo caza justo
+    lo que nadie iba a escribir. Dos palabras y al menos siete caracteres, para
+    no disparar con «Bank of» o «First».
+
+    `seccion` viaja porque la misma regla vale para los toques de la secuencia,
+    para el bloque E y para el G: los tres son texto que se le envía.
     """
     from motor.paquete import por_id as indice
 
     resumen = indice(paquete).get("MM-TX-RESUMEN") or {}
     plano = _plano(sms)
-    suyos = list((resumen.get("lenders_compra") or {}))
-    suyos += list((resumen.get("lenders_venta") or {}))
-    suyos += list((resumen.get("zips_de_compra") or {}))
-    for cosa in suyos:
+    lenders = (list(resumen.get("lenders_compra") or {})
+               + list(resumen.get("lenders_venta") or {}))
+    zips = list(resumen.get("zips_de_compra") or {})
+
+    for cosa in lenders + zips:
         if cosa and _plano(str(cosa)) in plano:
             return [_problema(
-                "mensaje.sms", "el SMS menciona sus transacciones",
+                seccion, "menciona sus transacciones",
                 "nombra «%s», que sale de su Transactions" % cosa)]
+    for nombre in lenders:
+        corto = " ".join(_plano(str(nombre)).split()[:2])
+        if len(corto) >= 7 and corto in plano:
+            return [_problema(
+                seccion, "menciona sus transacciones",
+                "nombra «%s», que es el principio de «%s»" % (corto, nombre))]
     return []
 
 
@@ -760,7 +855,11 @@ def _revisar_idioma_del_sms(sms: str, paquete: dict) -> list[dict]:
     """
     from motor.paquete import por_id as indice
 
-    plano = _plano(sms)
+    # Lo que va entre corchetes NO cuenta para el idioma: `[tu nombre]` y
+    # `[Confirmar con producto]` son marcas para el BD, no texto que se envía
+    # tal cual. Un mensaje entero en inglés con un `[tu nombre]` dentro salía
+    # como español por la palabra «nombre».
+    plano = _plano(re.sub(r"\[[^\]]*\]", " ", sms or ""))
     if not any(re.search(r"\b%s" % re.escape(_plano(m)), plano)
                for m in _MARCAS_DE_ESPANOL):
         return []          # no está en español: no hay nada que justificar

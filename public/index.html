@@ -654,6 +654,25 @@ const CAMPOS_IG = [
 function lecturaDeInstagram(ia){
   const a = (ia || {}).instagram_analisis;
   const p = (a || {}).prioridad_ig;
+
+  /* «Su Instagram no aporta» es una respuesta, no un hueco.
+     Cinco realtors tienen la cuenta sin datos, personal, o --en un caso-- la
+     cuenta mapeada es de otra persona. Enseñar nueve secciones vacías haría
+     pensar que nadie la miró; el sello dice que sí se miró y qué se encontró,
+     que es lo que le ahorra el viaje al BD. */
+  if(a && a.aporta === false){
+    return `<div class="tarjeta">
+      <div class="seccion">Lectura de su Instagram</div>
+      ${cabeceraIA(ia)}
+      <span class="badge sin-evaluar" style="font-size:13px;padding:6px 12px">
+        <i>▣</i>IG no aporta</span>
+      ${((p || {}).razones || []).map(r => fraseIA(r)).join('')}
+      ${a.que_verificar ? `<div style="margin-top:14px">
+        <h3 style="margin:0;font-size:13px;color:var(--navy)">Qué hay que
+          verificar</h3>${fraseIA(a.que_verificar)}</div>` : ''}
+    </div>`;
+  }
+
   return `<div class="tarjeta">
     <div class="seccion">Lectura de su Instagram</div>
     ${cabeceraIA(ia)}
