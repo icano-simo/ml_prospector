@@ -183,6 +183,15 @@ def puede_contactarse(perfil: dict | None, *,
             "lenders_de_la_casa": tx["lenders_de_la_casa"],
             "compras_pendientes_de_prestamo": tx["pendientes_de_prestamo"],
             "operaciones_sin_lado": tx["sin_lado"],
+            # Desde el 2026-09-24 esto NO bloquea, y por eso viaja en la
+            # evidencia: el veredicto dice «ninguna de sus 8 financiadas pasó
+            # por la casa» y hay que poder ver sobre cuántas se miró. Una
+            # compra sin originador no lo contradice --si hubiera pasado por la
+            # casa, el lender estaría-- pero no se comprueba sobre ella.
+            "compras_sin_lender_identificado": tx.get(
+                "compras_sin_lender_identificado", 0),
+            "cobertura_lender": (tx.get("cobertura_lender_compra")
+                                 or {}).get("texto", ""),
         })
         pendientes = tx["pendientes_de_prestamo"]
         coletilla = ("" if not pendientes else

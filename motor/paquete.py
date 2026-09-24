@@ -302,6 +302,16 @@ def construir(*, realtor: dict, evaluacion: dict | None,
             "pendientes_de_prestamo": r.get("pendientes_de_prestamo"),
             "unidades_de_la_casa": r.get("unidades_de_la_casa"),
             "trimestres": r.get("trimestres"),
+            # Sobre cuántas financiadas se sabe el originador. No bloquea la
+            # lectura --decisión del 2026-09-24-- y justo por eso tiene que
+            # estar: sin el denominador, «3 buys con Guaranteed Rate de 8
+            # financiadas» se lee como si de las otras cinco supiéramos algo.
+            "compras_sin_lender_identificado": r.get(
+                "compras_sin_lender_identificado"),
+            "cobertura_lender_compra": r.get("cobertura_lender_compra"),
+            "nota_lender": ("Model Match no siempre trae el originador. Las "
+                            "compras sin lender identificado se cuentan "
+                            "aparte: no son compras sin lender."),
             "nota_cash": ("«Cash» en Model Match significa «sin loan "
                           "registrado». Menos de 35 días es pendiente."),
         })

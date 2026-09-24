@@ -768,14 +768,24 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
         if f["estado_prestamo"] == FINANCIADA
         and not (f.get("lender") or f.get("empleador"))]
 
-    # ── LAS CUATRO CONDICIONES DE «COMPLETA» ────────────────────────────────
+    # ── LAS CONDICIONES DE «COMPLETA» ───────────────────────────────────────
     #
     # Antes miraba solo el pie, y el pie cuadraba: 25 filas de una celda cada
     # una son 25 filas. Con eso `completa` decia True sobre un parseo en el que
     # no se habia leido un solo campo.
     #
     # Una lectura completa es la que se puede USAR para el veredicto, y para
-    # eso hacen falta las cuatro.
+    # eso hacen falta estas: el pie cuadra, no hay filas sin leer, y toda fila
+    # tiene lado. Nada mas.
+    #
+    # LO QUE YA NO BLOQUEA: que una compra financiada no traiga lender.
+    # Decision de Isabella del 2026-09-24. Model Match no siempre trae el
+    # originador, y bloquear por eso dejaba en `pendiente_modelmatch` a
+    # catorce realtors cuya pestaña se habia leido ENTERA -- una fila sin
+    # originador no impide decir si alguna operacion paso por la casa: si
+    # pasara, el lender estaria ahi. La ausencia se cuenta y se muestra como
+    # cobertura («27 de 28 con lender»), que es un dato para leer, no una
+    # compuerta.
     razones: list[str] = []
     if faltan:
         razones.append("el pie dice %d operaciones y se leyeron %d"
@@ -787,9 +797,6 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
                        % len(sin_estado))
     if sin_lado:
         razones.append("%d operaciones sin lado" % sin_lado)
-    if financiadas_sin_lender:
-        razones.append("%d operaciones financiadas sin lender"
-                       % len(financiadas_sin_lender))
 
     if total is None:
         # Sin pie no se puede AFIRMAR que estan todas, aunque todo lo demas
@@ -816,7 +823,28 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
                   % "; ".join(razones)),
         "sin_lado": sin_lado,
         "sin_estado_de_prestamo": len(sin_estado),
+        # Ya no bloquea, y por eso mismo hay que poder verlo: el conteo y la
+        # cobertura viajan, para que la ficha diga «27 de 28 con lender» en vez
+        # de callarlo.
         "financiadas_sin_lender": len(financiadas_sin_lender),
+        "cobertura_lender": _cobertura_lender(filas),
+    }
+
+
+def _cobertura_lender(filas: list[dict]) -> dict:
+    """«27 de 28 con lender», sobre las FINANCIADAS.
+
+    Sobre las financiadas y no sobre todas: una compra cash no tiene lender
+    que falte, y meterla en el denominador convertiria una cartera con nueve
+    cash en una cobertura del 60 % que no significa nada.
+    """
+    fin = [f for f in filas if f["estado_prestamo"] == FINANCIADA]
+    con = [f for f in fin if (f.get("lender") or f.get("empleador"))]
+    return {
+        "financiadas": len(fin),
+        "con_lender": len(con),
+        "sin_lender_identificado": len(fin) - len(con),
+        "texto": ("%d de %d con lender" % (len(con), len(fin))) if fin else "",
     }
 
 
@@ -875,6 +903,14 @@ def resumen(parseado: dict) -> dict:
                                       for f in de_la_casa if f.get("lender")
                                       or f.get("empleador")}),
         "compras_financiadas": len(financiadas_compra),
+        # Cuántas de esas financiadas traen originador. No bloquea la lectura
+        # --decisión del 2026-09-24-- pero se cuenta y se muestra: «9 de 10 con
+        # lender» y «1 sin lender identificado» dicen dos cosas distintas de
+        # «9 buys con lender», y la segunda se lee como que hay nueve.
+        "compras_sin_lender_identificado": sum(
+            1 for f in financiadas_compra
+            if not (f.get("lender") or f.get("empleador"))),
+        "cobertura_lender_compra": _cobertura_lender(compras),
         "pendientes_de_prestamo": [
             {"fecha": f["fecha"], "lado": f["lado"],
              "dias": f["dias_desde_cierre"],
