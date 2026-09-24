@@ -675,6 +675,11 @@ def _ficha_solo_codigo(base: dict) -> dict:
             "lenders": [{"lender": k, "n": n,
                          "detalle": _los_del_lender(filas, k)}
                         for k, n in (r.get("lenders_compra") or {}).items()],
+            # La cobertura, al pie de la caja de lenders. Sin ella, «3 buys con
+            # Guaranteed Rate» de ocho financiadas se lee como si de las otras
+            # cinco supiéramos algo; y desde que no bloquea la lectura, puede
+            # haber compras financiadas sin originador en una ficha `ok`.
+            "cobertura_lender": _texto_de_cobertura(r),
             "operaciones": filas,
         }),
         "instagram": {"encabezado": (
@@ -716,6 +721,20 @@ def _loan_mix(mix: dict, compras: dict) -> list[dict]:
     if compras.get("cash_provisional"):
         filas.append({"tipo": "Pendiente", "n": compras["cash_provisional"]})
     return filas
+
+
+def _texto_de_cobertura(r: dict) -> str:
+    """«7 de 8 con lender · 1 sin lender identificado», o vacío si están todos.
+
+    Cuando la cobertura es completa no se dice nada: una línea que repite que
+    no falta nada es ruido en la única caja donde el BD busca un nombre.
+    """
+    cob = (r or {}).get("cobertura_lender_compra") or {}
+    sin = cob.get("sin_lender_identificado") or 0
+    if not cob.get("texto") or not sin:
+        return ""
+    return "%s · %d sin lender identificado en Model Match" % (cob["texto"],
+                                                               sin)
 
 
 def _los_del_lender(filas: list[dict], lender: str) -> str:
