@@ -38,72 +38,13 @@ def _uno(tabla, consulta):
     return (filas or [None])[0]
 
 
-def paquete_de(realtor_id: str) -> dict | None:
-    """El paquete de un realtor, leyendo lo mismo que lee la ficha.
-
-    Devuelve `None` si el realtor no existe. Un realtor sin Model Match SÍ
-    tiene paquete: lo que le falta entra como `Pendiente` declarado, que es lo
-    que permite que la IA escriba «esto no lo sabemos» en vez de callarlo.
-    """
-    import urllib.parse
-
-    from api.rutas import CAMPOS_LISTA, _mercados_enlazados, capturas_que_mandan
-    from api.ficha import contactos_por_canal
-    from captura.parser_mm import unir_perfiles
-    from captura.transacciones import resumen as resumen_tx
-    from motor.paquete import construir
-    from motor.veredicto import puede_contactarse
-
-    rid = urllib.parse.quote(realtor_id)
-    realtor = _uno("realtors", "?select=%s&id=eq.%s" % (CAMPOS_LISTA, rid))
-    if not realtor:
-        return None
-
-    ev = _uno("v_evaluacion_actual",
-              "?select=resultado,dolor_primario,veredicto_contacto,"
-              "version_reglas,evaluado_en&realtor_id=eq.%s" % rid)
-
-    crudas, _cuantas = capturas_que_mandan(realtor_id)
-    perfiles, mercados = [], []
-    for f in crudas or []:
-        p = f.get("parseado") or {}
-        if p.get("perfil"):
-            perfiles.append(p["perfil"])
-        if p.get("metricas"):
-            mercados.append({"nivel": f.get("geografia_nivel"),
-                             "estado": f.get("estado"),
-                             "etiqueta": f.get("geografia_etiqueta"),
-                             "metricas": p["metricas"],
-                             "capturado_en": f.get("capturado_en")})
-    mercados.extend(_mercados_enlazados(crudas))
-    perfil = unir_perfiles(perfiles) if perfiles else {}
-    tx = perfil.get("transacciones") if isinstance(perfil, dict) else None
-    resumen = resumen_tx(tx) if (tx or {}).get("filas") else None
-
-    sen = _uno("v_ig_senales_current",
-               "?select=handle,estado_perfil,captions_n,comentarios_n,senales,"
-               "capturado_en&realtor_id=eq.%s" % rid)
-    cls = _uno("v_ig_clase_actual",
-               "?select=clase,motivo,handle&realtor_id=eq.%s" % rid)
-    ig = dict(sen) if sen else None
-    if ig and cls:
-        ig["clase_perfil"] = cls.get("clase")
-        from ingest.instagram.clase_perfil import CLASES_UTILIZABLES
-        ig["utilizable"] = (cls.get("clase") in CLASES_UTILIZABLES
-                            and cls.get("clase") != "otro_perfil")
-
-    _c, cts, _ = leer("contactos",
-                      "?select=canal,valor,fuente&realtor_id=eq.%s" % rid)
-
-    ver = (ev or {}).get("veredicto_contacto") or puede_contactarse(
-        perfil or None).a_dict()
-
-    return construir(
-        realtor=realtor, evaluacion=ev, perfil_mm=perfil or None,
-        resumen_tx=resumen, filas_tx=(tx or {}).get("filas"),
-        mercados=mercados, ig=ig,
-        contactos=contactos_por_canal(cts or []),
-        census=None, veredicto=ver, salesforce=None)
+#: El armador vive en `api/rutas.py` y NO aquí, aunque este sea el script que
+#: lo usa. Lo llaman los dos --el guardado de una captura, que corre en Vercel
+#: donde `supabase/` no viaja, y esto-- y dos implementaciones serían dos
+#: paquetes distintos para el mismo realtor según quién lo pidiera. El `hash`
+#: dejaría de significar nada, que es lo único que sostiene «esta ficha se
+#: escribió contra este paquete».
+from api.rutas import paquete_de_realtor as paquete_de  # noqa: E402
 
 
 def main() -> int:

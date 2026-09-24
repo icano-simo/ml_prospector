@@ -174,6 +174,14 @@
             '</p>' + deDondeSale(items) + '</li>';
         }).join('') + '</ol>'
       : noValido((d._no_validas || {}).por_que_ella);
+    var razonesEncaje = (d.encaje && ok(d, 'encaje')
+                         && (d.encaje.razones || []).length)
+      ? '<ul class="lista" style="margin-top:10px">' +
+        d.encaje.razones.map(function (r) {
+          return '<li>' + esc(r.texto) + '</li>';
+        }).join('') + '</ul>'
+      : '';
+    cuerpo += razonesEncaje;
     /* La prioridad la escribe el CÓDIGO y se pinta tal cual: poner aquí un
        valor por defecto en mayúscula fue lo que hizo que la plantilla dijera
        «Prioridad: Pendiente» donde la maqueta dice «pendiente». */
@@ -188,8 +196,27 @@
     }
     return '<section class="porque-ella" aria-label="Por qué ella">' +
       '<div class="prioridad"><h2 style="font-size:21px">Por qué ella</h2>' +
-      '<span class="pendiente">' + esc(prio) + '</span></div>' + cuerpo +
-      '</section>';
+      '<span class="pendiente">' + esc(prio) + '</span>' + encaje(d) +
+      '</div>' + cuerpo + '</section>';
+  }
+
+  /* El encaje con nuestro cliente. Va JUNTO a «Por qué ella» y no como
+   * sección aparte: las razones para hablarle y si nos encaja se leen juntas o
+   * no se leen.
+   *
+   * Es juicio de la IA y por eso lleva su grado visible: «Cliente ideal» sin
+   * la marca se lee como un dato, y no lo es. */
+  function encaje(d) {
+    var e = d.encaje;
+    if (!e || !e.clase || !ok(d, 'encaje')) return '';
+    var CLASE = {'Cliente ideal': 'ok', 'Revisar': 'warn',
+                 'Nutrición': 'ask'};
+    var color = CLASE[e.clase] || 'warn';
+    return '<span class="grado ' +
+      (color === 'ok' ? 'dato' : color === 'ask' ? 'ella' : 'hip') +
+      '" title="' + esc((e.razones || []).map(function (r) {
+        return r.texto;
+      }).join(' · ')) + '">' + esc(e.clase) + ' · Hipótesis</span>';
   }
 
   /* ── 4 · Dolores posibles ─────────────────────────────────────────────── */

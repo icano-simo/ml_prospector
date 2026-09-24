@@ -73,6 +73,125 @@ def _fecha_de(iso) -> str | None:
     return str(iso)[:10] if iso else None
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# CONTACTOS · de las cuatro fuentes, normalizados
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# El paquete traía dos contactos y en la base había siete. No era que faltara el
+# dato: era que nadie lo juntaba. Están en cuatro sitios y ninguno los tiene
+# todos:
+#
+#   · `pacs.realtors`      el teléfono y el email del archivo original;
+#   · `pacs.contactos`     lo que el guardado de una captura acumuló;
+#   · el perfil de MM      `Direct:`, `Office:` y los emails del Overview;
+#   · sus captions de IG   el teléfono y el email que ella misma publica.
+#
+# Y HAY QUE NORMALIZAR ANTES DE AGRUPAR. El teléfono de una realtor aparecía en
+# cuatro formatos --`(773) 362-5798`, `773-362-5798`, `773.362.5798` y
+# `+1773…`-- así que sin normalizar la ficha mostraría cinco teléfonos donde
+# hay dos, y ninguno tendría más de una fuente: la marca de «está en una sola
+# fuente» diría lo contrario de lo que pasa.
+
+#: La fuente que puede estar vieja. Un valor que SOLO está aquí es el que hay
+#: que mirar: el archivo se cargó una vez y no se volvió a tocar.
+FUENTE_ARCHIVO = "archivo original"
+
+_RE_TEL = re.compile(r"\+?\d[\d\s().\-]{8,20}\d")
+_RE_MAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
+
+
+def _tel_normalizado(v) -> str | None:
+    """Los últimos 10 dígitos, en E.164. Es lo que hace comparables los
+    formatos: `(773) 362-5798` y `+17733625798` son el mismo teléfono."""
+    d = re.sub(r"\D", "", str(v or ""))
+    if len(d) < 10:
+        return None
+    return "+1" + d[-10:]
+
+
+def _mail_normalizado(v) -> str | None:
+    s = str(v or "").strip().strip(".,;:").lower()
+    return s if _RE_MAIL.fullmatch(s) else None
+
+
+def contactos_del_realtor(realtor: dict, filas: list[dict] | None,
+                          perfil_mm: dict | None, ig: dict | None) -> list[dict]:
+    """Todos los contactos, agrupados por valor normalizado y con sus fuentes.
+
+    `difiere` marca el valor cuya ÚNICA fuente es el archivo original habiendo
+    otros del mismo canal. No es «está en una sola fuente» a secas: el teléfono
+    que ella publica hoy en Instagram también está en una sola, y ese es el
+    bueno. El que hay que mirar es el que solo sobrevive en el archivo, porque
+    el archivo se cargó una vez y no se volvió a tocar.
+    """
+    por_valor: dict = {}
+
+    def agregar(canal, crudo, fuente):
+        if not crudo:
+            return
+        if canal == "telefono":
+            clave = _tel_normalizado(crudo)
+            mostrar = str(crudo).strip()
+        elif canal == "email":
+            clave = _mail_normalizado(crudo)
+            mostrar = clave
+        else:
+            clave = " ".join(str(crudo).split())
+            mostrar = clave
+        if not clave:
+            return
+        d = por_valor.setdefault((canal, clave), {
+            "canal": canal, "valor": mostrar, "normalizado": clave,
+            "fuentes": []})
+        # Se prefiere la forma MÁS LEGIBLE para mostrar: `(773) 362-5798` antes
+        # que `+17733625798`. El normalizado es para comparar, no para leer.
+        if (canal == "telefono" and str(d["valor"]).startswith("+")
+                and not str(mostrar).startswith("+")):
+            d["valor"] = mostrar
+        if fuente not in d["fuentes"]:
+            d["fuentes"].append(fuente)
+
+    # 1 · el archivo original
+    agregar("telefono", realtor.get("telefono_e164"), FUENTE_ARCHIVO)
+    agregar("email", realtor.get("email_principal"), FUENTE_ARCHIVO)
+
+    # 2 · lo acumulado en `pacs.contactos`
+    for f in filas or []:
+        agregar(f.get("canal"), f.get("valor"), f.get("fuente") or "sin fuente")
+
+    # 3 · Model Match
+    c = (perfil_mm or {}).get("contacto") or {}
+    agregar("telefono", c.get("telefono_directo"), "Model Match «Direct»")
+    agregar("telefono", c.get("telefono_oficina"), "Model Match «Office»")
+    agregar("oficina", c.get("oficina"), "Model Match")
+    agregar("direccion", c.get("direccion"), "Model Match")
+    for e in (perfil_mm or {}).get("emails") or []:
+        agregar("email", e, "Model Match")
+
+    # 4 · lo que ella publica en Instagram
+    if ig:
+        s = (ig.get("senales") or {})
+        texto = s.get("captions_texto") or ""
+        if ig.get("handle"):
+            agregar("instagram", "@" + str(ig["handle"]).lstrip("@"),
+                    "su cuenta")
+        for t in _RE_TEL.findall(texto):
+            agregar("telefono", t, "Instagram")
+        for e in _RE_MAIL.findall(texto):
+            agregar("email", e, "Instagram")
+
+    salida = list(por_valor.values())
+    por_canal: dict = {}
+    for d in salida:
+        por_canal[d["canal"]] = por_canal.get(d["canal"], 0) + 1
+    for d in salida:
+        d["difiere"] = bool(d["fuentes"] == [FUENTE_ARCHIVO]
+                            and por_canal[d["canal"]] > 1)
+        d["una_sola_fuente"] = len(d["fuentes"]) == 1
+    salida.sort(key=lambda d: (d["canal"], -len(d["fuentes"]), d["valor"]))
+    return salida
+
+
 def posts_de_instagram(captions_texto: str | None) -> list[dict]:
     """El campo de captions -> una lista de posts con fecha y texto literal.
 
@@ -268,13 +387,17 @@ def construir(*, realtor: dict, evaluacion: dict | None,
         })
 
     # ── CONTACTOS ───────────────────────────────────────────────────────────
+    # Se arman AQUI, de las cuatro fuentes, y no se reciben ya hechos: el
+    # paquete traia dos contactos y en la base habia siete, porque quien
+    # llamaba solo pasaba `pacs.contactos`. Armarlos dentro es lo que hace que
+    # no dependa de que el que llama se acuerde.
     _SIGLA = {"telefono": "TEL", "email": "MAIL", "instagram": "IG",
               "oficina": "OFI", "direccion": "DIR", "web": "WEB",
               "otro": "OTRO"}
     vistos: dict = {}
-    for c in contactos or []:
-        canal = c.get("canal") or "otro"
-        fuente = (c.get("fuentes") or ["?"])[0]
+    for c in contactos_del_realtor(realtor, contactos, perfil_mm, ig):
+        canal = c["canal"]
+        fuente = (c["fuentes"] or ["?"])[0]
         base = "CT-%s-%s" % (
             re.sub(r"[^A-Z]", "", (fuente or "").upper())[:4] or "X",
             _SIGLA.get(canal, "OTRO"))
@@ -282,9 +405,9 @@ def construir(*, realtor: dict, evaluacion: dict | None,
         vistos[base] = n + 1
         ev.append({
             "id": base if not n else "%s-%d" % (base, n + 1),
-            "tipo": "contacto", "canal": canal, "valor": c.get("valor"),
-            "fuentes": c.get("fuentes") or [],
-            "una_sola_fuente": bool(c.get("una_sola_fuente")),
+            "tipo": "contacto", "canal": canal, "valor": c["valor"],
+            "normalizado": c["normalizado"], "fuentes": c["fuentes"],
+            "difiere": c["difiere"], "una_sola_fuente": c["una_sola_fuente"],
         })
 
     # ── CENSUS ──────────────────────────────────────────────────────────────
@@ -298,7 +421,29 @@ def construir(*, realtor: dict, evaluacion: dict | None,
                                  "para describir su zona")})
 
     # ── PACS-H · las activaciones, con su cadena ────────────────────────────
-    for a in ((evaluacion or {}).get("resultado") or {}).get("activaciones") or []:
+    #
+    # Son INSUMO, no un veredicto: Cowork las usa junto con Transactions,
+    # Instagram y Model Match para decidir qué es de verdad un dolor de esta
+    # persona. Por eso van con su regla, sus campos y su nota, y no como una
+    # lista de dolores ya elegidos.
+    #
+    # **A UN EXCLUIDO NO SE LE MANDAN.** Un excluido no tiene dolores ni
+    # mensajes: ya trabaja con la casa, y escribirle es competirle su cartera a
+    # un colega. Dejar las activaciones en su paquete sería poner el material
+    # del que salen los dolores encima de la mesa y confiar en que nadie lo
+    # use. La guarda va en el dato, no en el aviso.
+    excluido = (veredicto or {}).get("estado") == "excluido"
+    if excluido:
+        ev.append({
+            "id": "PACS", "tipo": "pendiente",
+            "pendiente": ("este realtor está EXCLUIDO, así que su paquete no "
+                          "lleva activaciones PACS-H: no se le escriben "
+                          "dolores, ni SMS, ni versión larga. Solo la bio y "
+                          "«Lo que significa»."),
+        })
+    for a in ([] if excluido else
+              ((evaluacion or {}).get("resultado") or {}).get("activaciones")
+              or []):
         ev.append({
             "id": "PACS-%s" % a.get("qualifier"), "tipo": "activacion_pacs",
             "qualifier": a.get("qualifier"), "familia": a.get("familia"),
