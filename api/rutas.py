@@ -1831,6 +1831,13 @@ def guardar(d: dict) -> tuple[int, dict]:
             # un campo del payload que el resto del guardado ya sabe leer.
             if c.tipo == "transacciones" and c.estado == "leido":
                 d = {**d, "transacciones": c.texto}
+                # Los otros nombres con los que aparece en la tabla, escritos
+                # y CONFIRMADOS por quien captura. Model Match escribe «Isabel
+                # Vasquez» en el perfil y «Isabel Vazquez» en 17 de sus filas:
+                # no hay forma segura de deducir que son la misma persona, y sí
+                # de que alguien lo confirme mirando la pantalla.
+                if c.nombres_alternativos:
+                    d = {**d, "nombres_alternativos": c.nombres_alternativos}
             if c.tipo == "transacciones" and c.estado == "vacio_declarado":
                 d = {**d, "sin_transacciones_declarado": True}
     else:
@@ -2003,8 +2010,10 @@ def guardar(d: dict) -> tuple[int, dict]:
         # que la forma de la captura manda.
         nombre_del_realtor = ((perfil or {}).get("nombre")
                               if isinstance(perfil, dict) else None)
+        alternativos = list(d.get("nombres_alternativos") or [])
         tx_parseado, _fallo_tx = _parsear(
             lambda t: parsear_transacciones(t, realtor=nombre_del_realtor,
+                                            alternativos=alternativos,
                                             capturado_en=ahora),
             texto_tx, "Transactions")
         if isinstance(tx_parseado, dict) and tx_parseado.get("nombre_usado") \

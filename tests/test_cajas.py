@@ -231,6 +231,36 @@ def test_los_condados_de_siempre_siguen_saliendo():
     assert [c["unidades"] for c in _condados(txt)] == [5, 3, 1]
 
 
+def test_los_nombres_alternativos_llegan_de_la_caja_de_Transactions():
+    """Escritos por una persona, así que se aceptan las tres formas.
+
+    Coma, salto de línea o lista: es la misma intención. Lo que no hace es
+    inventar uno cuando el campo está vacío.
+    """
+    from captura.cajas import cajas_desde
+
+    cajas = cajas_desde({"cajas": [
+        {"clave": "trx", "tipo": "transacciones", "texto": "algo",
+         "nombres_alternativos": "Isabel Vazquez, I. Vazquez"},
+        {"clave": "trx2", "tipo": "transacciones", "texto": "algo",
+         "nombres_alternativos": ["Ana Osorio"]},
+        {"clave": "trx3", "tipo": "transacciones", "texto": "algo"},
+    ]})
+    assert cajas[0].nombres_alternativos == ["Isabel Vazquez", "I. Vazquez"]
+    assert cajas[1].nombres_alternativos == ["Ana Osorio"]
+    assert cajas[2].nombres_alternativos == []
+
+
+def test_los_nombres_alternativos_no_se_repiten_ni_traen_espacios():
+    from captura.cajas import cajas_desde
+
+    cajas = cajas_desde({"cajas": [
+        {"clave": "trx", "tipo": "transacciones", "texto": "algo",
+         "nombres_alternativos": "  Isabel   Vazquez , isabel vazquez ,, "},
+    ]})
+    assert cajas[0].nombres_alternativos == ["Isabel Vazquez"]
+
+
 def _correr():
     fns = [(n, f) for n, f in sorted(globals().items())
            if n.startswith("test_") and callable(f)]

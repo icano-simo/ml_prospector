@@ -2032,11 +2032,27 @@ function pintarCajas(d){
         style="margin-left:8px">Pegar una nueva</button>
     </div>`;
 
+    /* Solo en Transactions: las OTRAS formas con las que su nombre aparece en
+       la tabla. Model Match escribe «Isabel Vasquez» en el perfil y «Isabel
+       Vazquez» en 17 de sus 25 filas, y esas 17 quedan sin lado. No se puede
+       deducir --son dos apellidos distintos-- y sí se puede confirmar mirando
+       la pantalla, que es lo que hace este campo. */
+    const alternativos = c.tipo === 'transacciones' ? `
+      <label style="display:block;margin-top:10px;font-weight:400">
+        <span>Otros nombres con los que aparece en la tabla</span>
+        <input type="text" id="alt_${c.clave}" style="margin-top:4px"
+          placeholder="separados por comas, p. ej. Isabel Vazquez">
+        <span class="pista">Si en la columna de agente aparece escrito de otra
+          forma, ponelo acá: el lado de esas operaciones se decide con
+          cualquiera de los nombres. Solo lo que confirmes mirando la
+          pantalla.</span></label>` : '';
+
     return `<div class="tarjeta">
       <div class="seccion">${titulo}</div>
       ${nota}
       <textarea id="tx_${c.clave}" style="min-height:110px"
         placeholder="Pegá acá esta sección, o dejala vacía."></textarea>
+      ${alternativos}
       ${casilla}
     </div>`;
   }).join('');
@@ -2101,6 +2117,8 @@ async function guardar(){
     clave: c.clave, tipo: c.tipo, etiqueta: c.etiqueta,
     texto: ($('#tx_'+c.clave) ? $('#tx_'+c.clave).value : ''),
     vacio_declarado: !!($('#vd_'+c.clave) && $('#vd_'+c.clave).checked),
+    nombres_alternativos: ($('#alt_'+c.clave)
+      ? $('#alt_'+c.clave).value : ''),
   }));
   const enlazados = mercadosEnlazados();
   $('#btnGuardar').disabled = true;
