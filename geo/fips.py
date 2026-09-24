@@ -84,22 +84,72 @@ def _normalizar(nombre: str) -> str:
     "Miami-Dade", "Dona Ana County" contra "Doña Ana County", "San Juan
     Municipio" contra "San Juan".
     """
+    # ── « city» EN MINUSCULA NO ES UN SUFIJO DE TIPO, ES EL NOMBRE ─────────
+    #
+    # Convencion del Census: una ciudad independiente --que es una entidad
+    # aparte del condado del mismo nombre-- se escribe «Baltimore city», con
+    # minuscula. Un condado que se llama asi se escribe «Carson City».
+    #
+    # Quitar las dos dejaba SEIS pares distintos con la misma clave, y como la
+    # tabla se llena con asignacion, ganaba el ultimo del archivo:
+    #
+    #   MD baltimore  -> 24005 Baltimore County  /  24510 Baltimore city
+    #   MO st louis   -> 29189 St. Louis County  /  29510 St. Louis city
+    #   VA fairfax, franklin, richmond, roanoke: lo mismo
+    #
+    # O sea que «Baltimore, MD» resolvia a la CIUDAD, en silencio. No fallaba
+    # nada: el FIPS existe, tiene cinco digitos y es del estado correcto.
+    #
+    # `parser_mm` ya distingue los dos --etiqueta «Baltimore» contra «Baltimore
+    # city»-- asi que respetarlo aqui es lo unico que faltaba.
+    es_ciudad_independiente = nombre.rstrip().endswith(" city")
+
     sin_acentos = "".join(
         c for c in unicodedata.normalize("NFD", nombre)
         if unicodedata.category(c) != "Mn"
     )
     n = sin_acentos.lower().strip()
-    n = re.sub(
-        r"\s+(county|parish|borough|census area|city and borough|municipality|"
-        r"municipio|planning region|city)$",
-        "",
-        n,
-    )
+    sufijos = (r"county|parish|borough|census area|city and borough|"
+               r"municipality|municipio|planning region")
+    if not es_ciudad_independiente:
+        sufijos += r"|city"
+    n = re.sub(r"\s+(%s)$" % sufijos, "", n)
     return re.sub(r"[^a-z0-9]+", " ", n).strip()
 
 
+def _compacta(nombre: str) -> str:
+    """La misma clave, sin espacios. Es la segunda llave de la tabla.
+
+    Model Match escribe «Du Page» y «De Kalb»; el archivo del Census escribe
+    «DuPage County» y «DeKalb County». Normalizadas quedan `du page` y `dupage`,
+    que son distintas, asi que las 44 metricas de DuPage de una captura real no
+    entraron en `pacs.mercados` -- y no fallo nada: la fila se guardo sin FIPS.
+
+    **Sigue siendo match exacto, no fuzzy.** Quitar los espacios no acerca dos
+    nombres distintos: los hace iguales o no. Lo que si podria hacer es juntar
+    dos condados reales de un mismo estado bajo la misma clave, y por eso
+    `cargar` comprueba que eso no pase y revienta si alguna vez pasa.
+    """
+    return _normalizar(nombre).replace(" ", "")
+
+
+class ClaveCompactaAmbigua(FipsNoResuelto):
+    """Dos condados de un mismo estado comparten clave compacta.
+
+    Medido el 2026-09-23 sobre el archivo de referencia entero: 0 colisiones.
+    Si alguna vez aparece una --porque el Census agrega un condado, o porque
+    cambia un nombre-- la carga revienta aqui en vez de elegir en silencio.
+    Elegir en silencio es lo que convierte un cruce equivocado en un benchmark
+    del condado de al lado.
+    """
+
+
 def cargar(ruta: Path = CACHE) -> dict[tuple[str, str], tuple[str, str]]:
-    """Devuelve {(estado, nombre normalizado): (fips, nombre oficial)}."""
+    """Devuelve {(estado, clave): (fips, nombre oficial)}.
+
+    Hay DOS claves por condado: el nombre normalizado y el mismo sin espacios.
+    La segunda es la que cruza «Du Page» con «DuPage». Ver `_compacta`.
+    """
     if not ruta.exists():
         raise FipsNoResuelto(
             "no hay copia local del archivo de referencia en %s.\n"
@@ -125,7 +175,26 @@ def cargar(ruta: Path = CACHE) -> dict[tuple[str, str], tuple[str, str]]:
             if not (estado and statefp and countyfp and nombre):
                 continue
             fips = "%s%s" % (statefp.zfill(2), countyfp.zfill(3))
-            tabla[(estado, _normalizar(nombre))] = (fips, nombre)
+
+            # LAS DOS CLAVES, y ninguna se pisa en silencio.
+            #
+            # La version anterior asignaba la clave normal directamente, asi
+            # que dos condados con la misma clave se resolvian por orden de
+            # aparicion en el archivo -- y los seis pares «X County» / «X city»
+            # se decidian solos, a favor del ultimo. Que reviente.
+            for clave in ((estado, _normalizar(nombre)),
+                          (estado, _compacta(nombre))):
+                previo = tabla.get(clave)
+                if previo is None:
+                    tabla[clave] = (fips, nombre)
+                elif previo[0] != fips:
+                    raise ClaveCompactaAmbigua(
+                        "en %s, %r y %r comparten la clave %r y son condados "
+                        "distintos (%s y %s).\n"
+                        "No elijo uno: un FIPS del condado de al lado es peor "
+                        "que ninguno. Hay que resolverlo a mano en geo/fips.py."
+                        % (estado, previo[1], nombre, clave[1], previo[0], fips))
+
     if not tabla:
         raise FipsNoResuelto("el archivo de referencia quedo vacio al parsear: %s" % ruta)
     return tabla
@@ -143,6 +212,10 @@ def resolver(estado: str, condado: str, tabla: dict | None = None) -> tuple[str,
     clave = (estado.strip().upper(), _normalizar(condado))
     if clave in tabla:
         return tabla[clave]
+    # La segunda llave: sin espacios. «Du Page» -> `dupage` -> DuPage County.
+    compacta = (clave[0], _compacta(condado))
+    if compacta in tabla:
+        return tabla[compacta]
 
     candidatos = [
         oficial for (est, _), (_, oficial) in tabla.items()
