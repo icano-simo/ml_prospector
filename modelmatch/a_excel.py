@@ -311,12 +311,18 @@ def main() -> None:
          "unos 3.500 créditos."],
         ["¿Ya financia con la casa?",
          "Esta sí se pudo contestar para todos, y barata: en vez de "
-         "preguntarle a cada agente con quién trabaja, se le preguntó a "
-         "Everett Financial (NMLS 2129, que opera como Supreme Lending) "
-         "quiénes de esta lista financiaron con ella en los últimos 24 "
-         "meses. Costó 28 créditos porque solo cobra los que dan positivo. "
-         "Un 'SÍ' es la señal de no-canibalización: ese realtor ya tiene "
-         "relación con la casa."],
+         "preguntarle a cada agente con quién trabaja (1 crédito por lender), "
+         "se le preguntó a Everett Financial (NMLS 2129, que opera como "
+         "Supreme Lending) quiénes de esta lista financiaron con ella. Solo "
+         "cobra los que dan positivo. Un 'SÍ' significa que ese realtor YA "
+         "tiene relación con la casa: es la exclusión por no-canibalización."],
+        ["⚠ La ventana cambia la respuesta",
+         "Mirando solo los últimos 24 meses dan 28. Mirando TODO el "
+         "historial dan 79. Los 51 de diferencia financiaron con la casa "
+         "hace más de dos años, y para una exclusión eso sigue contando: la "
+         "columna usa el historial completo. Se comprobó que la diferencia "
+         "es la ventana y no la lista de nombres de Everett — con la lista "
+         "corregida y 24 meses vuelven a salir los mismos 28."],
         ["", ""],
         ["Lo que costó", ""],
         ["Modelo de costo (medido, no estimado)",

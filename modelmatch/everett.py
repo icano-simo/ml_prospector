@@ -28,14 +28,51 @@ from modelmatch.cliente import llamar, saldo  # noqa: E402
 
 DIR = os.path.join(RAIZ, "data", "trabajo", "mm_por_realtor")
 SALIDA = os.path.join(RAIZ, "data", "trabajo", "everett.json")
+if "--salida" in sys.argv:
+    SALIDA = os.path.join(RAIZ, "data", "trabajo",
+                          sys.argv[sys.argv.index("--salida") + 1])
 
-#: Everett Financial, Inc. (NMLS 2129) y sus variantes en el diccionario.
-CASA = ["everett_financial", "everett_financial_texas",
-        "dba_everett_financial_financial_supr",
-        "dba_everett_financial_lending_spureme",
-        "everett_financial_incdba_lending_supreme",
-        "dba_everett_financial_superme",
-        "dba_dupreme_everett_financial_lending"]
+#: Everett Financial, Inc. (NMLS 2129) y sus variantes en el diccionario,
+#: COMPROBADAS contra instant-search y no copiadas de una nota. Faltaban dos
+#: --una de ellas con «Everett» mal escrito en el id-- y un agente que hubiera
+#: financiado por ahi habria pasado por prospecto nuevo.
+CASA = [
+    "everett_financial",
+    "everett_financial_texas",
+    "everett_financial_incdba_lending_supreme",
+    "dba_everett_financial_financial_supr",
+    "dba_everett_financial_lending_spureme",
+    "dba_everett_finance_lending_supreme",      # «Supreme Lending Finance Everett»
+    "dba_evertt_financial_lending_supreme",     # «Evertt»: el typo es de la fuente
+    # De la guia del MCP; no aparecieron en la busqueda pero no cuesta
+    # incluirlas: un id que no existe no suma filas, y por tanto no cobra.
+    "dba_everett_financial_superme",
+    "dba_dupreme_everett_financial_lending",
+]
+
+#: Lo que NO es la casa aunque el nombre se parezca. Esta escrito para que
+#: nadie lo agregue por error mirando solo la palabra:
+#:   everett_mutual_savings, bank_cooperative_everett  -> bancos de Everett,
+#:     la ciudad. Everett Co-operative Bank es NMLS 443050.
+#:   everette_f_gary                                   -> una PERSONA.
+#:   lending_mortgage_supreme                          -> Supreme Mortgage
+#:     Lending Inc., NMLS 2371076, otra empresa.
+#:   funding_supreme, credit_supreme, lending_supreme_team,
+#:   lending_mortgage_solutions_supreme                -> idem.
+NO_ES_LA_CASA = (
+    "everett_mutual_savings", "bank_cooperative_everett", "everette_f_gary",
+    "lending_mortgage_supreme", "funding_supreme", "credit_supreme",
+    "lending_supreme_team", "lending_mortgage_solutions_supreme")
+
+#: Para una EXCLUSION se mira todo el historial: una operacion con la casa
+#: hace tres años sigue siendo una relacion con la casa. Se puede pisar con
+#: `--periodo last24Months` para medir cuanto del resultado depende de la
+#: ventana y cuanto de la lista de ids.
+PERIODO = "allTime"
+if "--periodo" in sys.argv:
+    PERIODO = sys.argv[sys.argv.index("--periodo") + 1]
+#: Con `--salida x.json` se escribe a otro archivo y no se pisa el bueno.
+
 
 LOTE = 100
 
@@ -52,13 +89,18 @@ def main() -> None:
     s0 = saldo()
     print("saldo: %s" % s0)
 
+    previos = set()
+    if os.path.exists(SALIDA):
+        previos = {c.get("mm_id")
+                   for c in json.load(open(SALIDA, encoding="utf-8"))}
+
     con_casa = []
     for i in range(0, len(ids), LOTE):
         trozo = ids[i:i + LOTE]
         d = llamar("/v1/agents",
                    {"flatFilters": {"id": trozo},
                     "footprint": {"lender": CASA},
-                    "period": "last24Months",
+                    "period": PERIODO,
                     "pagination": {"size": 100}},
                    etiqueta="everett_lote%d" % (i // LOTE), silencioso=True)
         filas = (d or {}).get("data") or []
@@ -74,12 +116,21 @@ def main() -> None:
         json.dump(con_casa, fh, ensure_ascii=False, indent=1)
 
     s1 = saldo()
+    ahora = {c["mm_id"] for c in con_casa}
     print("")
-    print("CON EVERETT (la casa): %d de %d" % (len(con_casa), len(ids)))
+    print("CON EVERETT (la casa): %d de %d · periodo %s"
+          % (len(con_casa), len(ids), PERIODO))
     for c in con_casa:
-        print("   %-28s %-34s %s u"
-              % ((c["nombre_nuestro"] or "")[:28], (c["office"] or "")[:34],
+        print("   %s %-28s %-34s %s u"
+              % ("NUEVO" if c["mm_id"] not in previos else "     ",
+                 (c["nombre_nuestro"] or "")[:28], (c["office"] or "")[:34],
                  c["unidades"]))
+    if previos:
+        nuevos = ahora - previos
+        perdidos = previos - ahora
+        print("")
+        print("contra la corrida anterior: %d nuevos · %d que ya no salen"
+              % (len(nuevos), len(perdidos)))
     print("")
     print("costo: %s creditos" % ("?" if None in (s0, s1) else round(s0 - s1, 2)))
     print("guardado en %s" % SALIDA)
