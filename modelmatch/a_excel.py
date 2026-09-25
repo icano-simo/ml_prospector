@@ -86,6 +86,9 @@ COLUMNAS = [
     ("mm_pct_volumen_financiado", "% volumen financiado", 17),
     ("mm_loan_medio", "Loan medio de sus compradores", 22),
 
+    ("hace_fha", "¿Produce FHA?", 12),
+    ("hace_convencional", "¿Produce convencional?", 16),
+    ("hace_va", "¿Produce VA?", 11),
     ("trabaja_con_la_casa", "¿Ya financia con la casa?", 18),
     ("mm_lenders_n", "Nº lenders", 10),
     ("mm_originadores_n", "Nº originadores", 13),
@@ -105,12 +108,27 @@ COLUMNAS = [
 #: cuesta 1 por fila y la pregunta inversa solo cobra los que dan positivo.
 EVERETT = os.path.join(RAIZ, "data", "trabajo", "everett.json")
 
+#: El mix de tipo de prestamo. SOLO se usan las consultas de umbral 0 --«hace
+#: algo de esto»--, que estan validadas contra el conteo real de prestamos de
+#: Ana: 3 FHA, 12 convencionales, 0 VA, y las tres banderas coinciden.
+#:
+#: Las bandas por `shareOfUnits` NO se usan: no miden la proporcion del
+#: agente sino la de un bucket de lender, y Ana aparece en «>=50% FHA» cuando
+#: su proporcion real es 20%. Estan en el archivo y se ignoran a proposito.
+MIX = os.path.join(RAIZ, "data", "trabajo", "mix_prestamos.json")
+TIPOS = (("fha", "fha"), ("convencional", "convencional"), ("va", "va"))
+
 
 def cargar() -> list[dict]:
     con_la_casa = set()
     if os.path.exists(EVERETT):
         with open(EVERETT, encoding="utf-8") as fh:
             con_la_casa = {c.get("mm_id") for c in json.load(fh)}
+    mix: dict[str, set] = {}
+    if os.path.exists(MIX):
+        with open(MIX, encoding="utf-8") as fh:
+            crudo = json.load(fh)["resultado"]
+        mix = {clave: set(crudo.get(clave) or []) for _, clave in TIPOS}
     filas = []
     for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
         with open(a, encoding="utf-8") as fh:
@@ -118,6 +136,10 @@ def cargar() -> list[dict]:
         f["trabaja_con_la_casa"] = (
             "sin comprobar" if not f.get("mm_id")
             else ("SÍ" if f["mm_id"] in con_la_casa else "no"))
+        for nombre, clave in TIPOS:
+            f["hace_%s" % nombre] = (
+                "sin comprobar" if not (f.get("mm_id") and mix)
+                else ("sí" if f["mm_id"] in mix.get(clave, ()) else "no"))
         filas.append(f)
     return filas
 
@@ -316,6 +338,19 @@ def main() -> None:
          "Supreme Lending) quiénes de esta lista financiaron con ella. Solo "
          "cobra los que dan positivo. Un 'SÍ' significa que ese realtor YA "
          "tiene relación con la casa: es la exclusión por no-canibalización."],
+        ["¿Produce FHA / convencional / VA?",
+         "Es un SÍ/NO: tiene al menos una operación de ese tipo en los "
+         "últimos 24 meses. Está validado contra el conteo real de préstamos "
+         "de Ana Osorio (3 FHA, 12 convencionales, 0 VA) y las tres banderas "
+         "coinciden."],
+        ["⚠ Lo que NO dice: la proporción",
+         "No hay forma barata de saber QUÉ PARTE de su producción es FHA. Se "
+         "intentó con bandas de porcentaje y no sirven: miden la proporción "
+         "dentro de un lender, no la del agente. Ana aparece en la banda "
+         "'≥50% FHA' cuando su proporción real es 20%. Por eso esas bandas "
+         "no están en esta hoja. La proporción real se saca contando los "
+         "préstamos de sus propiedades, y eso cuesta ~30 créditos por "
+         "realtor."],
         ["⚠ La ventana cambia la respuesta",
          "Mirando solo los últimos 24 meses dan 28. Mirando TODO el "
          "historial dan 79. Los 51 de diferencia financiaron con la casa "
@@ -344,7 +379,16 @@ def main() -> None:
 
     os.makedirs(SALIDA, exist_ok=True)
     ruta = os.path.join(SALIDA, "realtors_instagram_model_match.xlsx")
-    wb.save(ruta)
+    try:
+        wb.save(ruta)
+    except PermissionError:
+        # Windows bloquea el archivo mientras Excel lo tiene abierto. Guardar
+        # al lado es mejor que perder la corrida: el usuario decide cual se
+        # queda, y se le DICE, en vez de fallar callado o pisar a medias.
+        ruta = os.path.join(SALIDA, "realtors_instagram_model_match_%s.xlsx"
+                            % dt.datetime.now().strftime("%H%M"))
+        wb.save(ruta)
+        print("⚠ el archivo principal estaba abierto en Excel; se guardo al lado")
     print("hoja Realtors : %d" % len(buenas))
     print("hoja Revisar  : %d" % len(revisar))
     print("cambios de casa: %d" % con_cambio)
