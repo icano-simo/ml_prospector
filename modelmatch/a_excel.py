@@ -86,6 +86,7 @@ COLUMNAS = [
     ("mm_pct_volumen_financiado", "% volumen financiado", 17),
     ("mm_loan_medio", "Loan medio de sus compradores", 22),
 
+    ("trabaja_con_la_casa", "¿Ya financia con la casa?", 18),
     ("mm_lenders_n", "Nº lenders", 10),
     ("mm_originadores_n", "Nº originadores", 13),
     ("mm_companias_n", "Nº compañías", 12),
@@ -99,11 +100,25 @@ COLUMNAS = [
 ]
 
 
+#: Los que ya financian con Everett Financial (la casa). Se calcula aparte,
+#: con `footprint`, porque preguntarle a cada agente su lista de lenders
+#: cuesta 1 por fila y la pregunta inversa solo cobra los que dan positivo.
+EVERETT = os.path.join(RAIZ, "data", "trabajo", "everett.json")
+
+
 def cargar() -> list[dict]:
+    con_la_casa = set()
+    if os.path.exists(EVERETT):
+        with open(EVERETT, encoding="utf-8") as fh:
+            con_la_casa = {c.get("mm_id") for c in json.load(fh)}
     filas = []
     for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
         with open(a, encoding="utf-8") as fh:
-            filas.append(json.load(fh))
+            f = json.load(fh)
+        f["trabaja_con_la_casa"] = (
+            "sin comprobar" if not f.get("mm_id")
+            else ("SÍ" if f["mm_id"] in con_la_casa else "no"))
+        filas.append(f)
     return filas
 
 
@@ -292,7 +307,16 @@ def main() -> None:
          "Esos listados cuestan 1 crédito POR FILA. Un agente con 43 lenders "
          "cuesta 43 créditos. Con el tope de 5 créditos por realtor solo se "
          "pidieron donde cabían; en el resto queda el CONTEO, que sí viene "
-         "gratis con la ficha."],
+         "gratis con la ficha. Pedir la tabla de lenders de los 298 costaría "
+         "unos 3.500 créditos."],
+        ["¿Ya financia con la casa?",
+         "Esta sí se pudo contestar para todos, y barata: en vez de "
+         "preguntarle a cada agente con quién trabaja, se le preguntó a "
+         "Everett Financial (NMLS 2129, que opera como Supreme Lending) "
+         "quiénes de esta lista financiaron con ella en los últimos 24 "
+         "meses. Costó 28 créditos porque solo cobra los que dan positivo. "
+         "Un 'SÍ' es la señal de no-canibalización: ese realtor ya tiene "
+         "relación con la casa."],
         ["", ""],
         ["Lo que costó", ""],
         ["Modelo de costo (medido, no estimado)",
