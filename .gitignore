@@ -28,6 +28,10 @@ data/*_sin_cruce.csv
 # devuelve personas. La carpeta entera, no un patron: lo que se guarda aqui es
 # lo que todavia no se ha mirado, asi que no se sabe que trae.
 data/raw/
+# Listas de trabajo y salidas de la extraccion de Model Match: nombre, email y
+# telefono de personas reales, y el Excel que se entrega. El repo es PUBLICO.
+data/trabajo/
+data/salida/
 realtor_scraper/output/model/
 realtor_scraper/output/*_enriched*.csv
 realtor_scraper/output/*_scored*.csv
