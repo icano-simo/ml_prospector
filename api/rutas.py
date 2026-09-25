@@ -497,6 +497,130 @@ def ficha_v3_completa(params: dict) -> tuple[int, dict]:
                  "hay_paquete": bool(paquete)}
 
 
+def bloques_ia(params: dict) -> tuple[int, dict]:
+    """Los bloques redactados de Instagram, Dossier y Secuencia, validados.
+
+    Es el mismo mecanismo de la ficha --se lee de `pacs.fichas_ia`, se valida
+    al leer contra el paquete guardado, y lo que no pasa no se muestra-- con
+    una diferencia: **apaga la PARTE, no la sección**.
+
+    La ficha se lee de un tirón y apagar una de sus ocho secciones es una
+    decisión razonable. El dossier son siete bloques y la secuencia siete
+    toques: apagar los siete porque el toque 4 promete material esconde seis
+    textos que sí se sostienen y deja al BD sin secuencia por un párrafo.
+
+    Un endpoint aparte y no dentro de `/api/dossier` por dos razones: la
+    lectura es la misma para las tres pestañas --una implementación, no tres--
+    y `/api/dossier` responde 409 a un excluido, que es correcto para la
+    secuencia y dejaría a Instagram sin texto por una razón que no es la suya.
+    """
+    from motor.nunca import BLOQUE_F
+    from motor.secuencia import DIAS_PACS
+    from motor.validar_ficha import partes_con_problema, validar
+
+    realtor_id = (params.get("realtor_id") or "").strip()
+    if not realtor_id:
+        return 400, {"error": "falta realtor_id"}
+    rid = urllib.parse.quote(realtor_id)
+
+    _c, paqs, _ = leer("v_paquete_ficha",
+                       "?select=paquete,hash_paquete&realtor_id=eq.%s" % rid)
+    paquete = (paqs or [{}])[0].get("paquete") or {}
+    _c, fichas, _ = leer(
+        "v_ficha_ia_actual",
+        "?select=json,generada_en,generada_por,version_prompt,hash_paquete"
+        "&realtor_id=eq.%s" % rid)
+    redactada = (fichas or [None])[0]
+
+    # El bloque F viaja SIEMPRE, haya o no texto redactado: es lo que el BD
+    # tiene que tener delante cuando escribe a mano, y es justo entonces
+    # cuando no hay ficha que lo traiga.
+    vacio = {
+        "instagram_analisis": None,
+        "dossier": {"F": [dict(x) for x in BLOQUE_F]},
+        "secuencia": None,
+        "dias_pacs": list(DIAS_PACS),
+        "pendientes": {},
+        "redaccion": {},
+        "hay_ficha": False,
+        "hay_paquete": bool(paquete),
+    }
+    if not redactada:
+        return 200, vacio
+
+    ficha = redactada.get("json") or {}
+    problemas = validar(ficha, paquete)
+    partes = partes_con_problema(problemas)
+
+    salida = dict(vacio)
+    salida["hay_ficha"] = True
+    salida["instagram_analisis"] = _solo_lo_valido(
+        ficha.get("instagram_analisis"), partes.get("instagram_analisis") or {})
+    dos = _solo_lo_valido(ficha.get("dossier"),
+                          partes.get("dossier") or {}) or {}
+    # F lo pone el código SIEMPRE, y pisa lo que venga: si la IA lo escribió,
+    # el validador ya lo marcó, pero el bloque tiene que estar igual.
+    dos["F"] = [dict(x) for x in BLOQUE_F]
+    salida["dossier"] = dos
+    salida["secuencia"] = _secuencia_valida(
+        ficha.get("secuencia"), partes.get("secuencia") or {}, DIAS_PACS)
+    salida["pendientes"] = {k: v for k, v in partes.items()
+                            if k in ("instagram_analisis", "dossier",
+                                     "secuencia")}
+    salida["redaccion"] = {
+        "generada_en": redactada.get("generada_en"),
+        "generada_por": redactada.get("generada_por"),
+        "version_prompt": redactada.get("version_prompt"),
+        "desactualizada": bool(
+            paquete.get("hash_paquete")
+            and redactada.get("hash_paquete") != paquete["hash_paquete"]),
+    }
+    return 200, salida
+
+
+def _solo_lo_valido(seccion, partes: dict):
+    """La sección sin las partes que no pasaron, y con su motivo en el hueco.
+
+    El hueco NO se borra: se marca. Un bloque que desaparece se lee como que
+    no había nada que decir; un bloque que dice «Pendiente: el número no está
+    en la evidencia» se lee como lo que es.
+    """
+    if not isinstance(seccion, dict):
+        return None
+    if "" in partes:                  # el problema es de la sección entera
+        return {"_pendiente": partes[""]}
+    salida = {}
+    for clave, valor in seccion.items():
+        motivos = partes.get(clave)
+        salida[clave] = {"_pendiente": motivos} if motivos else valor
+    for clave, motivos in partes.items():
+        salida.setdefault(clave, {"_pendiente": motivos})
+    return salida
+
+
+def _secuencia_valida(seq, partes: dict, dias) -> dict | None:
+    """Los toques, con los que no pasaron reducidos a su número y su día.
+
+    El número y el día del toque apagado salen de `DIAS_PACS`, no del texto:
+    justamente el día pudo ser lo que falló, y repetir el dato equivocado al
+    lado del «Pendiente» sería mostrar sin validar lo que no se validó.
+    """
+    if not isinstance(seq, dict):
+        return None
+    if "" in partes:
+        return {"_pendiente": partes[""], "toques": []}
+    toques = []
+    for i, t in enumerate(seq.get("toques") or []):
+        motivos = partes.get("toques[%d]" % i)
+        if motivos:
+            toques.append({"n": i + 1,
+                           "dia": dias[i] if i < len(dias) else None,
+                           "_pendiente": motivos})
+        else:
+            toques.append(t)
+    return {"toques": toques}
+
+
 def _ficha_solo_codigo(base: dict) -> dict:
     """Las secciones `escribe: codigo`, con la forma del esquema de la ficha."""
     q = base.get("quien_es") or {}
@@ -555,7 +679,7 @@ def _ficha_solo_codigo(base: dict) -> dict:
             # Guaranteed Rate» de ocho financiadas se lee como si de las otras
             # cinco supiéramos algo; y desde que no bloquea la lectura, puede
             # haber compras financiadas sin originador en una ficha `ok`.
-            "cobertura_lender": _texto_de_cobertura(r),
+            "cobertura_lender_compra": _texto_de_cobertura(r),
             "operaciones": filas,
         }),
         "instagram": {"encabezado": (
@@ -600,17 +724,23 @@ def _loan_mix(mix: dict, compras: dict) -> list[dict]:
 
 
 def _texto_de_cobertura(r: dict) -> str:
-    """«7 de 8 con lender · 1 sin lender identificado», o vacío si están todos.
+    """«7 de 8 financed buys con lender · 1 sin lender en Model Match».
+
+    Dice el DENOMINADOR en el texto, y no solo el número. «7 de 8 con lender»
+    no se sostiene solo: hay dos coberturas posibles --la del lado comprador y
+    la de todas las operaciones-- y en esta caja, que se llama «Lenders y LOs
+    de sus buyers», la que vale es la del lado comprador. Sin nombrarlo, el
+    mismo número se lee como el otro.
 
     Cuando la cobertura es completa no se dice nada: una línea que repite que
     no falta nada es ruido en la única caja donde el BD busca un nombre.
     """
     cob = (r or {}).get("cobertura_lender_compra") or {}
     sin = cob.get("sin_lender_identificado") or 0
-    if not cob.get("texto") or not sin:
+    if not cob.get("financiadas") or not sin:
         return ""
-    return "%s · %d sin lender identificado en Model Match" % (cob["texto"],
-                                                               sin)
+    return ("%d de %d financed buys con lender · %d sin lender en Model Match"
+            % (cob.get("con_lender") or 0, cob["financiadas"], sin))
 
 
 def _los_del_lender(filas: list[dict], lender: str) -> str:
@@ -1265,11 +1395,28 @@ def paquete_de_realtor(realtor_id: str) -> dict | None:
     ver = (ev or {}).get("veredicto_contacto") or puede_contactarse(
         perfil or None).a_dict()
 
+    # ── EL CENSUS DEL ESTADO ────────────────────────────────────────────────
+    #
+    # El reporte de mercado latino del estado donde opera. Describe el MERCADO,
+    # nunca a la persona: de «en Illinois el 18,8 % son latinos» a «sus buyers
+    # son latinos» hay un salto que nadie midió, así que el grado máximo que
+    # sostiene es Hipótesis -- igual que `MM-MK-*`, y por lo mismo.
+    #
+    # Se lee de `pacs.census_reporte_estado` y no de un archivo del repo: el
+    # paquete se arma en Vercel, donde el repo entero no viaja.
+    reporte = None
+    if realtor.get("estado"):
+        _c, rep, _ = leer(
+            "v_census_reporte_actual",
+            "?select=estado,id_evidencia,texto,fuente,cargado_en"
+            "&estado=eq.%s" % urllib.parse.quote(str(realtor["estado"])))
+        reporte = (rep or [None])[0]
+
     return construir(
         realtor=realtor, evaluacion=ev, perfil_mm=perfil or None,
         resumen_tx=resumen, filas_tx=(tx or {}).get("filas"),
         mercados=mercados, ig=ig, contactos=cts or [],
-        census=None, veredicto=ver, salesforce=None)
+        census=None, censo_estado=reporte, veredicto=ver, salesforce=None)
 
 
 def guardar_paquete(realtor_id: str) -> dict:
@@ -1707,6 +1854,13 @@ def guardar(d: dict) -> tuple[int, dict]:
             # un campo del payload que el resto del guardado ya sabe leer.
             if c.tipo == "transacciones" and c.estado == "leido":
                 d = {**d, "transacciones": c.texto}
+                # Los otros nombres con los que aparece en la tabla, escritos
+                # y CONFIRMADOS por quien captura. Model Match escribe «Isabel
+                # Vasquez» en el perfil y «Isabel Vazquez» en 17 de sus filas:
+                # no hay forma segura de deducir que son la misma persona, y sí
+                # de que alguien lo confirme mirando la pantalla.
+                if c.nombres_alternativos:
+                    d = {**d, "nombres_alternativos": c.nombres_alternativos}
             if c.tipo == "transacciones" and c.estado == "vacio_declarado":
                 d = {**d, "sin_transacciones_declarado": True}
     else:
@@ -1879,8 +2033,10 @@ def guardar(d: dict) -> tuple[int, dict]:
         # que la forma de la captura manda.
         nombre_del_realtor = ((perfil or {}).get("nombre")
                               if isinstance(perfil, dict) else None)
+        alternativos = list(d.get("nombres_alternativos") or [])
         tx_parseado, _fallo_tx = _parsear(
             lambda t: parsear_transacciones(t, realtor=nombre_del_realtor,
+                                            alternativos=alternativos,
                                             capturado_en=ahora),
             texto_tx, "Transactions")
         if isinstance(tx_parseado, dict) and tx_parseado.get("nombre_usado") \
@@ -3083,6 +3239,7 @@ RUTAS = {
     "/api/mercados_en_biblioteca": (mercados_en_biblioteca, "GET"),
     "/api/ficha": (ficha_v3, "GET"),
     "/api/ficha_v3": (ficha_v3_completa, "GET"),
+    "/api/bloques_ia": (bloques_ia, "GET"),
     "/api/pedir_ficha": (pedir_ficha, "POST"),
     "/api/capturas": (capturas, "GET"),
     "/api/lectura": (lectura, "GET"),

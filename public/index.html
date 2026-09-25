@@ -32,6 +32,42 @@ html, body { height: 100% }
 .wrap { display: grid; grid-template-columns: 340px 1fr; height: calc(100% - 52px) }
 @media (max-width: 860px){ .wrap { grid-template-columns: 1fr } .side { display: none } }
 
+/* El menú «Técnico» de la barra de pestañas.
+ *
+ * Es un `<details>`: abre y cierra sin JavaScript, y el navegador ya sabe
+ * cerrarlo con Escape. El panel va `position:absolute` para que abrirlo no
+ * empuje la ficha hacia abajo -- una barra que se mueve al tocarla hace que la
+ * segunda pulsación caiga en otro sitio. */
+.tecnico { position: relative }
+.tecnico > summary {
+  list-style: none; cursor: pointer;
+  padding: 10px 14px; font: 600 13px/1 var(--font-body);
+  color: var(--slate-500); border-bottom: 2px solid transparent;
+}
+.tecnico > summary::-webkit-details-marker { display: none }
+.tecnico > summary::after { content: ' ▾'; font-size: 11px }
+.tecnico[open] > summary { color: var(--navy) }
+.tecnico > summary[aria-selected="true"] {
+  color: var(--navy); border-bottom-color: var(--coral); font-weight: 800;
+}
+/* Anclado a la DERECHA del resumen, no a la izquierda: «Técnico» es la última
+ * pestaña, así que en una ventana de 400 px un menú que crece hacia la derecha
+ * se sale de la pantalla y deja la página con scroll horizontal. Hacia dentro
+ * cabe siempre. */
+.tecnico .menu {
+  position: absolute; z-index: 30; top: 100%; right: 0; min-width: 210px;
+  max-width: calc(100vw - 32px);
+  display: grid; background: var(--white); padding: 4px;
+  border: 1px solid var(--slate-200); border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(16, 35, 58, .14);
+}
+.tecnico .menu .tab {
+  text-align: left; border-bottom: 0; border-radius: 6px; padding: 9px 12px;
+}
+.tecnico .menu .tab[aria-selected="true"] {
+  background: var(--slate-100); color: var(--navy); font-weight: 800;
+}
+
 /* En pantalla angosta las tablas se apilan: cada fila es un bloque y cada
  * celda lleva encima el nombre de su columna.
  *
@@ -277,29 +313,48 @@ async function abrirDesdeLaURL(){
    nadie ha verificado que existan los recursos que el copy promete. Hasta que
    eso pase, cada toque que prometa un recurso va marcado recurso_sin_verificar
    y la secuencia no sale. */
+/* Las cinco que usa un BD, en el orden en que trabaja: quién es, qué hay que
+   pegar, qué publica, el dossier y la secuencia.
+
+   «Mercados» se llama «Model Match input» porque es lo que es: la pantalla
+   donde se pega Model Match. El nombre viejo describía el contenido de una de
+   sus cajas, no para qué se entra. */
 const PESTANAS = [
-  /* La ficha v3 va PRIMERO: es el orden que revisaron Isabella y un BD.
-     Primero quién es y cómo se le escribe; el motor queda plegado en «Cómo se
-     calculó», que es donde vive lo que al BD no le sirve para hablar. */
   ['ficha','Ficha',true],
-  ['ficha_datos','Ficha (solo datos)',true],
-  ['lectura','Lectura del perfil',true],
-  ['calculo','Cómo se calculó',true],
-  ['mm','Model Match',true],
-  ['mercados','Mercados',true],
+  ['mercados','Model Match input',true],
   ['ig','Instagram',true],
   ['dossier','Dossier A–G',true],
   ['seq','Secuencia 60 días',true],
 ];
+
+/* Las cuatro que quedan detrás de «Técnico». **Ocultas, no borradas**: son las
+   que contestan cuando alguien discute un número, y ese día hacen falta
+   enteras. Lo que cambia es que no compiten por la atención del BD que entra a
+   llamar. */
+const PESTANAS_TECNICAS = [
+  ['ficha_datos','Ficha (solo datos)',true],
+  ['lectura','Lectura del perfil',true],
+  ['calculo','Cómo se calculó',true],
+  ['mm','Model Match',true],
+];
+const TODAS_LAS_PESTANAS = PESTANAS.concat(PESTANAS_TECNICAS);
 const PORQUE_APAGADA = {};
 
 function pintarFicha(){
   if(!SEL){ $('#detalle').innerHTML = '<div class="vacio">Elegí un realtor.</div>'; return }
-  const tabs = PESTANAS.map(([k,t,activa]) =>
+  const boton = ([k,t,activa]) =>
     `<button class="tab" role="tab" aria-selected="${TAB===k}" data-tab="${k}"
       ${activa?'':'disabled'}
-      title="${activa?'':esc(PORQUE_APAGADA[k]||'todavía no')}">${t}</button>`
-  ).join('');
+      title="${activa?'':esc(PORQUE_APAGADA[k]||'todavía no')}">${t}</button>`;
+  const enTecnico = PESTANAS_TECNICAS.some(([k]) => k === TAB);
+  /* `<details>` y no un menú a mano: se abre y se cierra sin una línea de JS,
+     y se queda abierto cuando la pestaña activa vive dentro -- si no, el BD
+     ve el subrayado en ninguna parte y no sabe dónde está. */
+  const tabs = PESTANAS.map(boton).join('') + `
+    <details class="tecnico"${enTecnico ? ' open' : ''}>
+      <summary aria-selected="${enTecnico}">Técnico</summary>
+      <div class="menu">${PESTANAS_TECNICAS.map(boton).join('')}</div>
+    </details>`;
   $('#detalle').innerHTML = `
     <h1>${esc(SEL.nombre_completo)}</h1>
     <p class="sub">${esc(SEL.brokerage || '—')} ·
@@ -333,6 +388,59 @@ function pintarFicha(){
  * manifestaba como un `TypeError` en vez de como contenido equivocado. */
 const otraPestana = mia => TAB !== mia;
 
+/* ══ LOS BLOQUES REDACTADOS ════════════════════════════════════════════════
+ *
+ * Instagram, Dossier y Secuencia muestran texto de Cowork con el MISMO
+ * mecanismo de la ficha: se lee de `pacs.fichas_ia`, la app lo valida al leer,
+ * y lo que no pasa se muestra como «Pendiente» con su motivo. Lo que cambia es
+ * la granularidad: aquí se apaga el bloque o el toque, no la pestaña entera.
+ *
+ * Una sola lectura por realtor para las tres pestañas: piden lo mismo. */
+let BLOQUES = { id: null, datos: null };
+async function bloquesIA(){
+  if(BLOQUES.id === SEL.id && BLOQUES.datos) return BLOQUES.datos;
+  const d = await api('/api/bloques_ia?realtor_id=' + encodeURIComponent(SEL.id));
+  BLOQUES = { id: SEL.id, datos: d };
+  return d;
+}
+
+/* Un hueco SIEMPRE dice por qué está vacío. «Pendiente» a secas no le dice a
+   nadie qué hay que hacer para resolverlo. */
+const pendienteIA = motivos => `
+  <span class="badge sin-evaluar"><i>▣</i>Pendiente</span>
+  <p class="sub" style="margin-top:6px">${esc((motivos && motivos.length)
+    ? motivos.join(' · ')
+    : 'todavía no hay texto redactado para este bloque')}</p>`;
+
+const faltaIA = x => !x || x._pendiente || (!x.texto && !x.toques);
+
+/* El texto de una frase, con los ids que la sostienen debajo.
+   Los ids no son decoración: son lo que permite discutir una frase sin
+   discutir quién la escribió. */
+function fraseIA(f){
+  if(faltaIA(f)) return pendienteIA(f && f._pendiente);
+  return `<p style="margin:6px 0 0;font-size:13.5px;line-height:1.65;
+      color:var(--slate-800)">${esc(f.texto)}</p>
+    ${(f.evidencias||[]).length ? `<p class="pista" style="margin:6px 0 0">
+      ${(f.evidencias||[]).map(i => `<code>${esc(i)}</code>`).join(' · ')}</p>` : ''}`;
+}
+
+/* La cabecera de las tres pestañas: cuándo se redactó y si quedó vieja. */
+function cabeceraIA(ia){
+  const r = (ia || {}).redaccion || {};
+  /* Los avisos van en UNA línea: `.avi` es `white-space: pre-wrap`, así que un
+     literal partido en varias líneas se ve partido, con la sangría del código
+     incluida. */
+  if(!(ia || {}).hay_ficha) return '<div class="avi">Todavía no hay texto redactado para este realtor. Lo que se ve lo llena el código.</div>';
+  return `${r.desactualizada ? `<div class="avi">Hay datos nuevos: el texto está pendiente de actualizar. Se sigue mostrando el del ${esc(fechaLegible(r.generada_en))}.</div>` : ''}
+    <p class="pista" style="margin:0 0 10px">Redactado el
+      ${esc(fechaLegible(r.generada_en))} · ${esc(r.version_prompt || '')}
+      · por ${esc(r.generada_por || '')}</p>`;
+}
+
+const fechaLegible = v => (window.fichaV3Utils && window.fichaV3Utils.fecha)
+  ? window.fichaV3Utils.fecha(v) : String(v || '');
+
 /* ══ DOSSIER Y SECUENCIA ═══════════════════════════════════════════════════
  * Salen sin esperar a que se verifiquen los recursos, porque se quitaron las
  * promesas de material: el valor va DENTRO del mensaje.
@@ -341,9 +449,13 @@ async function vDossier(cual){
   const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
   try{
-    const d = await api('/api/dossier?realtor_id=' + encodeURIComponent(SEL.id));
+    const [d, ia] = await Promise.all([
+      api('/api/dossier?realtor_id=' + encodeURIComponent(SEL.id)),
+      bloquesIA().catch(() => null),
+    ]);
     if(otraPestana(mia)) return;
-    $('#cuerpo').innerHTML = cual === 'seq' ? vistaSecuencia(d) : vistaDossier(d);
+    $('#cuerpo').innerHTML = cual === 'seq' ? vistaSecuencia(d, ia)
+                                            : vistaDossier(d, ia);
   }catch(e){
     if(otraPestana(mia)) return;
     $('#cuerpo').innerHTML = `<div class="err">${esc(e.message)}</div>`;
@@ -369,9 +481,35 @@ function pendientes(d){
     </ul></div>`;
 }
 
-function vistaDossier(d){
+function vistaDossier(d, ia){
   const c = d.cabecera || {};
   const [cn, ci] = NIVEL_BADGE[c.nivel] || ['sin-evaluar','▣'];
+  /* Los bloques redactados, por letra. El bloque D no es una frase: trae el
+     qualifier, la fuerza, el grado y el acto de habla, y eso se pinta como
+     datos porque es lo que el BD compara con lo que el motor calculó. */
+  const texto = (ia || {}).dossier || {};
+
+  const bloqueIA = letra => {
+    const f = texto[letra];
+    if(letra === 'D' && f && !f._pendiente && f.texto){
+      return `<p style="margin:6px 0 0;font-size:13.5px;line-height:1.65;
+          color:var(--slate-800)">${esc(f.texto)}</p>
+        <ul class="lista" style="margin-top:8px">
+          <li><b>qualifier</b><span class="num"
+            style="margin-left:auto">${esc(f.qualifier || '—')}</span></li>
+          <li><b>fuerza</b><span class="num"
+            style="margin-left:auto">${esc(f.intensidad)}/3</span></li>
+          <li><b>grado de evidencia</b><span class="num"
+            style="margin-left:auto">${esc(f.grado || '—')}</span></li>
+          <li><b>acto de habla</b><span class="num"
+            style="margin-left:auto">${esc(f.acto || '—')}</span></li>
+        </ul>
+        ${(f.evidencias||[]).length ? `<p class="pista" style="margin:6px 0 0">
+          ${(f.evidencias||[]).map(i => `<code>${esc(i)}</code>`).join(' · ')}
+          </p>` : ''}`;
+    }
+    return fraseIA(f);
+  };
 
   const bloque = b => {
     /* El bloque F se pinta distinto: es una lista de no/sí, no un dato. */
@@ -388,21 +526,32 @@ function vistaDossier(d){
       </div>`).join('')}
       <p class="sub" style="margin-top:12px">${esc(b.fuente)}</p></div>`;
 
-    if(b.vacio_porque && !b.texto && !b.datos.length) return `<div class="tarjeta">
-      <div class="seccion">${esc(b.letra)} · ${esc(b.titulo)}</div>
-      <span class="badge sin-evaluar"><i>▣</i>sin dato</span>
-      <p class="sub" style="margin-top:8px">${esc(b.vacio_porque)}</p></div>`;
+    /* `texto[b.letra]` a secas, no «y además válido»: si el bloque redactado
+       NO pasó, el motivo es justo lo que hay que enseñar. Con la condición
+       puesta en «válido», un bloque rechazado caía en la tarjeta de «sin
+       dato» y el rechazo desaparecía de la pantalla. */
+    if(b.vacio_porque && !b.texto && !b.datos.length && !texto[b.letra])
+      return `<div class="tarjeta">
+        <div class="seccion">${esc(b.letra)} · ${esc(b.titulo)}</div>
+        <span class="badge sin-evaluar"><i>▣</i>sin dato</span>
+        <p class="sub" style="margin-top:8px">${esc(b.vacio_porque)}</p></div>`;
 
+    /* El bloque lo ESCRIBE Cowork; lo que el motor arma queda debajo, plegado.
+       Los dos son útiles y dicen cosas distintas --uno redacta, el otro trae
+       los campos con su fuente-- y ponerlos uno encima del otro sin plegar
+       hacía que se leyeran como una repetición. */
     return `<div class="tarjeta">
       <div class="seccion">${esc(b.letra)} · ${esc(b.titulo)}</div>
-      ${b.texto ? `<p style="margin:8px 0 0;font-size:${b.letra==='E'?'15px':'13px'};
-        line-height:1.65;color:var(--${b.letra==='E'?'navy':'slate-800'});
-        font-weight:${b.letra==='E'?'700':'500'}">${esc(b.texto)}</p>` : ''}
+      ${bloqueIA(b.letra)}
       ${b.datos.length ? `<ul class="lista" style="margin-top:10px">${
         b.datos.filter(x=>x.v!=null&&x.v!=='').map(x =>
         `<li><b>${esc(x.k)}</b><span class="${typeof x.v==='number'?'num':''}"
           style="margin-left:auto;text-align:right">${esc(x.v)}</span></li>`
       ).join('')}</ul>` : ''}
+      ${b.texto ? `<details style="margin-top:10px">
+        <summary class="pista" style="cursor:pointer">Lo que arma el motor</summary>
+        <p style="margin:6px 0 0;font-size:13px;line-height:1.65;
+          color:var(--slate-800)">${esc(b.texto)}</p></details>` : ''}
       ${b.vacio_porque ? `<p class="sub" style="margin-top:8px">${esc(b.vacio_porque)}</p>` : ''}
       ${b.fuente ? `<p class="pista" style="margin-top:8px">${esc(b.fuente)}</p>` : ''}
     </div>`;
@@ -417,39 +566,151 @@ function vistaDossier(d){
       <span class="pista" style="margin-left:10px">${esc(d.realtor.estado_nombre || '')}
         · ${d.mercados} mercados</span>
     </div>
+    ${cabeceraIA(ia)}
     ${(d.bloques||[]).map(bloque).join('')}
     ${pendientes(d)}`;
 }
 
-function vistaSecuencia(d){
+/* Cómo se llama cada canal cuando se lee. `dm_ig` no es una palabra. */
+const CANAL = {sms: 'SMS', email: 'Email', llamada: 'Llamada',
+               dm_ig: 'DM de Instagram'};
+
+function vistaSecuencia(d, ia){
   const s = d.secuencia;
+  const seq = (ia || {}).secuencia;
+  const dias = (ia || {}).dias_pacs || [0, 3, 10, 21, 30, 45, 60];
+  const toques = (seq && seq.toques) || [];
+
+  /* Los toques redactados son LA secuencia. Lo que arma el motor queda
+     plegado abajo: sigue siendo el que corre las cuatro reglas del copy, y el
+     día que no haya texto redactado es lo único que hay. */
+  const toqueIA = t => `
+    <div class="tarjeta">
+      <div class="seccion">Toque ${t.n} · día ${t.dia}${
+        t.canal ? ' · ' + esc(CANAL[t.canal] || t.canal) : ''}</div>
+      ${t._pendiente ? pendienteIA(t._pendiente) : `
+        ${t.objetivo ? `<p class="sub" style="margin:6px 0 0">
+          <b>Busca:</b> ${esc(t.objetivo)}</p>` : ''}
+        <p style="margin:8px 0;font-size:13.5px;line-height:1.7;
+          white-space:pre-wrap;color:var(--slate-800)">${esc(t.texto)}</p>
+        ${t.si_responde ? `<p class="sub" style="margin:0">
+          <b>Si responde:</b> ${esc(t.si_responde)}</p>` : ''}
+        ${(t.evidencias||[]).length ? `<p class="pista" style="margin:6px 0 0">
+          ${(t.evidencias||[]).map(i => `<code>${esc(i)}</code>`).join(' · ')}
+          </p>` : ''}`}
+    </div>`;
+
+  const delMotor = `
+    <details style="margin-top:6px">
+      <summary class="pista" style="cursor:pointer">Lo que arma el motor ·
+        ${s.toques.length} toques</summary>
+      ${s.toques.map(t => `
+        <div class="tarjeta" style="margin-top:8px">
+          <div class="seccion">Toque ${t.numero} · día ${t.dia} ·
+            ${esc(CANAL[t.canal] || t.canal)}</div>
+          <p style="margin:8px 0;font-size:13px;line-height:1.7;
+            white-space:pre-wrap;color:var(--slate-800)">${esc(t.cuerpo)}</p>
+          ${t.fuente_del_valor ? `<p class="sub" style="margin:0">
+            <b>Valor:</b> ${esc(t.fuente_del_valor)}</p>` : ''}
+        </div>`).join('')}
+      ${s.notas.map(n => `<div class="avi">${esc(n)}</div>`).join('')}
+    </details>`;
+
   return `
     <div class="banner">
       <div class="seccion">Secuencia de 60 días</div>
-      <span class="cifra ${s.promete_material ? '' : 'bien'}">${s.toques.length} toques</span>
+      <span class="cifra ${s.promete_material ? '' : 'bien'}">${
+        toques.length || s.toques.length} toques</span>
       <span class="pista" style="margin-left:10px">${
         s.promete_material ? 'PROMETE MATERIAL' : 'sin una sola promesa de material'}</span>
     </div>
-    ${s.toques.map(t => `
-      <div class="tarjeta">
-        <div class="seccion">Toque ${t.numero} · día ${t.dia} · ${esc(t.canal)}</div>
-        <p style="margin:8px 0;font-size:13px;line-height:1.7;white-space:pre-wrap;color:var(--slate-800)">${esc(t.cuerpo)}</p>
-        ${t.fuente_del_valor ? `<p class="sub" style="margin:0">
-          <b>Valor:</b> ${esc(t.fuente_del_valor)}</p>` : ''}
-      </div>`).join('')}
-    ${s.notas.map(n => `<div class="avi">${esc(n)}</div>`).join('')}
+    ${cabeceraIA(ia)}
+    ${toques.length ? toques.map(toqueIA).join('')
+      : `<div class="tarjeta">
+          <div class="seccion">Los 7 toques, redactados</div>
+          ${pendienteIA((seq || {})._pendiente)}
+          <p class="sub" style="margin-top:8px">Los días son los de PACS y no
+            se mueven: ${dias.join(', ')}.</p>
+        </div>`}
+    ${delMotor}
     ${pendientes(d)}`;
 }
 
 /* ── pestaña Instagram · lo capturado, sin motor ──────────────────────────── */
+/* Los nueve campos, en el orden en que se leen. El título es lo que el BD
+   pregunta, no el nombre del campo. */
+const CAMPOS_IG = [
+  ['quien_es', 'Quién es en su cuenta'],
+  ['con_quien_se_relaciona', 'Con quién se relaciona'],
+  ['que_escribe', 'Qué escribe'],
+  ['a_quien_le_habla', 'A quién le habla'],
+  ['donde', 'Dónde'],
+  ['cada_cuanto', 'Cada cuánto publica'],
+  ['que_le_preguntan', 'Qué le preguntan'],
+  ['senales_para_el_bd', 'Señales para el BD'],
+  ['que_verificar', 'Qué hay que verificar'],
+];
+
+function lecturaDeInstagram(ia){
+  const a = (ia || {}).instagram_analisis;
+  const p = (a || {}).prioridad_ig;
+
+  /* «Su Instagram no aporta» es una respuesta, no un hueco.
+     Cinco realtors tienen la cuenta sin datos, personal, o --en un caso-- la
+     cuenta mapeada es de otra persona. Enseñar nueve secciones vacías haría
+     pensar que nadie la miró; el sello dice que sí se miró y qué se encontró,
+     que es lo que le ahorra el viaje al BD. */
+  if(a && a.aporta === false){
+    return `<div class="tarjeta">
+      <div class="seccion">Lectura de su Instagram</div>
+      ${cabeceraIA(ia)}
+      <span class="badge sin-evaluar" style="font-size:13px;padding:6px 12px">
+        <i>▣</i>IG no aporta</span>
+      ${((p || {}).razones || []).map(r => fraseIA(r)).join('')}
+      ${a.que_verificar ? `<div style="margin-top:14px">
+        <h3 style="margin:0;font-size:13px;color:var(--navy)">Qué hay que
+          verificar</h3>${fraseIA(a.que_verificar)}</div>` : ''}
+    </div>`;
+  }
+
+  return `<div class="tarjeta">
+    <div class="seccion">Lectura de su Instagram</div>
+    ${cabeceraIA(ia)}
+    ${faltaIA(a) && !(a && Object.keys(a).length)
+      ? pendienteIA(a && a._pendiente)
+      : CAMPOS_IG.map(([k, titulo]) => `
+        <div style="margin-top:14px">
+          <h3 style="margin:0;font-size:13px;color:var(--navy)">${esc(titulo)}</h3>
+          ${fraseIA((a || {})[k])}
+        </div>`).join('')}
+    ${p ? `<div style="margin-top:16px;border-top:1px solid var(--slate-200);
+        padding-top:12px">
+      <h3 style="margin:0;font-size:13px;color:var(--navy)">Prioridad de su
+        Instagram</h3>
+      ${p._pendiente ? pendienteIA(p._pendiente) : `
+        <p style="margin:6px 0 0">
+          <span class="badge sin-evaluar"><i>?</i>clase ${esc(p.clase)}</span>
+          <span class="pista" style="margin-left:8px">Hipótesis: es un juicio
+            sobre su cuenta, no un dato de ella</span></p>
+        ${(p.razones || []).map(r => fraseIA(r)).join('')}`}
+    </div>` : ''}
+  </div>`;
+}
+
 async function vInstagram(){
   const mia = TAB;
   $('#cuerpo').innerHTML = '<div class="tarjeta pista">cargando…</div>';
   try{
-    const d = await api('/api/instagram?realtor_id=' + encodeURIComponent(SEL.id));
+    /* Las dos lecturas a la vez: el raspado y el texto. En serie, la pestaña
+       tarda la suma de las dos por nada. */
+    const [d, ia] = await Promise.all([
+      api('/api/instagram?realtor_id=' + encodeURIComponent(SEL.id)),
+      bloquesIA().catch(() => null),
+    ]);
     if(otraPestana(mia)) return;
+    const lectura = lecturaDeInstagram(ia);
     if(!d.perfiles.length){
-      $('#cuerpo').innerHTML = `<div class="tarjeta">
+      $('#cuerpo').innerHTML = lectura + `<div class="tarjeta">
         <div class="seccion">Instagram</div>
         <span class="badge sin-evaluar"><i>▣</i>sin raspado vigente</span>
         <p class="sub" style="margin-top:8px">Este realtor no tiene señales en
@@ -457,7 +718,7 @@ async function vInstagram(){
           alcanzado todavía, o que su lote esté apagado.</p></div>`;
       return;
     }
-    $('#cuerpo').innerHTML = d.perfiles.map(p => `
+    $('#cuerpo').innerHTML = lectura + d.perfiles.map(p => `
       <div class="tarjeta">
         <div class="seccion">Perfil capturado</div>
         <h2>@${esc(p.handle || '—')}</h2>
@@ -1790,11 +2051,27 @@ function pintarCajas(d){
         style="margin-left:8px">Pegar una nueva</button>
     </div>`;
 
+    /* Solo en Transactions: las OTRAS formas con las que su nombre aparece en
+       la tabla. Model Match escribe «Isabel Vasquez» en el perfil y «Isabel
+       Vazquez» en 17 de sus 25 filas, y esas 17 quedan sin lado. No se puede
+       deducir --son dos apellidos distintos-- y sí se puede confirmar mirando
+       la pantalla, que es lo que hace este campo. */
+    const alternativos = c.tipo === 'transacciones' ? `
+      <label style="display:block;margin-top:10px;font-weight:400">
+        <span>Otros nombres con los que aparece en la tabla</span>
+        <input type="text" id="alt_${c.clave}" style="margin-top:4px"
+          placeholder="separados por comas, p. ej. Isabel Vazquez">
+        <span class="pista">Si en la columna de agente aparece escrito de otra
+          forma, ponelo acá: el lado de esas operaciones se decide con
+          cualquiera de los nombres. Solo lo que confirmes mirando la
+          pantalla.</span></label>` : '';
+
     return `<div class="tarjeta">
       <div class="seccion">${titulo}</div>
       ${nota}
       <textarea id="tx_${c.clave}" style="min-height:110px"
         placeholder="Pegá acá esta sección, o dejala vacía."></textarea>
+      ${alternativos}
       ${casilla}
     </div>`;
   }).join('');
@@ -1859,6 +2136,8 @@ async function guardar(){
     clave: c.clave, tipo: c.tipo, etiqueta: c.etiqueta,
     texto: ($('#tx_'+c.clave) ? $('#tx_'+c.clave).value : ''),
     vacio_declarado: !!($('#vd_'+c.clave) && $('#vd_'+c.clave).checked),
+    nombres_alternativos: ($('#alt_'+c.clave)
+      ? $('#alt_'+c.clave).value : ''),
   }));
   const enlazados = mercadosEnlazados();
   $('#btnGuardar').disabled = true;

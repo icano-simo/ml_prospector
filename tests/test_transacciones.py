@@ -90,17 +90,33 @@ def _variante(fecha: str, columna: str, valor, *, borrar=False) -> str:
 
     `fecha` es la de la fila a tocar, tal como aparece («Jul 30, 2026»).
     """
+    return _variantes(fecha, [(columna, valor)], borrar=borrar)
+
+
+def _variantes(fecha: str, cambios, *, borrar=False) -> str:
+    """Varias celdas de LA MISMA fila, para los casos que necesitan más de una.
+
+    Una fila ilegible de verdad es la que no trae ni monto, ni loan type, ni
+    lender: con cualquiera de los tres ya se sabe que hubo loan.
+    """
     filas = [list(f) for f in _celdas_por_fila(REAL)]
     tocadas = 0
     for f in filas:
         if f and f[0].strip() == fecha:
-            if borrar:
-                del f[_COL[columna]]
-            else:
-                f[_COL[columna]] = valor
+            for columna, valor in cambios:
+                if borrar:
+                    del f[_COL[columna]]
+                else:
+                    f[_COL[columna]] = valor
             tocadas += 1
     assert tocadas == 1, "la variante tocó %d filas, no 1" % tocadas
     return _en_tabuladores(filas)
+
+
+#: Una fila sin monto, sin loan type y sin lender: la única que de verdad no se
+#: puede clasificar.
+_SIN_NADA = [("prestamo", "—"), ("tipo", "—"), ("lender", "—"),
+             ("empleador", "—")]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -302,19 +318,44 @@ def test_cash_de_hace_mas_de_cinco_semanas_es_cash_segun_model_match():
     assert f["recapturar_despues_de"] is None
 
 
-def test_una_celda_de_prestamo_vacia_es_NO_LEIDO_y_nunca_cash():
+def test_una_celda_de_prestamo_vacia_NUNCA_es_cash():
     """El agujero que daba el falso `ok`.
 
     Un loan que no se leyó se convertía en cash, y con eso las operaciones de
     la casa desaparecían del conteo que decide la exclusión. `cash_*` exige que
     la celda diga literalmente `Cash`.
     """
-    p = _p(_variante("Jul 30, 2026", "prestamo", "—"))
+    p = _p(_variantes("Jul 30, 2026", _SIN_NADA))
     f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
     assert f["estado_prestamo"] == NO_LEIDO
     assert f["estado_prestamo"] not in (CASH_SEGUN_MM, CASH_PROVISIONAL)
     assert p["completa"] is False
     assert any("loan o cash" in r for r in p["por_que_no_completa"])
+
+
+def test_con_loan_type_o_con_lender_es_FINANCIADA_aunque_falte_el_monto():
+    """Decisión de Isabella del 2026-09-24, y sale de un caso real.
+
+    Una fila de Cristy Gramajo traía `FHA` y `American Portfolio Mortgage
+    Corp` con el Mortgage Amount vacío. Eso es una operación financiada a la
+    que le falta el importe, no una que no se sepa clasificar -- y quedaba en
+    `no_leido`, dejando su captura entera sin poder darse por completa.
+
+    El importe NO se rellena: sigue en `None`, y la ficha lo muestra como «no
+    disponible». Saber que hubo loan y saber cuánto son dos cosas.
+    """
+    p = _p(_variante("Jul 30, 2026", "prestamo", "—"))
+    f = next(x for x in p["filas"] if x["fecha"] == "2026-07-30")
+    assert f["estado_prestamo"] == FINANCIADA
+    assert f["prestamo"] is None
+    assert f["tipo"] == "Conventional"
+    assert p["completa"] is True, p["por_que_no_completa"]
+
+    # Solo con el lender, sin loan type, también.
+    p2 = _p(_variantes("Jul 30, 2026", [("prestamo", "—"), ("tipo", "—")]))
+    f2 = next(x for x in p2["filas"] if x["fecha"] == "2026-07-30")
+    assert f2["estado_prestamo"] == FINANCIADA
+    assert f2["prestamo"] is None
 
 
 def test_una_fila_con_una_celda_de_menos_no_se_lee_y_bloquea():
@@ -377,12 +418,18 @@ def test_una_financiada_sin_lender_NO_bloquea_la_lectura():
     assert p["completa"] is True, p["por_que_no_completa"]
     assert p["por_que_no_completa"] == []
     assert p["financiadas_sin_lender"] == 1
-    assert p["cobertura_lender"]["texto"] == "9 de 10 con lender"
-    assert p["cobertura_lender"]["sin_lender_identificado"] == 1
+    assert p["cobertura_lender_todas"]["texto"] == "9 de 10 con lender"
+    assert p["cobertura_lender_todas"]["sin_lender_identificado"] == 1
+    # La del lado COMPRADOR es otra, y es la que se muestra y se reporta.
+    assert p["cobertura_lender_compra"]["texto"] == "7 de 8 con lender"
 
     r = resumen(p)
     assert r["compras_sin_lender_identificado"] == 1
     assert r["cobertura_lender_compra"]["texto"] == "7 de 8 con lender"
+    # El parseo y el resumen tienen que decir LO MISMO: son dos caminos al
+    # mismo número, y el día que difieran cada pantalla mostrará el suyo.
+    assert (p["cobertura_lender_compra"]
+            == r["cobertura_lender_compra"])
     # Y el veredicto sale, que es el punto de todo esto.
     assert puede_contactarse({"transacciones": p}).estado == OK
 
@@ -394,9 +441,39 @@ def test_la_cobertura_se_mide_sobre_las_FINANCIADAS_y_no_sobre_todas():
     cobertura del 60 % que no significa nada.
     """
     p = _p()
-    assert p["cobertura_lender"]["financiadas"] == 10
-    assert p["cobertura_lender"]["texto"] == "10 de 10 con lender"
+    assert p["cobertura_lender_todas"]["financiadas"] == 10
+    assert p["cobertura_lender_todas"]["texto"] == "10 de 10 con lender"
     assert p["leidas"] == 25
+
+
+def test_las_dos_coberturas_llevan_su_denominador_en_el_NOMBRE():
+    """Un número sin denominador se lee como el del otro.
+
+    Reporté «25 de 26 con lender» de Eva Diaz leyendo la cobertura de TODAS
+    sus operaciones, cuando la que estaba guardada en su veredicto era «12 de
+    13»: la del lado comprador. Las dos eran ciertas y solo una contestaba la
+    pregunta. Ahora el nombre dice cuál es cuál, y no queda ninguna con el
+    nombre ambiguo.
+    """
+    p = _p()
+    assert "cobertura_lender" not in p, "el nombre ambiguo volvió"
+    assert set(p["cobertura_lender_compra"]) == {
+        "financiadas", "con_lender", "sin_lender_identificado", "texto"}
+    # En el volcado real hay 10 financiadas en total y 8 del lado comprador.
+    assert p["cobertura_lender_todas"]["financiadas"] == 10
+    assert p["cobertura_lender_compra"]["financiadas"] == 8
+
+
+def test_el_texto_de_la_ficha_dice_de_que_es_el_denominador():
+    """«7 de 8» no se sostiene solo: la caja habla de buyers, y hay que decirlo."""
+    from api.rutas import _texto_de_cobertura
+
+    r = resumen(_p(REAL.replace("Guaranteed Rate Inc\n", "—\n", 1)))
+    texto = _texto_de_cobertura(r)
+    assert texto == ("7 de 8 financed buys con lender · 1 sin lender en "
+                     "Model Match"), texto
+    # Sin huecos, no se dice nada: repetir que no falta nada es ruido.
+    assert _texto_de_cobertura(resumen(_p())) == ""
 
 
 def test_sin_pie_no_se_afirma_que_estan_todas():
@@ -407,6 +484,78 @@ def test_sin_pie_no_se_afirma_que_estan_todas():
     assert p["completa"] is None
     assert any("pie" in r for r in p["por_que_no_completa"])
     assert puede_contactarse({"transacciones": p}).estado == PENDIENTE
+
+
+def test_el_nombre_truncado_del_overview_sigue_siendo_el_mismo_nombre():
+    """Model Match corta el nombre del perfil a 24 caracteres.
+
+    Dice «Brayan Valdovinos-sauced» y la tabla dice «Brayan
+    Valdovinos-saucedo». Sus 25 operaciones quedaban sin lado por una «o».
+    """
+    from captura.transacciones import _nombre_igual
+
+    assert _nombre_igual("Brayan Valdovinos-sauced",
+                         "Brayan Valdovinos-saucedo")
+    # Y el prefijo corto NO vale: «Ana Mar» sería prefijo de media lista.
+    assert not _nombre_igual("Ana Mar", "Ana Marcela Rodriguez Perez")
+
+
+def test_la_tilde_no_hace_a_dos_personas_distintas():
+    """`José` y `Jose` son la misma persona, y Model Match usa las dos.
+
+    Antes `[^a-z\\s] -> " "` convertía «José» en «jos» y lo partía en dos
+    palabras: el nombre con tilde no coincidía ni consigo mismo.
+    """
+    from captura.transacciones import _nombre_igual
+
+    assert _nombre_igual("José Ramírez", "Jose Ramirez")
+    assert _nombre_igual("MARÍA JOSÉ PEÑA", "Maria Jose Pena")
+
+
+def test_dos_apellidos_parecidos_NO_son_la_misma_persona():
+    """«Isabel Vasquez» y «Isabel Vazquez» no se adivinan.
+
+    Son dos apellidos distintos. Para eso están los nombres alternativos, que
+    alguien confirma mirando la pantalla.
+    """
+    from captura.transacciones import _nombre_igual
+
+    assert not _nombre_igual("Isabel Vasquez", "Isabel Vazquez")
+
+
+def test_los_nombres_alternativos_deciden_el_lado():
+    """El caso de Isabel: 17 de sus 25 filas con el apellido escrito distinto.
+
+    Con el alternativo confirmado, esas filas recuperan su lado; sin él, se
+    quedan sin lado y la captura no se da por completa -- que es lo correcto,
+    porque nadie confirmó que sea ella.
+    """
+    # UNA fila con el apellido escrito distinto. Una sola, para que no se
+    # dispare el respaldo del 90 %: lo que se mide es el alternativo, no el
+    # respaldo.
+    #
+    # Y con una letra cambiada EN MEDIO, no al final: «Agente Titulá» sería un
+    # prefijo de «Agente Titular» y lo cazaría la regla del truncamiento, así
+    # que la prueba no probaría los alternativos. Es el caso de Isabel:
+    # Vasquez/Vazquez, una letra en medio.
+    otra = _variante("Jul 30, 2026", "agente_comprador", "Agente Titolar")
+    base = next(x for x in _p()["filas"] if x["fecha"] == "2026-07-30")
+    assert base["lado"] == COMPRA
+
+    sin = _p(otra)
+    f_sin = next(x for x in sin["filas"] if x["fecha"] == "2026-07-30")
+    assert f_sin["lado"] is None
+    assert sin["sin_lado"] == 1
+    assert sin["completa"] is False
+
+    con = parsear_transacciones(otra, realtor=REALTOR,
+                                alternativos=["Agente Titolar"],
+                                capturado_en=CAPTURADO)
+    f_con = next(x for x in con["filas"] if x["fecha"] == "2026-07-30")
+    assert f_con["lado"] == COMPRA
+    assert con["sin_lado"] == 0
+    assert con["completa"] is True
+    assert con["nombres_alternativos"] == ["Agente Titolar"]
 
 
 def test_sin_nombre_el_respaldo_lo_deduce_de_la_propia_tabla():
@@ -682,6 +831,53 @@ def test_el_crudo_redactado_no_deja_nombres_ni_calle():
         assert "Persona %d" % i not in red, i
 
 
+#: Una fila de 22 celdas: un segundo vendedor partió la columna en dos. Es la
+#: forma que tienen las filas que quedaron sin leer en cuatro capturas reales.
+_FILA_DE_22 = "\t".join([
+    "Jul 30, 2026",
+    "103 Calle Ficticia, Elmwood Park, IL, 60707",
+    "No Builder",
+    "Maria Gonzalez",            # comprador
+    "Pedro Ramirez",             # vendedor
+    "Jose Luis Perez",           # el SEGUNDO vendedor: la celda de más
+    "Chicago Title",
+    "$151K", "$17K",
+    "Purchase", "Conventional", "6.55%", "30 Years",
+    "Laura Lopez", "NMLS: 900001",
+    "No Broker", "Guaranteed Rate Inc",
+    "$168K", "—",
+    "Agente Titular", "Agente 5", "No Co Agent",
+]) + "\nRows per page\n1 - 1 of 1"
+
+
+def test_una_fila_SIN_LEER_se_redacta_por_lista_blanca():
+    """Y no entera, que es lo que destruía la evidencia para arreglar el parser.
+
+    Cuatro capturas --Alva, Francisco, Jessica, Cristy-- quedaron con filas de
+    22 celdas de «[redactado]», y por qué eran 22 ya no se puede saber: lo
+    borró nuestra propia guarda, en el único caso en que el crudo hacía falta.
+
+    Lo que se conserva es lo inequívocamente no-nombre. Ningún nombre de
+    comprador, vendedor, LO ni agente sobrevive.
+    """
+    from captura.transacciones import crudo_redactado
+
+    red = crudo_redactado(_FILA_DE_22)
+    for nombre in ("Maria Gonzalez", "Pedro Ramirez", "Jose Luis Perez",
+                   "Laura Lopez", "Agente Titular", "Agente 5",
+                   "Chicago Title", "Guaranteed Rate Inc",
+                   "103 Calle Ficticia", "900001"):
+        assert nombre not in red, nombre
+    # Y lo que sí tiene que quedar, que es con lo que se arregla el parser.
+    for dato in ("Jul 30, 2026", "$151K", "$17K", "6.55%", "30 Years",
+                 "Purchase", "Conventional", "No Builder", "No Broker",
+                 "No Co Agent", "Elmwood Park", "IL", "60707"):
+        assert dato in red, dato
+    # La fila sigue teniendo 22 celdas: el número de columnas ES el dato que
+    # explica por qué no se leyó.
+    assert len(red.split("\n")[0].split("\t")) == 22
+
+
 def test_el_crudo_redactado_conserva_lo_que_hace_falta_para_re_derivar():
     """El crudo existe para poder arreglar el parser y re-derivar.
 
@@ -726,15 +922,23 @@ def test_la_api_guarda_el_crudo_redactado_y_no_el_pegado():
     assert len(guardado) > 1000, "se redactó de más: no queda nada que parsear"
 
 
-def test_una_fila_que_no_se_leyo_se_redacta_entera():
-    """No se sabe qué celda es cuál, así que no se sabe cuál lleva un nombre."""
+def test_una_fila_que_no_se_leyo_no_deja_un_solo_nombre():
+    """Antes se redactaba entera; ahora, por lista blanca. La guarda es la misma.
+
+    Lo que cambia es que los datos que NO son nombres --la fecha, el importe,
+    el tipo de loan-- sobreviven, y con ellos se puede ver por qué la fila no
+    se leyó. Lo que no cambia es que ningún nombre sale.
+    """
     from captura.transacciones import REDACTADO, crudo_redactado
 
     roto = _variante("Jul 30, 2026", "tipo", None, borrar=True)
     roto = roto.replace("Persona 1", "Maria Gonzalez Perez")
     red = crudo_redactado(roto)
     assert "Maria Gonzalez Perez" not in red
-    assert ("\t".join([REDACTADO] * 20)) in red
+    assert REDACTADO in red
+    # Y la fila corta sigue siendo reconocible: 20 celdas, no 21.
+    cortas = [l for l in red.split("\n") if l.count("\t") == 19]
+    assert cortas, "la fila de 20 celdas desapareció del crudo"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -749,7 +953,7 @@ def test_una_fila_no_leida_se_guarda_para_auditoria():
     from api.rutas import _filas_de_transacciones
     from captura.transacciones import NO_LEIDO
 
-    p = _p(_variante("Jul 30, 2026", "prestamo", "—"))
+    p = _p(_variantes("Jul 30, 2026", _SIN_NADA))
     fs = _filas_de_transacciones(p, "r-1", "lote-1", "2026-09-23T00:00:00Z")
     assert len(fs) == 25
     sin_leer = [f for f in fs if f["estado_prestamo"] == NO_LEIDO]

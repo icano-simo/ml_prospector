@@ -1,7 +1,7 @@
 {
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "title": "Ficha del realtor v3",
- "description": "Cada campo dice quién lo escribe: 'codigo' (lo llena la app desde la base) o 'ia' (lo escribe Claude). Solo los campos 'ia' van en el JSON Schema de la llamada a la API. Toda frase de IA lleva 'evidencias': ids del paquete. v2 (2026-09-24): agrega de_donde_sale por razón, grado_detalle, títulos de contexto y prosa de código que faltaba.",
+ "description": "Cada campo dice quién lo escribe: 'codigo' (lo llena la app desde la base) o 'ia' (lo escribe Claude). Solo los campos 'ia' van en el JSON Schema de la llamada a la API. Toda frase de IA lleva 'evidencias': ids del paquete. v2 (2026-09-24): agrega de_donde_sale por razón, grado_detalle, títulos de contexto y prosa de código que faltaba. v3 (2026-09-24): agrega instagram_analisis, dossier y secuencia -- las tres pestañas que pasan a mostrar texto redactado, con el mismo mecanismo que la ficha.",
  "$defs": {
   "frase": {
    "type": "object",
@@ -409,6 +409,250 @@
   "pendientes": {
    "escribe": "codigo",
    "description": "codigo: [{item, motivo, texto_visible}] p.ej. {item:'LO asignado', texto_visible:'Qué LO de HOMESÍ la atiende (con licencia en Illinois y que hable español)'}"
+  },
+  "instagram_analisis": {
+   "escribe": "ia",
+   "type": "object",
+   "description": "La pestaña Instagram, redactada. Nueve frases y un juicio. Cada frase cita IG-* (posts, IG-RESUMEN, IG-COMENTARIOS); lo que no salga de su cuenta no va aquí. Si su Instagram no aporta --sin datos, no utilizable, personal, o la cuenta mapeada es de otra persona-- se escribe `aporta: false` con el motivo en `prioridad_ig.razones` y NO se escriben las nueve frases.",
+   "required": [
+    "quien_es",
+    "con_quien_se_relaciona",
+    "que_escribe",
+    "a_quien_le_habla",
+    "donde",
+    "cada_cuanto",
+    "que_le_preguntan",
+    "senales_para_el_bd",
+    "que_verificar",
+    "prioridad_ig"
+   ],
+   "properties": {
+    "aporta": {
+     "type": "boolean",
+     "escribe": "ia",
+     "description": "false cuando su Instagram no sirve para abrir una conversación. Con false NO se exigen las nueve frases: se exige el MOTIVO en prioridad_ig.razones, y opcionalmente que_verificar. «No miramos su Instagram» y «su Instagram no sirve» son cosas distintas, y la segunda le ahorra el viaje al BD."
+    },
+    "quien_es": {
+     "$ref": "#/$defs/frase",
+     "description": "Cómo se presenta ELLA en su cuenta: bio, oficio, equipo. Solo lo que escribe."
+    },
+    "con_quien_se_relaciona": {
+     "$ref": "#/$defs/frase",
+     "description": "A quién menciona y etiqueta: otros agentes, lenders, title, su brokerage. Si nombra un lender, es contexto, nunca gancho (RESPA §8)."
+    },
+    "que_escribe": {
+     "$ref": "#/$defs/frase",
+     "description": "De qué son sus posts: listings, cierres, casos de clientes, vida personal. Con la proporción si está contada en IG-RESUMEN."
+    },
+    "a_quien_le_habla": {
+     "$ref": "#/$defs/frase",
+     "description": "El destinatario de sus posts: sellers, first-time homebuyers, investors. Es una lectura de sus textos, no del nombre ni del barrio."
+    },
+    "donde": {
+     "$ref": "#/$defs/frase",
+     "description": "Las zonas que nombra en sus posts, tal como ella las escribe."
+    },
+    "cada_cuanto": {
+     "$ref": "#/$defs/frase",
+     "description": "Ritmo de publicación y hasta cuándo llega el raspado. Si el raspado quedó truncado, dilo."
+    },
+    "que_le_preguntan": {
+     "$ref": "#/$defs/frase",
+     "description": "Qué preguntan en sus comentarios (IG-COMENTARIOS). Si no hay comentarios de posibles clientes, dilo."
+    },
+    "senales_para_el_bd": {
+     "$ref": "#/$defs/frase",
+     "description": "Lo que un BD puede usar mañana en una llamada. Concreto, no adjetivos."
+    },
+    "que_verificar": {
+     "$ref": "#/$defs/frase",
+     "description": "Lo que NO se puede afirmar con lo que hay y hay que preguntarle."
+    },
+    "prioridad_ig": {
+     "type": "object",
+     "escribe": "ia",
+     "required": [
+      "clase",
+      "razones"
+     ],
+     "properties": {
+      "clase": {
+       "enum": [
+        "A",
+        "B",
+        "C",
+        "D"
+       ],
+       "description": "Cuánto sirve su Instagram para abrir una conversación: A mucho, D nada."
+      },
+      "razones": {
+       "type": "array",
+       "minItems": 1,
+       "maxItems": 3,
+       "items": {
+        "$ref": "#/$defs/frase"
+       }
+      }
+     },
+     "description": "SIEMPRE Hipótesis: es tu juicio sobre su cuenta, no un dato de ella. Se pinta con el grado a la vista."
+    }
+   }
+  },
+  "dossier": {
+   "escribe": "ia",
+   "type": "object",
+   "description": "Los bloques A–G del dossier, redactados. F NO se escribe: lo pone el código desde motor/nunca.py::BLOQUE_F, porque es la lista de lo que nunca se dice y por definición contiene las frases prohibidas.",
+   "properties": {
+    "A": {
+     "$ref": "#/$defs/frase",
+     "description": "Quién es, en dos o tres oraciones."
+    },
+    "B": {
+     "$ref": "#/$defs/frase",
+     "description": "Qué clase de realtor es: buy side o listing side, volumen, precio, con qué lenders cierra."
+    },
+    "C": {
+     "$ref": "#/$defs/frase",
+     "description": "Su mercado: el condado dominante contra sus propios números (MM-MK-*)."
+    },
+    "D": {
+     "type": "object",
+     "escribe": "ia",
+     "required": [
+      "qualifier",
+      "intensidad",
+      "grado",
+      "acto",
+      "texto",
+      "evidencias"
+     ],
+     "description": "La hipótesis principal. `acto` solo puede ser AFIRMA si la activación PACS que citas viene con intensidad 3 y grado E0; con cualquier otra cosa va PREGUNTA. Un excluido NO lleva D.",
+     "properties": {
+      "qualifier": {
+       "type": "string",
+       "description": "P-Q01, J-Q03, G-Q02…"
+      },
+      "intensidad": {
+       "type": "integer",
+       "minimum": 1,
+       "maximum": 3
+      },
+      "grado": {
+       "enum": [
+        "E0",
+        "E1",
+        "E2",
+        "E3"
+       ]
+      },
+      "acto": {
+       "enum": [
+        "AFIRMA",
+        "PREGUNTA"
+       ]
+      },
+      "texto": {
+       "type": "string"
+      },
+      "evidencias": {
+       "type": "array",
+       "items": {
+        "type": "string"
+       },
+       "minItems": 1
+      }
+     }
+    },
+    "E": {
+     "$ref": "#/$defs/frase",
+     "description": "Cómo abrir: la primera frase, tal cual se dice. Un excluido NO lleva E."
+    },
+    "E2": {
+     "$ref": "#/$defs/frase",
+     "description": "Ángulo y munición: qué ofrecerle una vez abierta la conversación. Un excluido NO lleva E2."
+    },
+    "F": {
+     "escribe": "codigo",
+     "description": "motor/nunca.py::BLOQUE_F, literal. La IA no lo escribe ni lo comenta."
+    },
+    "G": {
+     "$ref": "#/$defs/frase",
+     "description": "La pregunta que cierra la brecha: con qué lender cierra hoy y qué se le complica."
+    }
+   }
+  },
+  "secuencia": {
+   "escribe": "ia",
+   "type": "object",
+   "description": "Los 7 toques de 60 días. Los días son los de PACS y no se mueven: 0, 3, 10, 21, 30, 45 y 60. El canal lo eliges tú según los contactos que haya en el paquete (CT-*): sin email no hay toque de email, sin Instagram no hay DM. El toque 1 es EL MISMO texto de `mensaje.sms`, palabra por palabra. Un excluido NO lleva secuencia.",
+   "required": [
+    "toques"
+   ],
+   "properties": {
+    "toques": {
+     "type": "array",
+     "minItems": 7,
+     "maxItems": 7,
+     "items": {
+      "type": "object",
+      "required": [
+       "n",
+       "dia",
+       "canal",
+       "objetivo",
+       "texto",
+       "si_responde",
+       "evidencias"
+      ],
+      "properties": {
+       "n": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 7
+       },
+       "dia": {
+        "type": "integer",
+        "enum": [
+         0,
+         3,
+         10,
+         21,
+         30,
+         45,
+         60
+        ]
+       },
+       "canal": {
+        "enum": [
+         "sms",
+         "email",
+         "llamada",
+         "dm_ig"
+        ]
+       },
+       "objetivo": {
+        "type": "string",
+        "description": "Qué busca ESTE toque, en una línea. Para el BD, no para el realtor."
+       },
+       "texto": {
+        "type": "string",
+        "description": "Lo que se envía. Una sola idea, como máximo dos párrafos, sin prometer material, sin adjetivos de folleto, y el último párrafo es una pregunta o una oferta concreta."
+       },
+       "si_responde": {
+        "type": "string",
+        "description": "Qué hacer si contesta: qué preguntar o qué mandar. Para el BD."
+       },
+       "evidencias": {
+        "type": "array",
+        "items": {
+         "type": "string"
+        },
+        "minItems": 1
+       }
+      }
+     }
+    }
+   }
   },
   "encaje": {
    "escribe": "ia",
