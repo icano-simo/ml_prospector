@@ -4,9 +4,14 @@ Sigue `brief-modelmatch-agents.md`, fase 1. Autorizada por Isabella el
 2026-09-24 con la página de uso en 0 créditos consumidos y 1.800 disponibles.
 
 **La conclusión primero:** la API resuelve **el perfil del agente** mejor de lo
-que esperábamos, **no resuelve la pestaña Transactions**, y trae una tercera
-cosa que no buscábamos y que vale más que las dos: **los registros HMDA del
-condado, solicitud por solicitud**.
+que esperábamos —incluido el **wallet share**, que no sabíamos que estaba—,
+**no resuelve la pestaña Transactions**, y trae una tercera cosa que no
+buscábamos: **los registros HMDA del condado, solicitud por solicitud**.
+
+**Y una advertencia operativa que llegó al final:** el saldo real de la cuenta
+es de **5,22 créditos**, y una llamada de breakdown cuesta **10**. Lo dice el
+cuerpo de un 402, que es la única lectura de saldo que da la API. La evaluación
+está frenada por saldo, no por alcance.
 
 ## 1 · El agente: mejor de lo esperado
 
@@ -128,11 +133,56 @@ el motor ni en un filtro de prospección. Si algún día se usan, será para
 *medir* nuestra propia cobertura, nunca para *elegir* a quién escribirle — y
 esa decisión no la toma el código.
 
-## 4 · Lo que costó
+## 3 bis · Los breakdowns: la tabla de originadores SÍ sale por API
 
-**No lo puedo leer, y el brief prohíbe estimarlo.** `GET /v1/me` devuelve 200 y
-no trae saldo. Lo que sí queda registrado, para cotejarlo contra la página de
-uso:
+Lo dijo la propia respuesta. Dentro de `scored` viene:
+
+> `Per-relationship arrays were omitted to keep this response small. Fetch them
+> via POST /agents/{id}/breakdowns/{originators|companies|lenders}`
+
+No está en la referencia pública. Las tres rutas responden 200 con el prefijo
+`/v1`, y cada fila trae **`label`, `units`, `volume`, `pctUnits`, `pctVolume`**:
+
+| breakdown | filas de Ana |
+|---|---|
+| `originators` | 10 · Katherine Elizalde 1u, Fabian Viera 3u, Justin Rodriguez 2u… |
+| `lenders` | 8 · guaranteed rate inc 4u, american pacific mortgage corp 2u… |
+| `companies` | 7 · american pacific mortgage corporation 3u/900.885… |
+
+Es el wallet share que hoy se pega a mano, y con **los dos porcentajes
+explícitos** — que es más de lo que tenemos: nuestro parser tiene que deducir
+si el reparto está en unidades o en volumen y guardarlo en `wallet_share_base`.
+
+**Con dos limitaciones que importan y una sin medir:**
+
+1. **No trae NMLS.** El originador es un `label` de texto. Nuestra `tab_orig`
+   guarda el NMLS, que es lo que identifica a la persona sin ambigüedad.
+2. **No separa por lado.** `pctUnits` de una relación con 1 unidad da
+   `0,04347…` = **1/23**, y 23 es `total_sold_units`: compras **más** ventas.
+   La exclusión por no-canibalización se decide sobre el reparto del lado
+   comprador (17). Son otro denominador y otro reparto.
+3. **Si acepta `side` quedó sin medir**: la llamada que lo probaba se cortó por
+   saldo. Es **una sola llamada** y decide si `orig_buyer` sale por API.
+
+## 4 · Lo que costó: el saldo lo dice el 402, no `/v1/me`
+
+`GET /v1/me` responde 200 y no trae saldo, pero **el error de saldo sí lo
+trae**, y es la única lectura autorizada que conseguimos:
+
+```
+402 payment_required
+{"balance": 5.2212, "cost": 10, "reason": "out_of_credits"}
+```
+
+Dos cosas, las dos medidas:
+
+- **Una llamada de breakdown cuesta 10 créditos.** Las tres de Ana costaron 30.
+- **El saldo real es 5,22.** La página de uso decía «10 de 1800» cuando el
+  saldo ya estaba en ~35. **Las dos cifras no hablan de lo mismo**, y la que
+  manda es la del 402: con 5,22 no entra ninguna llamada de 10.
+
+Antes de seguir hay que aclarar qué cuenta la página de uso y recargar. Lo que
+sí queda registrado de esta fase:
 
 | llamada | veces | estado |
 |---|---|---|
@@ -155,7 +205,59 @@ Dos cosas operativas que conviene saber:
   referencia pública. Así se descubrió que el filtro es `name` y no
   `fullName`, y que `/v1/market` es HMDA.
 
-## 5 · Qué se puede hacer con esto, en orden de valor
+## 5 · Lo que capturamos a mano, campo por campo
+
+El inventario sale de `captura/parser_mm.py`, que es lo que de verdad se
+parsea, no de lo que recordamos que se pega.
+
+### Perfil / Overview — **la mayoría sale, y algo sale mejor**
+
+| lo nuestro | API | |
+|---|---|---|
+| `nombre`, `emails` | `fullName`, `email` | ✅ |
+| `buyer_units`, `listing_sold`, `buyer_volume` | `buyerUnits`, `sellerUnits`, `buyerVolume` | ✅ |
+| `buyside_anualizado` | se calcula igual | ✅ |
+| — (no lo teníamos) | **subconjunto financiado**: 9 compras, loan medio, % | ✅ **gana la API** |
+| `cabecera_lenders.total_lenders` | `totalLendersWorkedWith` | ✅ |
+| `cabecera_lenders.avg_loan_size` | `average_mortgaged_loan_amount` | ✅ |
+| `total_originators_declarado` | `totalOriginatorsWorkedWith` | ✅ |
+| `tabla_lenders` | `breakdowns/lenders` | ✅ |
+| `tab_orig` | `breakdowns/originators`, **pero sin NMLS** | ⚠ |
+| `orig_buyer` / `orig_seller` | el breakdown **no separa por lado** | ⚠ sin medir |
+| `licencia` | `licenseNumber` viene `null` para Ana | ⚠ |
+| `contacto` | `phone`, `office`, `city`, `zip`; **sin dirección de calle** | ⚠ |
+| `los_buyer` / `los_seller` | solo el total, sin repartir por lado | ⚠ |
+| `producer_tier`, `side_focus`, `referral_concentration` | no están | ❌ |
+| `loan_mix_buyer` (la mitad de agente del contraste FHA) | no está | ❌ |
+| `tpo_pct` | no está | ❌ |
+| `condados` (`View Counties`) | no están en el detalle del agente | ❌ |
+
+### Transactions — **no sale nada**
+
+Las 21 columnas no tienen equivalente. Ver la sección 2.
+
+### Market Signals — **el insumo sí, los indicadores no**
+
+De las ~30 métricas que parsea `parsear_mercado`:
+
+- **Se pueden recalcular** de las filas HMDA, con mejor denominador:
+  `avg_rate`, `avg_ltv`, `avg_term`, `avg_score`, `avg_income`, `ftb`,
+  `repeat`, `veterans`, `self_emp`, las tres bandas de crédito,
+  `millennial`/`genz`, la distribución por `loanType`, el canal, `jumbo` y
+  `conforming` por monto, y `time_to_close` **por préstamo**.
+- **No están, porque son cálculos de Model Match sobre datos que no expone**:
+  `status` (Market Status), `applications`, `approvals`, `locks` —los tres son
+  variaciones porcentuales—, `funded`, `adquisicion` (Mortgage Acquisition
+  Rate) y `fallout` (su campo, `hmdaActionTaken`, vino vacío).
+- **Y el costo lo vuelve teórico por ahora**: recalcular Cook pide recorrer
+  88.195 filas.
+
+**Resumen en una línea:** el **perfil del agente** y el **wallet share** salen
+por API y en parte mejoran lo que tenemos; **Transactions no sale**; y de
+**Market Signals** sale el insumo crudo pero no los seis indicadores que Model
+Match calcula.
+
+## 6 · Qué se puede hacer con esto, en orden de valor
 
 1. **Llenar la biblioteca de mercados por API.** Hoy tiene 4 condados. Falta
    resolver cómo agregar sin paginar 882 páginas: el filtro `mode` aparece en
@@ -166,10 +268,16 @@ Dos cosas operativas que conviene saber:
 3. **Dejar Transactions como está.** Es la única fuente de las operaciones, y
    se pega a mano.
 
-## 6 · Lo que hay que decidir
+## 7 · Lo que hay que decidir
 
+- **El saldo, primero.** 5,22 créditos y la llamada más barata que probamos
+  cuesta 10. Hay que aclarar qué mide el «10 de 1800» de la página de uso y
+  recargar antes de cualquier otra cosa.
+- **¿El breakdown acepta `side`?** Una llamada. Decide si `orig_buyer` —el
+  reparto que dispara la exclusión por no-canibalización— sale por API o se
+  sigue pegando.
 - **¿`mode` es el modo agregado?** Decide si el mercado se puede traer sin
-  paginar.
+  paginar 882 páginas.
 - **¿`hmdaActionTaken` se puebla?** Decide si el fallout se calcula o se sigue
   copiando del panel.
 - **Rotar la llave** al cerrar la evaluación: llegó por chat, que es lo que la
