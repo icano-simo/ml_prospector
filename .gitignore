@@ -21,6 +21,13 @@ data/*_scored*.csv
 # Colas de revision manual: llevan nombre, estado y email de personas reales.
 data/sf_sin_cruce.csv
 data/*_sin_cruce.csv
+
+# Respuestas CRUDAS de APIs de terceros. El brief de Model Match exige
+# guardarlas antes de mirarlas --para no re-consultar y gastar creditos-- y
+# traen PII: `GET /v1/me` devuelve nombre y correo de la cuenta, y `agents`
+# devuelve personas. La carpeta entera, no un patron: lo que se guarda aqui es
+# lo que todavia no se ha mirado, asi que no se sabe que trae.
+data/raw/
 realtor_scraper/output/model/
 realtor_scraper/output/*_enriched*.csv
 realtor_scraper/output/*_scored*.csv
