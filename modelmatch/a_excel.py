@@ -45,7 +45,7 @@ COLUMNAS = [
     ("clase_ig", "Clase IG", 15),
     ("encontrado_txt", "¿En Model Match?", 15),
     ("match_criterio", "Cómo se identificó", 24),
-    ("match_confianza", "Confianza", 10),
+    ("confianza_final", "Confianza", 26),
     ("telefono_coincide", "¿Teléfono coincide?", 16),
     ("candidatos_n", "Candidatos vistos", 14),
     ("mm_id", "ID Model Match", 22),
@@ -107,10 +107,37 @@ def cargar() -> list[dict]:
     return filas
 
 
+def confianza_final(f: dict) -> str:
+    """La confianza DESPUES de mirar el telefono.
+
+    La del extractor se decide con lo que trae instant-search, que no incluye
+    telefono. Pero la ficha si lo trae, y un telefono que coincide confirma
+    una identificacion hecha solo por nombre tan bien como lo haria el correo:
+    dejarla en «media» mandaria a revision manual a gente ya confirmada.
+
+    Y al reves: un telefono que NO coincide baja la confianza aunque el nombre
+    y el estado calcen, porque es justo la señal de que son dos personas.
+    """
+    if not f.get("encontrado"):
+        return "no encontrado"
+    # El correo es llave DURA: si coincide, un telefono distinto no dice que
+    # sea otra persona, dice que Model Match tiene otro numero --el de la
+    # oficina, o uno viejo--. Andro Chavez coincide por correo y tiene tres
+    # telefonos en Model Match, ninguno el nuestro; sigue siendo el.
+    if str(f.get("match_criterio", "")).startswith("email_exacto"):
+        return "alta"
+    if f.get("telefono_coincide") == "no":
+        return "contradicha por el teléfono"
+    if f.get("telefono_coincide") == "si":
+        return "alta · confirmada por teléfono"
+    return f.get("match_confianza") or "ninguna"
+
+
 def preparar(f: dict) -> dict:
     """Las columnas derivadas: listas a texto y lo que se lee de un vistazo."""
     d = dict(f)
     d["encontrado_txt"] = "sí" if f.get("encontrado") else "NO"
+    d["confianza_final"] = confianza_final(f)
     for clave, destino in (("emails_mmi", "emails_mmi_txt"),
                            ("mm_emails", "mm_emails_txt"),
                            ("telefonos_mmi", "telefonos_mmi_txt"),
@@ -159,10 +186,16 @@ def main() -> None:
     def dudoso(f):
         if not f.get("encontrado"):
             return "no se encontró en Model Match"
-        if f.get("match_confianza") in ("baja", "ninguna"):
-            return "identificado solo por nombre, sin confirmar"
+        # Identificado por correo: no se revisa. El correo ya lo confirma.
+        if str(f.get("match_criterio", "")).startswith("email_exacto"):
+            return None
         if f.get("telefono_coincide") == "no":
-            return "el teléfono de Model Match no coincide con el nuestro"
+            return ("identificado solo por nombre y el teléfono NO coincide: "
+                    "puede ser otra persona con el mismo nombre")
+        # Una identificacion floja que el telefono confirma NO es dudosa.
+        if (f.get("match_confianza") in ("baja", "ninguna")
+                and f.get("telefono_coincide") != "si"):
+            return "identificado solo por nombre, sin confirmar con correo ni teléfono"
         return None
 
     buenas = [f for f in filas if not dudoso(f)]
@@ -240,10 +273,14 @@ def main() -> None:
          "El correo no coincidió con ninguno, pero hay un único agente con "
          "ese nombre exacto en ese estado."],
         ["nombre_exacto_sin_estado / ambiguo / sin_candidatos",
-         "No alcanza para afirmar que es la misma persona. Va a Revisar."],
+         "No alcanza para afirmar que es la misma persona. Va a Revisar, "
+         "salvo que el teléfono lo confirme."],
         ["¿Teléfono coincide?",
          "Se comprueba DESPUÉS de identificarlo, contra el teléfono que ya "
-         "teníamos. Un 'no' no invalida el match, pero lo manda a Revisar."],
+         "teníamos, porque la búsqueda no devuelve teléfonos. Un 'sí' "
+         "confirma una identificación hecha solo por nombre; un 'no' la "
+         "manda a Revisar aunque el nombre y el estado calcen, porque es "
+         "justo la señal de que son dos personas distintas."],
         ["", ""],
         ["Qué NO está acá, y por qué", ""],
         ["Las transacciones una por una",
