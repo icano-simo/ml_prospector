@@ -423,8 +423,8 @@
       /* Sobre cuántas financiadas se sabe el originador. Solo aparece cuando
          falta alguno: repetir que no falta nada es ruido en la única caja
          donde el BD busca un nombre. */
-      (p.cobertura_lender
-        ? '<p class="muestra">' + esc(p.cobertura_lender) + '</p>' : '') +
+      (p.cobertura_lender_compra
+        ? '<p class="muestra">' + esc(p.cobertura_lender_compra) + '</p>' : '') +
       (ok(d, 'produccion') && p.lo_que_significa
         ? '<p class="lectura"><b>Lo que significa:</b> ' +
           esc(p.lo_que_significa.texto) + '</p>' : '') +
@@ -457,6 +457,12 @@
                 ? o.enganche_pct + ' % down · ' : '') +
               (o.tasa != null ? String(o.tasa).replace('.', ',') + ' %' : '') +
               '</span>' : '');
+          /* Financiada y sin importe: Model Match trae el loan type y el
+             lender pero no el monto. Se dice, no se deja en blanco -- un hueco
+             se lee como que no hubo loan, que es justo lo contrario. */
+          if (o.prestamo == null) {
+            loan += '<span class="s">monto no disponible</span>';
+          }
         } else if (o.estado_prestamo === 'cash_segun_mm') {
           loan = 'Cash';
         } else {

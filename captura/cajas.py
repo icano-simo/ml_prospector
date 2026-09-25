@@ -53,6 +53,10 @@ class Caja:
     texto: str = ""
     #: La casilla «Model Match no muestra esto para este agente».
     vacio_declarado: bool = False
+    #: Solo en Transactions: las OTRAS formas con las que el nombre del agente
+    #: aparece en la tabla, escritas y confirmadas por quien captura. El lado
+    #: de cada operación se decide con cualquiera de ellas.
+    nombres_alternativos: list = field(default_factory=list)
     estado: str = SIN_PEGAR
     aviso: str | None = None
     metricas: int | None = None
@@ -101,6 +105,26 @@ def control_suave(etiqueta: str | None, texto: str) -> str | None:
             % (declarado, etiqueta, declarado))
 
 
+def _nombres_alternativos(valor) -> list:
+    """`"Isabel Vazquez, I. Vazquez"` -> `["Isabel Vazquez", "I. Vazquez"]`.
+
+    Acepta lista o texto separado por comas o saltos de línea, porque el campo
+    lo escribe una persona y las tres formas son la misma intención. Lo que no
+    hace es adivinar: si queda vacío, no hay alternativos.
+    """
+    if isinstance(valor, (list, tuple)):
+        crudos = list(valor)
+    else:
+        crudos = re.split(r"[,\n;]", str(valor or ""))
+    vistos, salida = set(), []
+    for n in crudos:
+        n = " ".join(str(n).split())
+        if n and n.lower() not in vistos:
+            vistos.add(n.lower())
+            salida.append(n)
+    return salida
+
+
 def cajas_desde(payload: dict) -> list[Caja]:
     """El payload de la pantalla -> las cajas, con su estado resuelto.
 
@@ -115,7 +139,9 @@ def cajas_desde(payload: dict) -> list[Caja]:
             tipo=str(c.get("tipo") or "condado"),
             etiqueta=(c.get("etiqueta") or None),
             texto=texto,
-            vacio_declarado=bool(c.get("vacio_declarado")))
+            vacio_declarado=bool(c.get("vacio_declarado")),
+            nombres_alternativos=_nombres_alternativos(
+                c.get("nombres_alternativos")))
 
         if texto.strip():
             caja.estado = LEIDO

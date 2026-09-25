@@ -47,12 +47,18 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import re
+import unicodedata
 
 from captura.trampas import NMLS_DE_LA_CASA, NOMBRES_DE_LA_CASA
 
 #: Version del parser de esta pestaña. Viaja en la captura: re-derivar es
 #: gratis y volver a capturar no.
-VERSION_PARSER_TX = "tx-2026.09.23-v1"
+#: La version del parser, que viaja DENTRO de cada parseado guardado.
+#:
+#: Sirve para saber que capturas hay que re-derivar cuando el parser cambia:
+#: `parseado.transacciones.version_parser` contra esta constante. Sin ella, la
+#: unica forma de saberlo era volver a parsear las 40 y comparar campo a campo.
+VERSION_PARSER_TX = "tx-2026.09.24-v2"
 
 #: Las 21 columnas, en orden. Los encabezados se PIERDEN al copiar y pegar, asi
 #: que el parser no depende de ellos: depende del orden y valida cada fila.
@@ -262,18 +268,62 @@ def _persona_con_nmls(v) -> tuple[str | None, str | None]:
     return (nombre or None), m.group(1)
 
 
-def _nombre_igual(a: str | None, b: str | None) -> bool:
-    """Compara dos nombres de persona sin puntuacion ni orden de mayusculas.
+#: Cuantos caracteres tiene que tener el nombre corto para aceptarlo como
+#: prefijo del largo. Doce es un nombre y medio: por debajo, «Ana Mar» seria
+#: prefijo de media lista.
+LARGO_MINIMO_DE_PREFIJO = 12
 
-    No intenta ser listo: `LAST, FIRST` se normaliza a sus palabras ordenadas,
-    porque Model Match usa las dos formas en columnas distintas de la misma
-    fila.
+
+def _sin_tildes(s: str | None) -> str:
+    """`José` -> `Jose`. Quita la tilde, NO la letra.
+
+    Sin esto, `[^a-z\\s] -> " "` convertia «José» en «jos» y lo partia en dos
+    palabras: un nombre con tilde no coincidia ni consigo mismo escrito sin
+    ella, que es como lo escribe Model Match la mitad de las veces.
     """
-    def _n(s):
-        p = re.sub(r"[^a-z\s]", " ", (s or "").lower()).split()
-        return tuple(sorted(p))
-    na, nb = _n(a), _n(b)
-    return bool(na) and na == nb
+    return "".join(c for c in unicodedata.normalize("NFD", s or "")
+                   if unicodedata.category(c) != "Mn")
+
+
+def _palabras_del_nombre(s: str | None) -> list[str]:
+    return re.sub(r"[^a-z\s]", " ", _sin_tildes(s).lower()).split()
+
+
+def _nombre_igual(a: str | None, b: str | None) -> bool:
+    """Compara dos nombres de persona. Sin tildes, y aceptando truncamiento.
+
+    Dos formas, y las dos salieron de datos reales:
+
+    1 · **Las mismas palabras en otro orden.** `LAST, FIRST` se normaliza a sus
+        palabras ordenadas, porque Model Match usa las dos formas en columnas
+        distintas de la misma fila.
+
+    2 · **Uno es prefijo del otro.** El Overview corta el nombre a 24
+        caracteres: dice «Brayan Valdovinos-sauced» y la tabla dice «Brayan
+        Valdovinos-saucedo». Sus 25 operaciones quedaban sin lado por una «o».
+        El prefijo se mide en el orden ORIGINAL --no en el ordenado-- porque lo
+        que se corta es el final del nombre, y ordenando las palabras el corte
+        deja de estar al final.
+
+    Lo que NO hace es parecerse: «Isabel Vasquez» y «Isabel Vazquez» son dos
+    apellidos distintos, y adivinar cual es cual es exactamente lo que no se
+    puede hacer con el nombre de una persona. Para eso estan los nombres
+    alternativos que se confirman al capturar.
+    """
+    pa, pb = _palabras_del_nombre(a), _palabras_del_nombre(b)
+    if not pa or not pb:
+        return False
+    if tuple(sorted(pa)) == tuple(sorted(pb)):
+        return True
+    ca, cb = " ".join(pa), " ".join(pb)
+    corto, largo = (ca, cb) if len(ca) <= len(cb) else (cb, ca)
+    return (len(corto) >= LARGO_MINIMO_DE_PREFIJO
+            and largo.startswith(corto))
+
+
+def _algun_nombre_igual(celda: str | None, nombres) -> bool:
+    """¿La celda es ALGUNO de los nombres con los que aparece el realtor?"""
+    return any(_nombre_igual(celda, n) for n in (nombres or ()) if n)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -421,8 +471,8 @@ def nombre_de_lender(v: str | None) -> str | None:
     return s or None
 
 
-def _estado_prestamo(celda_prestamo, prestamo, fecha,
-                     capturado_en) -> tuple[str, int | None]:
+def _estado_prestamo(celda_prestamo, prestamo, fecha, capturado_en,
+                     *, tipo=None, lender=None) -> tuple[str, int | None]:
     """financiada / cash_* / no_leido, y los dias transcurridos.
 
     **`cash_*` solo si la celda dice literalmente `Cash`.** Si esta vacia, trae
@@ -430,10 +480,24 @@ def _estado_prestamo(celda_prestamo, prestamo, fecha,
     agujero: una celda que el troceado no supo leer salia como «pago en
     efectivo», y una compra financiada por la casa desaparecia del conteo que
     decide la exclusion.
+
+    **Con loan type o con lender, es financiada aunque falte el monto.**
+    Decision de Isabella del 2026-09-24, y sale de un caso: una fila de Cristy
+    Gramajo con `FHA` y `American Portfolio Mortgage Corp` y el Mortgage Amount
+    vacio. Una operacion con tipo de loan y con originador es una operacion
+    financiada: lo que falta es el importe, no la clasificacion. Antes quedaba
+    en `no_leido` y dejaba su captura entera sin poder darse por completa.
+
+    El importe ausente NO se rellena: sigue en `None` y la ficha lo muestra
+    como «no disponible». Una cosa es saber que hubo loan y otra inventar
+    cuanto.
     """
     if prestamo is not None and prestamo > 0:
         return FINANCIADA, _dias(fecha, capturado_en)
-    if "cash" not in str(celda_prestamo or "").lower():
+    dice_cash = "cash" in str(celda_prestamo or "").lower()
+    if not dice_cash and (_texto(tipo) or _texto(lender)):
+        return FINANCIADA, _dias(fecha, capturado_en)
+    if not dice_cash:
         return NO_LEIDO, _dias(fecha, capturado_en)
     dias = _dias(fecha, capturado_en)
     if dias is not None and dias < DIAS_CASH_PROVISIONAL:
@@ -456,18 +520,23 @@ def _dias(fecha_iso: str | None, capturado_en: str | None) -> int | None:
     return (c - f).days
 
 
-def _lado(fila: dict, realtor: str | None) -> str | None:
+def _lado(fila: dict, nombres) -> str | None:
     """El lado sale de EN QUE COLUMNA aparece el nombre del realtor.
 
     Buyer Agent -> compra. Listing Agent (o Co-Listing) -> venta. En las dos,
     doble punta. Sin nombre del realtor no se adivina: devuelve None y la fila
     queda sin lado, declarado.
+
+    `nombres` son TODAS las formas con las que aparece: la de la captura y las
+    alternativas que se confirman al capturar. Model Match escribe «Isabel
+    Vasquez» en el perfil y «Isabel Vazquez» en 17 de sus filas, y no hay forma
+    segura de deducir que son la misma persona -- pero sí de confirmarlo.
     """
-    if not realtor:
+    if not nombres:
         return None
-    compra = _nombre_igual(fila.get("agente_comprador"), realtor)
-    venta = (_nombre_igual(fila.get("agente_listing"), realtor)
-             or _nombre_igual(fila.get("agente_colisting"), realtor))
+    compra = _algun_nombre_igual(fila.get("agente_comprador"), nombres)
+    venta = (_algun_nombre_igual(fila.get("agente_listing"), nombres)
+             or _algun_nombre_igual(fila.get("agente_colisting"), nombres))
     if compra and venta:
         return AMBOS
     if compra:
@@ -507,8 +576,7 @@ def _m(v) -> str:
     return "$%s" % "{:,.0f}".format(v).replace(",", ".")
 
 
-def _fila(celdas: list[str], *, realtor: str | None,
-          capturado_en: str | None) -> dict:
+def _fila(celdas: list[str], *, nombres, capturado_en: str | None) -> dict:
     """Una fila cruda -> la operacion, sin nombres de comprador ni vendedor."""
     # Se rellena hasta 21: el portapapeles recorta las celdas vacias del final.
     c = list(celdas) + [""] * (len(COLUMNAS) - len(celdas))
@@ -552,11 +620,12 @@ def _fila(celdas: list[str], *, realtor: str | None,
         "agente_colisting": _texto(bruto.get("agente_colisting")),
     }
 
-    d["lado"] = _lado(d, realtor)
+    d["lado"] = _lado(d, nombres)
     d["agente_contraparte"] = _contraparte(d, d["lado"])
     d["lender_agrupado"] = nombre_de_lender(d["lender"])
     d["estado_prestamo"], d["dias_desde_cierre"] = _estado_prestamo(
-        bruto.get("prestamo"), prestamo, fecha, capturado_en)
+        bruto.get("prestamo"), prestamo, fecha, capturado_en,
+        tipo=d["tipo"], lender=d["lender"])
     d["recapturar_despues_de"] = (
         _sumar_dias(fecha, DIAS_CASH_PROVISIONAL)
         if d["estado_prestamo"] == CASH_PROVISIONAL else None)
@@ -609,6 +678,66 @@ _A_REDACTAR = ("_compradores", "_vendedores")
 
 REDACTADO = "[redactado]"
 
+#: Lo que se puede conservar de una fila que NO se pudo leer, y nada mas.
+#:
+#: POR QUE ES UNA LISTA BLANCA Y NO UNA NEGRA
+#: -------------------------------------------
+#: Antes, una fila con un numero de celdas distinto de 21 se redactaba ENTERA:
+#: como no se sabe que celda es cual, tampoco se sabe cual lleva un nombre.
+#: Prudente, y destruia justo la evidencia que hace falta para arreglar el
+#: parser. Cuatro capturas --Alva, Francisco, Jessica, Cristy-- quedaron con
+#: filas de 22 celdas de «[redactado]», y por que eran 22 ya no se puede saber.
+#: Es «el crudo es la fuente» roto por su propia guarda, en el unico caso que
+#: importa.
+#:
+#: Asi que se conserva lo que es INEQUIVOCAMENTE no-nombre: una fecha, un
+#: importe, un porcentaje, un tipo de loan, un marcador de Model Match. Un
+#: nombre de persona no se parece a ninguno de esos, y lo que no encaje en la
+#: lista se redacta igual que antes. Una lista negra --«quitar lo que parezca
+#: un nombre»-- fallaria al reves: lo que no reconozca, pasa.
+#:
+#: Lo que se pierde sigue siendo el nombre de los agentes de esa fila, asi que
+#: la fila NO se puede re-derivar: sirve para arreglar el parser, y despues hay
+#: que volver a capturar. Es el precio y esta dicho.
+_MARCADORES_DE_MM = (
+    "cash", "purchase", "refinance", "resale", "new construction",
+    "no builder", "not provided", "no broker", "no agent", "no co agent",
+    "conventional", "fha", "va", "usda", "home equity", "he", "jumbo",
+    "commercial", "seller financing", "other", "unknown",
+    "rows per page", "—", "-", "",
+)
+
+#: Un importe (`$286K`, `$1.2M`, `$151,000`), un porcentaje (`6.55%`), un
+#: plazo (`30`, `360`) o un ZIP suelto.
+_RE_CELDA_NUMERICA = re.compile(
+    r"^\$?\s?[\d.,]+\s*[KMB]?\s*%?$", re.I)
+
+#: `Loan Term` viene como `30 Years`, `360 Months`.
+_RE_CELDA_PLAZO = re.compile(r"^\d{1,3}\s*(years?|months?|yrs?|mos?)$", re.I)
+
+
+def _celda_segura(celda: str) -> str:
+    """La celda si es inequivocamente no-nombre; `[redactado]` si no.
+
+    La direccion es el unico caso mixto: `123 Calle, Chicago, IL, 60638` lleva
+    la calle --que se redacta-- y la ciudad, el estado y el ZIP, que son lo que
+    contesta «donde trabaja». Se conserva la segunda mitad, igual que en una
+    fila que si se leyo.
+    """
+    s = (celda or "").strip()
+    if s.lower() in _MARCADORES_DE_MM:
+        return s
+    if _RE_CELDA_FECHA.match(s):
+        return s
+    if _RE_CELDA_NUMERICA.match(s) or _RE_CELDA_PLAZO.match(s):
+        return s
+    ciudad, estado, zip_ = _ciudad_zip(s)
+    if zip_:
+        return "%s, %s, %s, %s" % (REDACTADO, ciudad, estado, zip_)
+    if _RE_CELDA_CIUDAD.match(s):
+        return s
+    return REDACTADO
+
 
 def crudo_redactado(texto: str) -> str:
     """El pegado, reconstruido sin calle ni nombres de las partes.
@@ -639,9 +768,9 @@ def crudo_redactado(texto: str) -> str:
     salida = []
     for celdas in filas:
         if len(celdas) != len(COLUMNAS):
-            # Una fila que no se leyo se redacta ENTERA: no se sabe que celda
-            # es cual, asi que no se sabe cual lleva un nombre.
-            salida.append("\t".join(REDACTADO for _ in celdas))
+            # Una fila que no se leyo NO se redacta entera: se redacta por
+            # LISTA BLANCA. Ver `_celda_segura`.
+            salida.append("\t".join(_celda_segura(c) for c in celdas))
             continue
         c = list(celdas)
         pos = COLUMNAS.index("direccion")
@@ -720,18 +849,28 @@ def nombre_que_manda(celdas_por_fila, *, propuesto: str | None = None,
 
 
 def parsear_transacciones(crudo: str, *, realtor: str | None = None,
+                          alternativos=(),
                           capturado_en: str | None = None) -> dict:
     """La pestaña pegada -> las operaciones, con su control de completitud.
 
     `realtor` es el nombre del agente: sin el, el LADO de cada fila queda en
     None y se declara, porque el lado sale de en que columna aparece su nombre
     y no hay otra forma de saberlo.
+
+    `alternativos` son las OTRAS formas con las que aparece en la tabla,
+    escritas y confirmadas al capturar. Model Match escribe «Isabel Vasquez» en
+    el perfil y «Isabel Vazquez» en 17 de sus 25 filas; no hay forma segura de
+    deducir que son la misma persona --son dos apellidos distintos-- y sí de
+    que alguien lo confirme mirando la pantalla.
     """
     crudas = _celdas_por_fila(crudo or "")
     # QUÉ NOMBRE decide el lado. Ver `nombre_que_manda`: el de la base no se
     # usa nunca para esto, y si el de la captura no calza hay un respaldo que
     # se declara en el aviso.
     realtor, motivo_del_nombre = nombre_que_manda(crudas, propuesto=realtor)
+    alternativos = tuple(n.strip() for n in (alternativos or ()) if n
+                         and n.strip())
+    nombres = tuple(n for n in (realtor,) + alternativos if n)
 
     filas: list[dict] = []
     descartadas = 0
@@ -754,7 +893,8 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
                               "celdas": len(celdas),
                               "esperadas": len(COLUMNAS)})
             continue
-        filas.append(_fila(celdas, realtor=realtor, capturado_en=capturado_en))
+        filas.append(_fila(celdas, nombres=nombres,
+                           capturado_en=capturado_en))
 
     pag = paginacion(crudo or "")
     total = pag.get("total")
@@ -809,6 +949,7 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
     return {
         "version_parser": VERSION_PARSER_TX,
         "nombre_usado": realtor,
+        "nombres_alternativos": list(alternativos),
         "por_que_ese_nombre": motivo_del_nombre,
         "filas": filas,
         "leidas": len(filas),
@@ -826,8 +967,24 @@ def parsear_transacciones(crudo: str, *, realtor: str | None = None,
         # Ya no bloquea, y por eso mismo hay que poder verlo: el conteo y la
         # cobertura viajan, para que la ficha diga «27 de 28 con lender» en vez
         # de callarlo.
+        #
+        # DOS COBERTURAS, Y CADA NOMBRE DICE SU DENOMINADOR.
+        #
+        # Antes había una sola, `cobertura_lender`, calculada sobre TODAS las
+        # operaciones -- y todo lo que se muestra es del lado comprador: el
+        # veredicto cuenta unidades buy side y la caja de la ficha se llama
+        # «Lenders y LOs de sus buyers». Reporté «25 de 26» de Eva leyendo la
+        # de todas cuando la que estaba guardada en su veredicto era «12 de
+        # 13». Dos números para una pregunta, y el que se coge depende de cuál
+        # esté más a mano.
+        #
+        # La que se muestra y se reporta es SIEMPRE `_compra`. La de todas se
+        # queda porque es la que dice si el pegado trae originadores, pero con
+        # el denominador en el nombre para que nadie la tome por la otra.
         "financiadas_sin_lender": len(financiadas_sin_lender),
-        "cobertura_lender": _cobertura_lender(filas),
+        "cobertura_lender_compra": _cobertura_lender(
+            [f for f in filas if f.get("lado") in (COMPRA, AMBOS)]),
+        "cobertura_lender_todas": _cobertura_lender(filas),
     }
 
 

@@ -62,6 +62,16 @@ ADJETIVOS_DE_FOLLETO = (
 )
 
 
+#: Los dias de PACS, del toque 1 al 7. Son la cadencia del metodo y no un
+#: parametro que se afine por realtor: el toque 4 en el dia 21 es el que
+#: separa «insistir» de «acompañar».
+#:
+#: Estan aqui --y no en el validador ni en el prompt-- porque esta es la
+#: secuencia. Escritos en tres sitios, el dia que cambie uno quedan tres
+#: cadencias distintas y ninguna falla.
+DIAS_PACS = (0, 3, 10, 21, 30, 45, 60)
+
+
 class CopyInvalido(ValueError):
     """El mensaje incumple una de las reglas que si se pueden comprobar."""
 

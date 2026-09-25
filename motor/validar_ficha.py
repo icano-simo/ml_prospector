@@ -53,7 +53,22 @@ _GRADO_POR_FUENTE = {
 
 #: Lo que NO escribe la ficha de un realtor excluido. Ya trabaja con la casa:
 #: escribirle es competirle su propia cartera a un colega.
-_PROHIBIDO_SI_EXCLUIDO = ("dolores", "mensaje")
+#:
+#: `secuencia` entra por el mismo motivo que `mensaje`, y con más razón: la
+#: secuencia no es una lectura, es la cola de contacto. `/api/dossier` ya
+#: devuelve 409 para un excluido; esto es la segunda vuelta, sobre el texto.
+_PROHIBIDO_SI_EXCLUIDO = ("dolores", "mensaje", "secuencia")
+
+#: Y los bloques del dossier que un excluido tampoco lleva.
+#:
+#: D es la hipótesis principal --el dolor sobre el que se le escribiría-- y E
+#: es cómo abrirle. E2 va con ellos porque es la munición de E: un ángulo sin
+#: apertura no es una lectura, es la misma apertura en dos trozos.
+#:
+#: A, B, C y G sí se muestran: son quién es, qué clase de realtor es, su
+#: mercado y la pregunta de brecha. Un excluido se sigue pudiendo leer; lo que
+#: no existe es el material para escribirle.
+_BLOQUES_PROHIBIDOS_SI_EXCLUIDO = ("D", "E", "E2")
 
 #: Vocabulario de lending traducido. El BD tiene que decirlo en inglés en la
 #: llamada; traducirlo aquí le obliga a volver a traducirlo.
@@ -130,8 +145,11 @@ def _numero_esta(n: str, texto_ev: str) -> bool:
     correcto, y aceptar cualquier cosa sería no comprobar nada.
     """
     plano = texto_ev.lower()
+    # Las dos direcciones del decimal: `44.8` contra `44,8` y al revés. Con
+    # una sola, la ficha que escribe el decimal con punto contra una evidencia
+    # que lo guarda con coma se rechazaba por la coma.
     candidatos = {n, n.replace(".", ""), n.replace(",", ""),
-                  n.replace(",", ".")}
+                  n.replace(",", "."), n.replace(".", ",")}
     seco = n.replace(",", "").replace(".", "")
     if seco.isdigit():
         candidatos.add(seco)
@@ -181,11 +199,16 @@ def _revisar_frase(seccion, frase, indice, *, es_mensaje=False,
     texto = (frase or {}).get("texto") or (frase or {}).get("texto_literal") or ""
     plano = _plano(texto)
 
-    for traducido, en_ingles in _TRADUCIDOS.items():
-        if _plano(traducido) in plano:
-            problemas.append(_problema(
-                seccion, "vocabulario de lending traducido",
-                "dice «%s»; va «%s»" % (traducido, en_ingles)))
+    # El vocabulario NO se le exige a una cita literal. «$0 de enganche … al
+    # cierre» es palabra de Julissa: corregirla sería reescribir lo que ella
+    # escribió, y entonces deja de ser una cita. La regla existe para que el BD
+    # diga «down payment» en la llamada, no para editar a nadie.
+    if not es_cita:
+        for traducido, en_ingles in _TRADUCIDOS.items():
+            if _plano(traducido) in plano:
+                problemas.append(_problema(
+                    seccion, "vocabulario de lending traducido",
+                    "dice «%s»; va «%s»" % (traducido, en_ingles)))
 
     for frase_cash in _CASH_AFIRMADO:
         if _plano(frase_cash) in plano:
@@ -436,6 +459,11 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
             problemas += _revisar_frase(s, r, i)
             problemas += _revisar_evidencias(s, r, por_id)
 
+    # ── las tres pestañas redactadas ────────────────────────────────────────
+    problemas += _revisar_instagram_analisis(ficha, por_id)
+    problemas += _revisar_dossier(ficha, por_id, excluido, paquete)
+    problemas += _revisar_secuencia(ficha, por_id, paquete)
+
     ctx = ficha.get("contexto") or {}
     for clave in ("mercado_resumen", "mercado_texto", "census_resumen",
                   "census_texto"):
@@ -453,26 +481,352 @@ def validar(ficha: dict, paquete: dict) -> list[dict]:
     return problemas
 
 
-def _revisar_sms_sin_transacciones(sms: str, paquete: dict) -> list[dict]:
-    """El mensaje no menciona las transacciones del realtor.
+# ══════════════════════════════════════════════════════════════════════════════
+# LAS TRES PESTAÑAS REDACTADAS
+# ══════════════════════════════════════════════════════════════════════════════
+
+#: Las nueve frases de la pestaña Instagram. En este orden se leen.
+_CAMPOS_IG_ANALISIS = (
+    "quien_es", "con_quien_se_relaciona", "que_escribe", "a_quien_le_habla",
+    "donde", "cada_cuanto", "que_le_preguntan", "senales_para_el_bd",
+    "que_verificar",
+)
+
+
+def _revisar_instagram_analisis(ficha: dict, por_id: dict) -> list[dict]:
+    """Nueve frases y un juicio, todas con evidencia de SU cuenta.
+
+    Se revisa campo por campo y no la sección entera: si «cada_cuanto» no se
+    sostiene, lo que hay que apagar es esa línea, no las otras ocho.
+    """
+    ia = ficha.get("instagram_analisis") or {}
+    if not ia:
+        return []
+    problemas = []
+
+    # ── «SU INSTAGRAM NO APORTA» ────────────────────────────────────────────
+    #
+    # Cinco realtors tienen la cuenta sin datos, no utilizable, o personal. Uno
+    # --Claudia-- tiene mapeada la cuenta de OTRA persona. Exigirles las nueve
+    # frases es pedir que se escriba sobre lo que no hay, y lo que sale de ahí
+    # es relleno con evidencias forzadas.
+    #
+    # Con `aporta: false` se exige lo contrario: el MOTIVO. La pantalla enseña
+    # un sello «IG no aporta» con la razón y lo que habría que verificar, que
+    # es información de verdad -- «no miramos su Instagram» y «su Instagram no
+    # sirve» son dos cosas distintas, y la segunda le ahorra el viaje al BD.
+    if ia.get("aporta") is False:
+        pr = ia.get("prioridad_ig") or {}
+        if not (pr.get("razones") or []):
+            problemas.append(_problema(
+                "instagram_analisis.prioridad_ig",
+                "dice que no aporta y no dice por qué",
+                "un «no aporta» sin motivo no se distingue de un hueco"))
+        problemas += _revisar_prioridad_ig(pr, por_id)
+        for clave in ("que_verificar",):
+            if ia.get(clave):
+                s = "instagram_analisis.%s" % clave
+                problemas += _revisar_frase(s, ia[clave], 0)
+                problemas += _revisar_evidencias(s, ia[clave], por_id)
+        return problemas
+
+    for clave in _CAMPOS_IG_ANALISIS:
+        s = "instagram_analisis.%s" % clave
+        f = ia.get(clave)
+        if not f:
+            problemas.append(_problema(s, "falta el campo"))
+            continue
+        problemas += _revisar_frase(s, f, 0)
+        problemas += _revisar_evidencias(s, f, por_id)
+
+    # `prioridad_ig` es juicio, y va siempre como Hipótesis: lo que se
+    # comprueba no es que la clase sea la correcta --eso no es decidible-- sino
+    # que la clase exista y que cada razón se apoye en algo del paquete.
+    problemas += _revisar_prioridad_ig(ia.get("prioridad_ig") or {}, por_id)
+    return problemas
+
+
+def _revisar_prioridad_ig(pr: dict, por_id: dict) -> list[dict]:
+    """La clase existe y cada razón se apoya en algo. El juicio no se valida.
+
+    `prioridad_ig` va siempre como Hipótesis: lo que se comprueba no es que la
+    clase sea la correcta --eso no es decidible-- sino que exista y que las
+    razones citen evidencia del paquete.
+    """
+    if not pr:
+        return []
+    s = "instagram_analisis.prioridad_ig"
+    problemas = []
+    if pr.get("clase") not in ("A", "B", "C", "D"):
+        problemas.append(_problema(s, "la clase no es A, B, C ni D",
+                                   repr(pr.get("clase"))))
+    razones = pr.get("razones") or []
+    if not razones:
+        problemas.append(_problema(s, "la prioridad no trae razones"))
+    for i, r in enumerate(razones):
+        sr = "%s.razones[%d]" % (s, i)
+        problemas += _revisar_frase(sr, r, i)
+        problemas += _revisar_evidencias(sr, r, por_id)
+    return problemas
+
+
+#: Los bloques del dossier que son una frase suelta. `D` es un objeto y `F` no
+#: lo escribe la IA.
+_BLOQUES_FRASE = ("A", "B", "C", "E", "E2", "G")
+
+#: Los que se LE DICEN a ella. El resto es para el BD.
+_BLOQUES_QUE_SE_ENVIAN = ("E", "G")
+
+
+def _revisar_lo_que_se_envia(seccion: str, texto, paquete: dict) -> list[dict]:
+    """Las dos reglas de lo que sale hacia el realtor, en un solo sitio.
+
+    No nombra sus transacciones --sus lenders, sus ZIPs, ni el principio del
+    nombre de un lender-- y no va en español sin evidencia de idioma. Estaban
+    solo en el SMS; el toque, el bloque E y el G se envían igual.
+    """
+    texto = texto or ""
+    if not texto.strip() or not paquete:
+        return []
+    return (_revisar_sms_sin_transacciones(texto, paquete, seccion)
+            + [dict(p, seccion=seccion)
+               for p in _revisar_idioma_del_sms(texto, paquete)])
+
+
+def _revisar_dossier(ficha: dict, por_id: dict, excluido: bool,
+                     paquete: dict | None = None) -> list[dict]:
+    """Los bloques A–G, y la regla del acto de habla en D."""
+    dos = ficha.get("dossier") or {}
+    if not dos:
+        return []
+    problemas = []
+
+    # El bloque F es la lista de lo que NUNCA se dice, así que por definición
+    # contiene las frases prohibidas: si lo escribiera la IA, el propio
+    # validador lo rechazaría por decir lo que está ahí para prohibir. Lo pone
+    # el código, literal, desde `motor/nunca.py`.
+    if dos.get("F"):
+        problemas.append(_problema(
+            "dossier.F", "el bloque F no lo escribe la IA",
+            "sale literal de motor/nunca.py::BLOQUE_F, que es la misma lista "
+            "que revienta la construcción de cualquier texto que la diga"))
+
+    for letra in _BLOQUES_FRASE:
+        f = dos.get(letra)
+        if not f:
+            continue
+        s = "dossier.%s" % letra
+        # E y G SE ENVÍAN: E es la primera frase, tal cual se dice, y G es la
+        # pregunta con la que se cierra. Las dos pasan por las reglas del
+        # mensaje --RESPA, origen, sus transacciones, el idioma-- y no por las
+        # de la prosa interna. A, B, C y E2 son para el BD.
+        se_envia = letra in _BLOQUES_QUE_SE_ENVIAN
+        problemas += _revisar_frase(s, f, 0, es_mensaje=se_envia)
+        problemas += _revisar_evidencias(s, f, por_id)
+        if se_envia:
+            problemas += _revisar_lo_que_se_envia(s, (f or {}).get("texto"),
+                                                  paquete)
+
+    d = dos.get("D") or {}
+    if d:
+        problemas += _revisar_frase("dossier.D", d, 0)
+        problemas += _revisar_evidencias("dossier.D", d, por_id)
+        problemas += _revisar_acto_de_habla(d, por_id)
+
+    if excluido:
+        for letra in _BLOQUES_PROHIBIDOS_SI_EXCLUIDO:
+            if dos.get(letra):
+                problemas.append(_problema(
+                    "dossier.%s" % letra,
+                    "el realtor está excluido y no lleva el bloque %s" % letra,
+                    "ya trabaja con la casa: no hay dolor que afirmarle ni "
+                    "apertura que escribirle. A, B, C y G se muestran igual"))
+    return problemas
+
+
+def _revisar_acto_de_habla(d: dict, por_id: dict) -> list[dict]:
+    """`AFIRMA` solo con una activación PACS de intensidad 3 y grado E0.
+
+    Es la regla del método, no una preferencia de tono. Un qualifier de fuerza
+    2 o con evidencia E1 es una hipótesis: afirmarlo delante del realtor es
+    decirle que sabemos algo de su negocio que en realidad dedujimos, y la
+    conversación se cae en la primera respuesta.
+
+    `TECHO_POR_GRADO` ya lo impone al calcular; esto lo vuelve a comprobar
+    sobre el TEXTO, que es lo que alguien escribe a mano.
+    """
+    problemas = []
+    acto = (d.get("acto") or "").upper()
+    if acto not in ("AFIRMA", "PREGUNTA"):
+        return [_problema("dossier.D", "el acto de habla no es AFIRMA ni "
+                                       "PREGUNTA", repr(d.get("acto")))]
+
+    citadas = [por_id[i] for i in (d.get("evidencias") or []) if i in por_id]
+    activaciones = [e for e in citadas if e.get("tipo") == "activacion_pacs"]
+
+    # La activación del MISMO qualifier que dice el bloque. Sin ella, `D` dice
+    # un qualifier y cita otra cosa.
+    suya = next((a for a in activaciones
+                 if a.get("qualifier") == d.get("qualifier")), None)
+    if d.get("qualifier") and not suya:
+        problemas.append(_problema(
+            "dossier.D", "nombra un qualifier que no cita",
+            "dice %s y no cita PACS-%s" % (d.get("qualifier"),
+                                           d.get("qualifier"))))
+    if suya:
+        if str(suya.get("intensidad")) != str(d.get("intensidad")):
+            problemas.append(_problema(
+                "dossier.D", "la intensidad no es la de la activación",
+                "%s dice %s y la activación trae %s"
+                % (d.get("qualifier"), d.get("intensidad"),
+                   suya.get("intensidad"))))
+        if (suya.get("grado_evidencia") or "") != (d.get("grado") or ""):
+            problemas.append(_problema(
+                "dossier.D", "el grado no es el de la activación",
+                "%s dice %s y la activación trae %s"
+                % (d.get("qualifier"), d.get("grado"),
+                   suya.get("grado_evidencia"))))
+
+    if acto == "AFIRMA":
+        fuerte = [a for a in activaciones
+                  if str(a.get("intensidad")) == "3"
+                  and (a.get("grado_evidencia") or "").upper() == "E0"]
+        if not fuerte:
+            problemas.append(_problema(
+                "dossier.D", "AFIRMA sin una activación de intensidad 3 y "
+                             "grado E0",
+                "con cualquier otra cosa el bloque va como PREGUNTA: es una "
+                "hipótesis, y afirmarla delante del realtor la convierte en "
+                "un dato que él puede desmentir"))
+    return problemas
+
+
+def _revisar_secuencia(ficha: dict, por_id: dict,
+                       paquete: dict | None = None) -> list[dict]:
+    """Los 7 toques: días de PACS, canal, el toque 1, y las reglas del copy."""
+    from motor.nunca import NuncaSeDice, verificar_nunca
+    from motor.secuencia import (
+        DIAS_PACS,
+        CopyInvalido,
+        verificar_cierra_con_pregunta_u_oferta,
+        verificar_sin_folleto,
+        verificar_sin_promesas,
+        verificar_una_sola_idea,
+    )
+
+    seq = ficha.get("secuencia") or {}
+    if not seq:
+        return []
+    problemas = []
+    toques = seq.get("toques") or []
+    if len(toques) != len(DIAS_PACS):
+        problemas.append(_problema(
+            "secuencia", "tienen que ser %d toques" % len(DIAS_PACS),
+            "hay %d" % len(toques)))
+
+    # Las cuatro reglas de `motor/secuencia.py`, más el bloque F. Las cuatro
+    # revientan al construir un toque del código; aquí se recogen como
+    # problemas, porque un texto escrito fuera del código no pasa por el
+    # constructor y llegaría igual a la pantalla.
+    reglas = (
+        (verificar_sin_promesas, "promete material"),
+        (verificar_sin_folleto, "usa adjetivos de folleto"),
+        (verificar_cierra_con_pregunta_u_oferta,
+         "no cierra con pregunta ni oferta"),
+        (verificar_una_sola_idea, "dice más de una cosa"),
+        (verificar_nunca, "dice algo que nunca se le dice a un realtor"),
+    )
+
+    for i, t in enumerate(toques):
+        s = "secuencia.toques[%d]" % i
+        texto = (t or {}).get("texto") or ""
+        n = t.get("n")
+        if n != i + 1:
+            problemas.append(_problema(
+                s, "el número del toque no es el de su posición",
+                "dice n=%s y va en el lugar %d" % (n, i + 1)))
+        esperado = DIAS_PACS[i] if i < len(DIAS_PACS) else None
+        if esperado is not None and t.get("dia") != esperado:
+            problemas.append(_problema(
+                s, "el día no es el de PACS",
+                "el toque %d va el día %d y dice %s"
+                % (i + 1, esperado, t.get("dia"))))
+        if t.get("canal") not in ("sms", "email", "llamada", "dm_ig"):
+            problemas.append(_problema(s, "el canal no es uno de los cuatro",
+                                       repr(t.get("canal"))))
+        if not (t.get("objetivo") or "").strip():
+            problemas.append(_problema(s, "el toque no dice qué busca"))
+        if not (t.get("si_responde") or "").strip():
+            problemas.append(_problema(
+                s, "el toque no dice qué hacer si responde",
+                "una secuencia sin eso deja al BD con la respuesta en la mano "
+                "y sin el siguiente paso"))
+
+        # Es texto que se ENVÍA: las reglas del mensaje valen enteras. RESPA y
+        # origen, y también las dos que hasta ahora solo miraban el SMS -- no
+        # nombrarle sus transacciones y no escribirle en español sin evidencia
+        # de idioma. Un toque se envía igual que el SMS.
+        problemas += _revisar_frase(s, t, i, es_mensaje=True)
+        problemas += _revisar_evidencias(s, t, por_id)
+        problemas += _revisar_lo_que_se_envia(s, texto, paquete)
+
+        for regla, motivo in reglas:
+            try:
+                regla(texto)
+            except (CopyInvalido, NuncaSeDice) as e:
+                problemas.append(_problema(s, motivo, str(e).split("\n")[0]))
+
+    # ── EL TOQUE 1 ES EL SMS DE LA FICHA ────────────────────────────────────
+    #
+    # No «parecido»: el mismo. Si fueran dos textos, la ficha diría uno y la
+    # secuencia enviaría otro, y el BD no tiene por qué saber cuál manda.
+    sms = ((ficha.get("mensaje") or {}).get("sms") or {}).get("texto") or ""
+    if toques and sms:
+        primero = (toques[0] or {}).get("texto") or ""
+        if _plano(primero) != _plano(sms):
+            problemas.append(_problema(
+                "secuencia.toques[0]", "el toque 1 no es el SMS de la ficha",
+                "la ficha muestra un texto y la secuencia enviaría otro"))
+    return problemas
+
+
+def _revisar_sms_sin_transacciones(sms: str, paquete: dict,
+                                   seccion: str = "mensaje.sms") -> list[dict]:
+    """Lo que se ENVÍA no menciona las transacciones del realtor.
 
     Se comprueba contra los lenders y los ZIPs que están en SU paquete, no
     contra una lista de palabras: lo prohibido no es hablar de lenders en
     abstracto, es nombrarle los suyos -- que es decirle que le miramos las
     operaciones antes de escribirle.
+
+    **Y también por las dos primeras palabras del lender.** «Angel Oak» se
+    escapaba de «Angel Oak Mortgage Solutions»: nadie escribe la razón social
+    entera en un SMS, así que la comprobación por el nombre completo caza justo
+    lo que nadie iba a escribir. Dos palabras y al menos siete caracteres, para
+    no disparar con «Bank of» o «First».
+
+    `seccion` viaja porque la misma regla vale para los toques de la secuencia,
+    para el bloque E y para el G: los tres son texto que se le envía.
     """
     from motor.paquete import por_id as indice
 
     resumen = indice(paquete).get("MM-TX-RESUMEN") or {}
     plano = _plano(sms)
-    suyos = list((resumen.get("lenders_compra") or {}))
-    suyos += list((resumen.get("lenders_venta") or {}))
-    suyos += list((resumen.get("zips_de_compra") or {}))
-    for cosa in suyos:
+    lenders = (list(resumen.get("lenders_compra") or {})
+               + list(resumen.get("lenders_venta") or {}))
+    zips = list(resumen.get("zips_de_compra") or {})
+
+    for cosa in lenders + zips:
         if cosa and _plano(str(cosa)) in plano:
             return [_problema(
-                "mensaje.sms", "el SMS menciona sus transacciones",
+                seccion, "menciona sus transacciones",
                 "nombra «%s», que sale de su Transactions" % cosa)]
+    for nombre in lenders:
+        corto = " ".join(_plano(str(nombre)).split()[:2])
+        if len(corto) >= 7 and corto in plano:
+            return [_problema(
+                seccion, "menciona sus transacciones",
+                "nombra «%s», que es el principio de «%s»" % (corto, nombre))]
     return []
 
 
@@ -501,7 +855,11 @@ def _revisar_idioma_del_sms(sms: str, paquete: dict) -> list[dict]:
     """
     from motor.paquete import por_id as indice
 
-    plano = _plano(sms)
+    # Lo que va entre corchetes NO cuenta para el idioma: `[tu nombre]` y
+    # `[Confirmar con producto]` son marcas para el BD, no texto que se envía
+    # tal cual. Un mensaje entero en inglés con un `[tu nombre]` dentro salía
+    # como español por la palabra «nombre».
+    plano = _plano(re.sub(r"\[[^\]]*\]", " ", sms or ""))
     if not any(re.search(r"\b%s" % re.escape(_plano(m)), plano)
                for m in _MARCAS_DE_ESPANOL):
         return []          # no está en español: no hay nada que justificar
@@ -534,4 +892,28 @@ def secciones_con_problema(problemas: list[dict]) -> dict:
     for p in problemas or []:
         raiz = (p.get("seccion") or "").split(".")[0].split("[")[0]
         salida.setdefault(raiz, []).append(p.get("motivo"))
+    return salida
+
+
+def partes_con_problema(problemas: list[dict]) -> dict:
+    """`{raíz: {parte: [motivos]}}`, un nivel más fino que la sección.
+
+    La ficha apaga secciones enteras y está bien: son ocho y cada una se lee
+    de un tirón. El dossier son siete bloques y la secuencia siete toques, y
+    apagar los siete porque el toque 4 promete material esconde seis textos
+    que sí se sostienen -- y deja al BD sin secuencia por un párrafo.
+
+    La parte es el segundo nivel del nombre, con su índice si lo tiene:
+    `secuencia.toques[3].texto` -> `{'secuencia': {'toques[3]': [...]}}`.
+    Un problema de la raíz a secas (`secuencia`) va con la parte vacía, y eso
+    la pantalla lo lee como «la sección entera».
+    """
+    salida: dict = {}
+    for p in problemas or []:
+        nombre = p.get("seccion") or ""
+        trozos = nombre.split(".")
+        raiz = trozos[0].split("[")[0]
+        parte = trozos[1] if len(trozos) > 1 else ""
+        salida.setdefault(raiz, {}).setdefault(parte, []).append(
+            p.get("motivo"))
     return salida
