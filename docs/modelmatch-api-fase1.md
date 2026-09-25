@@ -145,9 +145,12 @@ No está en la referencia pública. Las tres rutas responden 200 con el prefijo
 
 | breakdown | filas de Ana |
 |---|---|
-| `originators` | 10 · Katherine Elizalde 1u, Fabian Viera 3u, Justin Rodriguez 2u… |
-| `lenders` | 8 · guaranteed rate inc 4u, american pacific mortgage corp 2u… |
-| `companies` | 7 · american pacific mortgage corporation 3u/900.885… |
+| `originators` | 10 · el más grande con 3 unidades, el resto con 1 o 2 |
+| `lenders` | 8 · el mayor con 4 unidades y 13 % del volumen |
+| `companies` | 7 · el mayor con 3 unidades y 12 % del volumen |
+
+Los nombres de los originadores no van acá: el repo es público y son personas.
+Están en el crudo de `data/raw/`, que sí está ignorado.
 
 Es el wallet share que hoy se pega a mano, y con **los dos porcentajes
 explícitos** — que es más de lo que tenemos: nuestro parser tiene que deducir
