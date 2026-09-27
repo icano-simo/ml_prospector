@@ -182,6 +182,20 @@ COLUMNAS = [
     ("mm_originadores_n", "Nº originadores", 13, FICHA,
      "Con cuántos loan officers distintos trabajó. Uno solo es el caso más "
      "interesante para desplazar; muchos, el más fácil de entrar."),
+    ("fidelidad", "¿Fidelizado con un LO?", 24, CALC,
+     "Lectura del número de loan officers. 'CAUTIVO' = uno solo. En los que "
+     "tienen el desglose se comprobó que con 1-3 LOs la concentración media "
+     "es del 79 % y con 4 o más baja al 43 %, así que el conteo —que es "
+     "gratis— sirve de indicador."),
+    ("lo_principal", "Su loan officer principal", 28, APARTE,
+     "El nombre del LO por el que pasa la mayor parte de sus préstamos. Solo "
+     "está donde se compró el desglose: los de 1-3 LOs, que son los que "
+     "importan para desplazar."),
+    ("lo_principal_pct", "% por su LO principal", 16, CALC,
+     "Qué parte de sus préstamos pasa por ese LO. Se calcula como sus "
+     "unidades sobre la SUMA de todos sus LOs. Ojo: NO se usa el 'pctUnits' "
+     "que devuelve la API, porque su denominador no son las operaciones del "
+     "agente y llega a dar 167 %."),
     ("mm_companias_n", "Nº compañías", 12, FICHA,
      "Con cuántas compañías hipotecarias distintas trató."),
     ("lenders_txt", "Lenders (si cupo en el tope)", 40, APARTE,
@@ -300,6 +314,24 @@ def preparar(f: dict) -> dict:
                            ("telefonos_mmi", "telefonos_mmi_txt"),
                            ("mm_telefonos", "mm_telefonos_txt")):
         d[destino] = " · ".join(f.get(clave) or [])
+    n = f.get("mm_originadores_n")
+    d["fidelidad"] = (
+        "" if not isinstance(n, int) else
+        "CAUTIVO · 1 solo LO" if n <= 1 else
+        "muy concentrado · 2-3 LOs" if n <= 3 else
+        "concentrado · 4-6 LOs" if n <= 6 else
+        "reparte · 7-12 LOs" if n <= 12 else
+        "reparte mucho · 13+ LOs")
+    # El LO principal, con el denominador correcto: la suma de SUS LOs.
+    orig = f.get("mm_originators")
+    d["lo_principal"] = d["lo_principal_pct"] = ""
+    if orig:
+        total = sum(x.get("unidades") or 0 for x in orig)
+        if total:
+            top = max(orig, key=lambda x: x.get("unidades") or 0)
+            d["lo_principal"] = top.get("nombre")
+            d["lo_principal_pct"] = round(
+                100.0 * (top.get("unidades") or 0) / total)
     d["mm_emails_n"] = len(f.get("mm_emails") or [])
     d["mm_telefonos_n"] = len(f.get("mm_telefonos") or [])
     for b, destino in (("lenders", "lenders_txt"),
