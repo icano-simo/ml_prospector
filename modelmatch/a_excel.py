@@ -36,70 +36,177 @@ LETRA_CAB = Font(color="FFFFFF", bold=True, size=10)
 AVISO = PatternFill("solid", fgColor="FCE4D6")
 CAMBIO = PatternFill("solid", fgColor="FFF2CC")
 
-#: (clave en el json, titulo de la columna, ancho). El orden ES la lectura:
-#: primero quienes somos nosotros, despues si lo encontramos y con que
-#: seguridad, despues lo viejo, despues lo nuevo, y al final la produccion.
+#: (clave en el json, titulo, ancho, de donde sale, que significa).
+#:
+#: **El diccionario de campos se genera de ESTA tabla**, no se escribe aparte.
+#: Un diccionario escrito a mano se desfasa la primera vez que alguien agrega
+#: una columna, y entonces miente: dice que el archivo tiene unos campos y el
+#: archivo tiene otros. Aqui no puede pasar -- si se agrega una columna sin
+#: explicacion, la hoja del diccionario la muestra vacia y se ve.
+#:
+#: El orden ES la lectura: primero quienes somos nosotros, despues si lo
+#: encontramos y con que seguridad, despues lo viejo contra lo nuevo, y al
+#: final la produccion.
+NUESTRO = "nuestra base (MMI / Salesforce)"
+FICHA = "Model Match · ficha del agente"
+APARTE = "Model Match · consulta aparte"
+CALC = "calculado acá"
+
 COLUMNAS = [
-    ("nombre", "Realtor", 26),
-    ("handle", "Instagram", 20),
-    ("clase_ig", "Clase IG", 15),
-    ("encontrado_txt", "¿En Model Match?", 15),
-    ("match_criterio", "Cómo se identificó", 24),
-    ("confianza_final", "Confianza", 26),
-    ("telefono_coincide", "¿Teléfono coincide?", 16),
-    ("candidatos_n", "Candidatos vistos", 14),
-    ("mm_id", "ID Model Match", 22),
+    ("nombre", "Realtor", 26, NUESTRO,
+     "El nombre tal como está en nuestra base. Es el que se usó para buscar."),
+    ("handle", "Instagram", 20, NUESTRO,
+     "La cuenta de Instagram que le encontramos. Es el motivo por el que este "
+     "realtor está en esta lista."),
+    ("clase_ig", "Clase IG", 15, NUESTRO,
+     "Qué tan utilizable es ese perfil de Instagram según la revisión que ya "
+     "se hizo (p. ej. poca_evidencia, persona_equivocada)."),
+    ("encontrado_txt", "¿En Model Match?", 15, CALC,
+     "Si se pudo identificar a esta persona en Model Match. 'NO' significa "
+     "que Model Match devolvió candidatos pero ninguno era identificable "
+     "como ella, o que no devolvió ninguno."),
+    ("match_criterio", "Cómo se identificó", 24, CALC,
+     "Con qué dato se decidió que es la misma persona. Ver la hoja «Cómo "
+     "leer esto»: email_exacto es la llave más fuerte."),
+    ("confianza_final", "Confianza", 26, CALC,
+     "Qué tan seguro es el match después de mirar también el teléfono. "
+     "'alta' = confirmado por correo; 'alta · confirmada por teléfono' = el "
+     "nombre no bastaba pero el teléfono cerró; 'contradicha por el "
+     "teléfono' = revisar a mano."),
+    ("telefono_coincide", "¿Teléfono coincide?", 16, CALC,
+     "Si alguno de los teléfonos que ya teníamos aparece entre los de Model "
+     "Match. Se compara sin el +1 ni guiones."),
+    ("candidatos_n", "Candidatos vistos", 14, CALC,
+     "Cuántos perfiles distintos devolvió Model Match al buscarlo. Un número "
+     "alto con confianza baja quiere decir que hay homónimos."),
+    ("mm_id", "ID Model Match", 22, FICHA,
+     "El identificador estable del agente dentro de Model Match (mma_…). Es "
+     "con lo que se vuelve a consultar sin ambigüedad."),
 
-    ("brokerage_mmi", "Brokerage (MMI, viejo)", 30),
-    ("mm_brokerage", "Brokerage (Model Match, hoy)", 32),
-    ("cambio_de_brokerage", "¿Cambió de casa?", 14),
+    ("brokerage_mmi", "Brokerage (MMI, viejo)", 30, NUESTRO,
+     "La inmobiliaria que figuraba en nuestra base. Puede estar desactualizada."),
+    ("mm_brokerage", "Brokerage (Model Match, hoy)", 32, FICHA,
+     "La inmobiliaria que Model Match le asigna hoy."),
+    ("cambio_de_brokerage", "¿Cambió de casa?", 14, CALC,
+     "'si' cuando las dos anteriores no coinciden. Se compara normalizado "
+     "(sin mayúsculas ni tildes) y por las primeras palabras, para que "
+     "'Realty Concepts Ltd' y 'realty concepts, ltd. - fresno' no cuenten "
+     "como cambio."),
 
-    ("emails_mmi_txt", "Emails que ya teníamos", 34),
-    ("mm_emails_txt", "Emails en Model Match", 40),
-    ("mm_emails_n", "Nº emails", 9),
-    ("telefonos_mmi_txt", "Teléfonos que ya teníamos", 22),
-    ("mm_telefonos_txt", "Teléfonos en Model Match", 34),
-    ("mm_telefonos_n", "Nº teléfonos", 11),
-    ("mm_perfiles_enlazados", "Perfiles enlazados", 12),
+    ("emails_mmi_txt", "Emails que ya teníamos", 34, NUESTRO,
+     "Los correos de nuestra base, separados por '·'."),
+    ("mm_emails_txt", "Emails en Model Match", 40, FICHA,
+     "Todos los correos que trae Model Match. Ojo: los mete varios en un "
+     "mismo campo separados por punto y coma, y suele conservar el del "
+     "brokerage ANTERIOR."),
+    ("mm_emails_n", "Nº emails", 9, CALC, "Cuántos correos distintos trae Model Match."),
+    ("telefonos_mmi_txt", "Teléfonos que ya teníamos", 22, NUESTRO,
+     "Los teléfonos de nuestra base, en formato +1…"),
+    ("mm_telefonos_txt", "Teléfonos en Model Match", 34, FICHA,
+     "Todos los teléfonos: el de la ficha más los de los perfiles "
+     "duplicados. Mezcla celular y oficina sin distinguirlos."),
+    ("mm_telefonos_n", "Nº teléfonos", 11, CALC, "Cuántos teléfonos distintos hay."),
+    ("mm_perfiles_enlazados", "Perfiles enlazados", 12, FICHA,
+     "Cuántos perfiles duplicados considera Model Match que son esta misma "
+     "persona. De ahí salen los teléfonos y correos extra."),
 
-    ("estado_mmi", "Estado (MMI)", 10),
-    ("mm_ciudad", "Ciudad (MM)", 16),
-    ("mm_estado", "Estado (MM)", 10),
-    ("mm_zip", "ZIP (MM)", 9),
-    ("mm_licencia", "Licencia (MM)", 14),
+    ("estado_mmi", "Estado (MMI)", 10, NUESTRO, "El estado que teníamos."),
+    ("mm_ciudad", "Ciudad (MM)", 16, FICHA,
+     "Su mercado principal según Model Match, que puede no ser donde tiene "
+     "la oficina."),
+    ("mm_estado", "Estado (MM)", 10, FICHA, "El estado de su mercado principal."),
+    ("mm_zip", "ZIP (MM)", 9, FICHA, "El código postal de su mercado principal."),
+    ("mm_licencia", "Licencia (MM)", 14, FICHA,
+     "Número de licencia inmobiliaria. Model Match solo lo tiene para la "
+     "mitad de los agentes, así que suele venir vacío."),
 
-    ("unidades_mmi", "Unidades/año (MMI)", 14),
-    ("rango_volumen_mmi", "Rango volumen (MMI)", 18),
-    ("mm_unidades", "Unidades 12m (MM)", 14),
-    ("mm_volumen", "Volumen 12m (MM)", 16),
-    ("mm_precio_medio", "Precio medio", 13),
-    ("mm_compras_u", "Compras (u)", 11),
-    ("mm_compras_v", "Compras ($)", 14),
-    ("mm_ventas_u", "Ventas (u)", 10),
-    ("mm_ventas_v", "Ventas ($)", 14),
-    ("mm_dual_u", "Dual (u)", 9),
+    ("unidades_mmi", "Unidades/año (MMI)", 14, NUESTRO,
+     "Operaciones al año según nuestra base. Otra ventana y otra fecha que "
+     "las de Model Match: no son comparables directamente."),
+    ("rango_volumen_mmi", "Rango volumen (MMI)", 18, NUESTRO,
+     "La banda de volumen que teníamos."),
+    ("mm_unidades", "Unidades 12m (MM)", 14, FICHA,
+     "Operaciones cerradas en los últimos 12 meses, los dos lados sumados."),
+    ("mm_volumen", "Volumen 12m (MM)", 16, FICHA,
+     "Dólares cerrados en los últimos 12 meses."),
+    ("mm_precio_medio", "Precio medio", 13, FICHA,
+     "Precio medio de venta de sus operaciones."),
+    ("mm_compras_u", "Compras (u)", 11, FICHA,
+     "Operaciones en las que representó al COMPRADOR. Es el lado que nos "
+     "interesa: ahí es donde puede presentar un prestamista."),
+    ("mm_compras_v", "Compras ($)", 14, FICHA, "Dólares del lado comprador."),
+    ("mm_ventas_u", "Ventas (u)", 10, FICHA,
+     "Operaciones en las que representó al VENDEDOR (listings)."),
+    ("mm_ventas_v", "Ventas ($)", 14, FICHA, "Dólares del lado vendedor."),
+    ("mm_dual_u", "Dual (u)", 9, FICHA,
+     "Operaciones en las que representó a las dos partes."),
 
-    ("mm_compras_financiadas_u", "Compras FINANCIADAS (u)", 19),
-    ("mm_compras_financiadas_v", "Compras financiadas ($)", 19),
-    ("mm_ventas_financiadas_u", "Ventas financiadas (u)", 18),
-    ("mm_pct_unidades_financiadas", "% unidades financiadas", 18),
-    ("mm_pct_volumen_financiado", "% volumen financiado", 17),
-    ("mm_loan_medio", "Loan medio de sus compradores", 22),
+    ("mm_compras_financiadas_u", "Compras FINANCIADAS (u)", 19, FICHA,
+     "De sus compras, cuántas se pagaron con hipoteca. **Es la cifra más "
+     "precisa de cuántas presentaciones a un prestamista puede hacer al "
+     "año.** Este dato no lo teníamos a mano."),
+    ("mm_compras_financiadas_v", "Compras financiadas ($)", 19, FICHA,
+     "Dólares de esas compras financiadas."),
+    ("mm_ventas_financiadas_u", "Ventas financiadas (u)", 18, FICHA,
+     "Listings suyos cuyo comprador financió."),
+    ("mm_pct_unidades_financiadas", "% unidades financiadas", 18, FICHA,
+     "Qué parte de sus operaciones lleva hipoteca. Bajo = libro con mucho "
+     "efectivo, y ahí hay menos que hacer."),
+    ("mm_pct_volumen_financiado", "% volumen financiado", 17, FICHA,
+     "Lo mismo medido en dólares."),
+    ("mm_loan_medio", "Loan medio de sus compradores", 22, FICHA,
+     "Préstamo promedio de sus operaciones financiadas: en qué banda de "
+     "precio piden prestado sus compradores."),
 
-    ("hace_fha", "¿Produce FHA?", 12),
-    ("hace_convencional", "¿Produce convencional?", 16),
-    ("hace_va", "¿Produce VA?", 11),
-    ("trabaja_con_la_casa", "¿Ya financia con la casa?", 18),
-    ("mm_lenders_n", "Nº lenders", 10),
-    ("mm_originadores_n", "Nº originadores", 13),
-    ("mm_companias_n", "Nº compañías", 12),
-    ("lenders_txt", "Lenders (si cupo en el tope)", 40),
-    ("originators_txt", "Originadores (si cupo)", 40),
+    ("hace_fha", "¿Produce FHA?", 12, APARTE,
+     "Tiene al menos una operación FHA en 24 meses. Es un sí/no, NO una "
+     "proporción (ver la advertencia en «Cómo leer esto»)."),
+    ("hace_convencional", "¿Produce convencional?", 16, APARTE,
+     "Tiene al menos una operación convencional en 24 meses."),
+    ("hace_va", "¿Produce VA?", 11, APARTE,
+     "Tiene al menos una operación VA en 24 meses."),
+    ("trabaja_con_la_casa", "¿Ya financia con la casa?", 18, APARTE,
+     "'SÍ' = alguna de sus operaciones se financió con Everett Financial "
+     "(NMLS 2129, que opera como Supreme Lending), en todo el historial. Es "
+     "la exclusión por no-canibalización: ese realtor ya tiene relación con "
+     "la casa."),
+    ("mm_lenders_n", "Nº lenders", 10, FICHA,
+     "Con cuántos prestamistas DISTINTOS se financiaron sus operaciones. "
+     "Pocos = depende de uno; muchos = reparte."),
+    ("mm_originadores_n", "Nº originadores", 13, FICHA,
+     "Con cuántos loan officers distintos trabajó. Uno solo es el caso más "
+     "interesante para desplazar; muchos, el más fácil de entrar."),
+    ("mm_companias_n", "Nº compañías", 12, FICHA,
+     "Con cuántas compañías hipotecarias distintas trató."),
+    ("lenders_txt", "Lenders (si cupo en el tope)", 40, APARTE,
+     "Los prestamistas por nombre, con sus unidades. Solo se pidió donde "
+     "cabía en el tope de 5 créditos: cuesta 1 crédito por prestamista, así "
+     "que en la mayoría dice 'no consultado' y queda el conteo de al lado."),
+    ("originators_txt", "Originadores (si cupo)", 40, APARTE,
+     "Los loan officers por nombre, con la misma limitación."),
 
-    ("creditos_gastados", "Créditos gastados", 13),
-    ("consultado_en", "Consultado", 20),
-    ("realtor_id", "realtor_id", 36),
-    ("sf_lead_id", "sf_lead_id", 18),
+    ("creditos_gastados", "Créditos gastados", 13, CALC,
+     "Lo que costó este realtor. El tope acordado era 5."),
+    ("consultado_en", "Consultado", 20, CALC,
+     "Cuándo se pidió el dato a Model Match (UTC)."),
+    ("realtor_id", "realtor_id", 36, NUESTRO,
+     "Su identificador en nuestra base, para cruzar con el resto del sistema."),
+    ("sf_lead_id", "sf_lead_id", 18, NUESTRO, "Su identificador en Salesforce."),
+]
+
+#: Los campos de las hojas largas, que no salen de COLUMNAS.
+COLUMNAS_LARGAS = [
+    ("Realtor", "El realtor de nuestra lista."),
+    ("ID Model Match", "Su identificador en Model Match."),
+    ("Instagram", "Su cuenta de Instagram."),
+    ("Lender / Originador / Compania",
+     "El nombre tal como lo escribe la fuente, sin normalizar. Puede venir "
+     "con variantes del mismo nombre."),
+    ("Unidades", "Cuántas operaciones suyas pasaron por ahí."),
+    ("Volumen", "Cuántos dólares."),
+    ("% unidades", "Qué parte de sus operaciones. Es la medida de peso real "
+                   "de esa relación."),
+    ("% volumen", "Qué parte de sus dólares."),
 ]
 
 
@@ -242,10 +349,10 @@ def main() -> None:
 
     ws = wb.active
     ws.title = "Realtors"
-    escribir_hoja(ws, [t for _, t, _ in COLUMNAS], [a for _, _, a in COLUMNAS],
-                  [[f.get(k) for k, _, _ in COLUMNAS] for f in buenas])
+    escribir_hoja(ws, [c[1] for c in COLUMNAS], [c[2] for c in COLUMNAS],
+                  [[f.get(c[0]) for c in COLUMNAS] for f in buenas])
     # Pintar el cambio de casa: es el hallazgo que el pedido venia a buscar.
-    col_cambio = [k for k, _, _ in COLUMNAS].index("cambio_de_brokerage") + 1
+    col_cambio = [c[0] for c in COLUMNAS].index("cambio_de_brokerage") + 1
     for i, f in enumerate(buenas, 2):
         if f.get("cambio_de_brokerage") == "si":
             ws.cell(row=i, column=col_cambio).fill = CAMBIO
@@ -286,6 +393,34 @@ def main() -> None:
           f.get("realtor_id")] for f in revisar])
     for i in range(2, len(revisar) + 2):
         ws.cell(row=i, column=3).fill = AVISO
+
+    # ── el diccionario, generado de COLUMNAS y no escrito aparte ───────────
+    ws = wb.create_sheet("Diccionario de campos")
+    dicc = [["Hoja", "Campo", "De dónde sale", "Qué significa"]]
+    faltan = []
+    for clave, titulo, _ancho, fuente, significado in COLUMNAS:
+        dicc.append(["Realtors", titulo, fuente, significado])
+        if not significado:
+            faltan.append(titulo)
+    for titulo, significado in COLUMNAS_LARGAS:
+        dicc.append(["Lenders / Originadores / Companias", titulo,
+                     APARTE, significado])
+    for titulo, significado in (
+            ("Por qué hay que revisarlo",
+             "El motivo concreto por el que este realtor no entró en la hoja "
+             "principal."),
+            ("Candidatos que devolvió Model Match",
+             "Los perfiles que Model Match propuso, con inmobiliaria, ciudad "
+             "y correo, para decidir a mano cuál es. Van separados por '||'.")):
+        dicc.append(["Revisar", titulo, CALC, significado])
+
+    escribir_hoja(ws, dicc[0], [34, 30, 30, 86], dicc[1:])
+    for fila in ws.iter_rows(min_row=2, max_col=4):
+        fila[3].alignment = Alignment(wrap_text=True, vertical="top")
+        fila[1].font = Font(bold=True, size=10)
+    if faltan:
+        print("⚠ campos sin explicación: %s" % ", ".join(faltan))
+    print("diccionario     : %d campos" % (len(dicc) - 1))
 
     # ── la hoja que explica, que es la que evita que alguien lea mal ────────
     con_cambio = sum(1 for f in buenas if f.get("cambio_de_brokerage") == "si")
