@@ -73,6 +73,10 @@ COLUMNAS = [
      "'alta' = confirmado por correo; 'alta · confirmada por teléfono' = el "
      "nombre no bastaba pero el teléfono cerró; 'contradicha por el "
      "teléfono' = revisar a mano."),
+    ("revisar_por", "⚠ Revisar porque…", 40, CALC,
+     "Vacío = el match es confiable y la fila se puede usar. Con texto = hay "
+     "una razón concreta para no fiarse todavía, y está escrita. Estas filas "
+     "también están sueltas en la hoja Revisar, con los candidatos."),
     ("telefono_coincide", "¿Teléfono coincide?", 16, CALC,
      "Si alguno de los teléfonos que ya teníamos aparece entre los de Model "
      "Match. Se compara sin el +1 ni guiones."),
@@ -214,6 +218,69 @@ COLUMNAS = [
     ("sf_lead_id", "sf_lead_id", 18, NUESTRO, "Su identificador en Salesforce."),
 ]
 
+IG = "Instagram · scraping propio"
+
+#: Que significa cada señal de Instagram. Las claves sin descripcion salen
+#: igual en la tabla --el pedido es que este TODO-- pero el generador avisa,
+#: para que no se cuele una columna muda.
+DESC_IG = {
+    "ig_handle": "La cuenta.",
+    "ig_estado_perfil": "Si el perfil se pudo leer (público, privado, no encontrado…).",
+    "ig_estado_evidencia": "En qué se basó ese estado.",
+    "ig_handle_confianza": "Qué tan seguro es que la cuenta sea de esta persona.",
+    "ig_captions_n": "Cuántos textos de publicaciones se leyeron.",
+    "ig_comentarios_n": "Cuántos comentarios se leyeron.",
+    "ig_paginacion_truncada": "Si el scraping se cortó antes de terminar. En 'True' los conteos son un piso, no un total.",
+    "ig_desajuste_idioma": "Si publica en un idioma y le comentan en otro.",
+    "ig_capturado_en": "Cuándo se leyó el perfil.",
+    "ig_clase": "Clasificación del perfil tras la revisión (utilizable, poca_evidencia, persona_equivocada…).",
+    "ig_clase_motivo": "Por qué se le puso esa clase.",
+    "ig_clase_origen": "Si la clase la puso el código o una auditoría manual.",
+    "ig_clase_revisar": "Si quedó marcada para revisar.",
+    "ig_version_lexico": "Versión del léxico con el que se detectaron las señales.",
+    "ig_auditada_por": "Quién la auditó y cuándo.",
+    "ig_idioma_publica_es": "Cuántas publicaciones suyas están en español. Es la señal más accionable: evidencia directa de que atiende en español.",
+    "ig_idioma_publica_en": "Cuántas publicaciones suyas están en inglés.",
+    "ig_captions_es_ratio": "Qué proporción de sus textos está en español (0 a 1).",
+    "ig_idioma_comentarios_es": "Cuántos comentarios recibe en español. Dice el idioma de su AUDIENCIA, que puede no ser el suyo.",
+    "ig_idioma_comentarios_en": "Cuántos comentarios recibe en inglés.",
+    "ig_comentarios_es_ratio": "Proporción de comentarios en español (0 a 1).",
+    "ig_menciona_primera_casa": "Cuántas veces habla de primera vivienda. Quien escribe 'te ayudo a comprar tu primera casa' ya filtró su audiencia hacia nuestro cliente.",
+    "ig_menciona_fha": "Cuántas veces menciona FHA.",
+    "ig_menciona_va": "Cuántas veces menciona préstamos VA.",
+    "ig_menciona_dpa": "Cuántas veces menciona ayudas para el enganche (down payment assistance).",
+    "ig_menciona_itin": "Cuántas veces menciona ITIN, que es el caso del comprador sin número de seguro social.",
+    "ig_menciona_credito": "Cuántas veces habla de crédito o puntaje.",
+    "ig_programas_mencionados": "Qué programas nombra y cuántas veces.",
+    "ig_menciona_lender": "A qué prestamista menciona. Dice con quién ya tiene relación pública.",
+    "ig_cuentas_hipotecarias_etiquetadas": "Qué cuentas de hipotecas etiqueta. Es la competencia visible.",
+    "ig_posts_comarketing": "Publicaciones hechas junto a otra marca o profesional.",
+    "ig_temas": "De qué habla y cuánto.",
+    "ig_tema_dominante": "Su tema principal.",
+    "ig_audiencia_dominante": "A quién le habla sobre todo. 'lujo' o 'inversion' es señal de que su cliente NO es el nuestro.",
+    "ig_audiencia_segmentos": "Todos los segmentos detectados con su conteo.",
+    "ig_ratio_educa_vs_anuncia": "Si enseña o solo publica listados. Quien educa construye audiencia de primer comprador.",
+    "ig_registro": "Si tutea o trata de usted. Sirve para el tono del mensaje.",
+    "ig_marcadores_culturales": "Banderas, modismos y referencias culturales detectadas.",
+    "ig_designaciones": "Credenciales profesionales que exhibe (NAHREP y similares).",
+    "ig_barrios_mencionados": "Qué zonas nombra y cuántas veces. Es su mercado dicho por él.",
+    "ig_geotags_top": "Dónde geoetiqueta sus publicaciones.",
+    "ig_precios_mencionados": "Qué precios nombra. Dice en qué banda trabaja.",
+    "ig_preguntas_recibidas": "Qué le preguntan en los comentarios. 'calificacion' es una señal fuerte de audiencia compradora.",
+    "ig_comentarios_pregunta_calificacion": "Cuántas veces le preguntan si califican para un crédito.",
+    "ig_engagement_rate": "Interacciones sobre seguidores. OJO: el conteo de seguidores NO predice producción (correlación 0,086).",
+    "ig_tipo_post_reel_pct": "Qué parte de sus publicaciones son reels.",
+    "ig_dias_entre_posts_mediana": "Cada cuánto publica.",
+    "ig_hueco_max_dias": "El silencio más largo. Un hueco grande puede ser una cuenta abandonada.",
+    "ig_destacadas_titulos": "Los títulos de sus historias destacadas.",
+    "ig_citas_por_etiqueta": "Las frases exactas que dispararon cada señal. Es la evidencia cruda: cuando un dato no cuadre, la respuesta está acá.",
+    "ig_captions_texto": "El texto completo de sus publicaciones, tal cual. Puede llegar a 30.000 caracteres en una celda.",
+    "ig_comentarios_texto": "⚠ Comentarios de TERCEROS textuales. No son palabras del realtor sino de quien le comentó.",
+    "ig_comentarios_redactados": "Cuántos comentarios se redactaron por traer datos personales.",
+    "ig_comentarios_del_agente": "Lo que el propio realtor respondió en comentarios.",
+    "ig_texto_truncado": "Si el texto guardado se cortó por tamaño.",
+}
+
 #: Los campos de las hojas largas, que no salen de COLUMNAS.
 COLUMNAS_LARGAS = [
     ("Realtor", "El realtor de nuestra lista."),
@@ -256,6 +323,11 @@ def cargar() -> list[dict]:
     if os.path.exists(ruta_peso):
         with open(ruta_peso, encoding="utf-8") as fh:
             peso = json.load(fh)["peso"]
+    ig: dict[str, dict] = {}
+    ruta_ig = os.path.join(RAIZ, "data", "trabajo", "instagram.json")
+    if os.path.exists(ruta_ig):
+        with open(ruta_ig, encoding="utf-8") as fh:
+            ig = json.load(fh)
     mix: dict[str, set] = {}
     if os.path.exists(MIX):
         with open(MIX, encoding="utf-8") as fh:
@@ -274,8 +346,33 @@ def cargar() -> list[dict]:
             f["hace_%s" % nombre] = (
                 "sin comprobar" if not (f.get("mm_id") and mix)
                 else ("sí" if f["mm_id"] in mix.get(clave, ()) else "no"))
+        f.update(ig.get(f.get("realtor_id") or "") or {})
         filas.append(f)
     return filas
+
+
+def columnas_ig(filas: list[dict]) -> list[tuple]:
+    """Las columnas de Instagram, DESCUBIERTAS de los datos y no listadas.
+
+    Si se listaran a mano, una señal nueva del scraper no aparecería nunca y
+    nadie se enteraría: el archivo diría, callado, que ese dato no se captura.
+    Así aparece sola, y si no tiene descripción el generador avisa.
+    """
+    vistas: dict[str, None] = {}
+    for f in filas:
+        for k in f:
+            if k.startswith("ig_"):
+                vistas.setdefault(k, None)
+    # Los bloques de texto largo van al final: si van en medio, empujan todo
+    # lo demas fuera de la pantalla y la tabla deja de poder leerse.
+    largas = ("ig_citas_por_etiqueta", "ig_captions_texto",
+              "ig_comentarios_texto", "ig_comentarios_del_agente")
+    orden = [k for k in DESC_IG if k in vistas and k not in largas]
+    orden += sorted(k for k in vistas if k not in DESC_IG and k not in largas)
+    orden += [k for k in largas if k in vistas]
+    return [(k, "IG · " + k[3:].replace("_", " "),
+             40 if k in largas else 18, IG, DESC_IG.get(k, ""))
+            for k in orden]
 
 
 def confianza_final(f: dict) -> str:
@@ -389,18 +486,33 @@ def main() -> None:
 
     buenas = [f for f in filas if not dudoso(f)]
     revisar = [f for f in filas if dudoso(f)]
+    for f in filas:
+        f["revisar_por"] = dudoso(f) or ""
+
+    # UNA sola tabla con TODO: Model Match, Instagram y lo nuestro, y las 298
+    # filas, no solo las de match confiable. Sacar de la tabla principal a los
+    # dudosos los escondia: quien busca a alguien en la hoja Realtors y no lo
+    # encuentra concluye que no lo sacamos, cuando lo que pasa es que esta en
+    # otra hoja. Van todos, con la columna que dice de cual desconfiar.
+    todas_las_columnas = COLUMNAS + columnas_ig(filas)
+    sin_desc = [c[1] for c in todas_las_columnas if not c[4]]
 
     wb = Workbook()
 
     ws = wb.active
     ws.title = "Realtors"
-    escribir_hoja(ws, [c[1] for c in COLUMNAS], [c[2] for c in COLUMNAS],
-                  [[f.get(c[0]) for c in COLUMNAS] for f in buenas])
+    escribir_hoja(ws, [c[1] for c in todas_las_columnas],
+                  [c[2] for c in todas_las_columnas],
+                  [[f.get(c[0]) for c in todas_las_columnas] for f in filas])
     # Pintar el cambio de casa: es el hallazgo que el pedido venia a buscar.
-    col_cambio = [c[0] for c in COLUMNAS].index("cambio_de_brokerage") + 1
-    for i, f in enumerate(buenas, 2):
+    col_cambio = [c[0] for c in todas_las_columnas].index(
+        "cambio_de_brokerage") + 1
+    col_rev = [c[0] for c in todas_las_columnas].index("revisar_por") + 1
+    for i, f in enumerate(filas, 2):
         if f.get("cambio_de_brokerage") == "si":
             ws.cell(row=i, column=col_cambio).fill = CAMBIO
+        if f.get("revisar_por"):
+            ws.cell(row=i, column=col_rev).fill = AVISO
 
     for hoja, clave in (("Lenders", "mm_lenders"),
                         ("Originadores", "mm_originators"),
@@ -443,7 +555,7 @@ def main() -> None:
     ws = wb.create_sheet("Diccionario de campos")
     dicc = [["Hoja", "Campo", "De dónde sale", "Qué significa"]]
     faltan = []
-    for clave, titulo, _ancho, fuente, significado in COLUMNAS:
+    for clave, titulo, _ancho, fuente, significado in todas_las_columnas:
         dicc.append(["Realtors", titulo, fuente, significado])
         if not significado:
             faltan.append(titulo)
@@ -514,6 +626,27 @@ def main() -> None:
          "Eso no está en este archivo: sale del idioma, el apellido, el "
          "brokerage y el perfil de Instagram. Un realtor que produce mucho "
          "pero no tiene ningún gancho va a campaña masiva, no a llamada."],
+
+        ["REGLA: ANTE DISCREPANCIA, MANDA MODEL MATCH", ""],
+        ["", "Los datos de MMI están viejos y esta extracción lo dejó "
+             "medido, no opinado. Cuando una columna «(MMI)» y su gemela "
+             "«(MM)» no coincidan, **la buena es la de Model Match**, y la "
+             "de MMI se queda solo para ver cuánto se había corrido."],
+        ["La prueba de que está viejo",
+         "%d de los %d realtors cambiaron de inmobiliaria. Los correos "
+         "corporativos que trae MMI apuntan en varios casos a la casa "
+         "anterior. Y las unidades de MMI son de otra ventana y otra fecha."
+         % (con_cambio, len(filas))],
+        ["Qué hacer con eso",
+         "Para contactar: usar el brokerage, el teléfono y la ciudad de "
+         "Model Match. Para el correo, probar los de Model Match Y los "
+         "nuestros, porque cada fuente conserva uno distinto y ninguna "
+         "tiene los dos. Para puntuar: rehacer con la producción de Model "
+         "Match, que es la fresca."],
+        ["La excepción",
+         "Donde Model Match viene vacío —la licencia, por ejemplo, que solo "
+         "tiene para la mitad— vale lo nuestro. Vacío no es 'no tiene': es "
+         "'no lo sabe'."],
 
         ["LOS CINCO NÚMEROS QUE DECIDEN", ""],
         ["Compras FINANCIADAS (u)",
@@ -590,6 +723,12 @@ def main() -> None:
         ["Los nombres de prestamistas vienen crudos",
          "Sin normalizar: la misma empresa aparece con varias grafías, y una "
          "tiene 'Everett' mal escrito. No se agrupan por texto sin revisar."],
+        ["⚠ Las columnas IG con texto crudo",
+         "«IG · captions texto» trae sus publicaciones enteras, hasta 30.000 "
+         "caracteres en una celda. «IG · comentarios texto» trae comentarios "
+         "de TERCEROS textuales: no son palabras del realtor sino de quien "
+         "le comentó. Están porque se pidió el dato bruto completo, pero no "
+         "se reenvían fuera del equipo."],
         ["Lo que Model Match NO sabe",
          "Las operaciones una por una con su tipo de préstamo y su monto no "
          "salen por esta vía a un costo razonable: eso se sigue pegando a "
@@ -727,8 +866,9 @@ def main() -> None:
                             % dt.datetime.now().strftime("%H%M"))
         wb.save(ruta)
         print("⚠ el archivo principal estaba abierto en Excel; se guardo al lado")
-    print("hoja Realtors : %d" % len(buenas))
-    print("hoja Revisar  : %d" % len(revisar))
+    print("hoja Realtors : %d filas x %d columnas (TODOS, incluidos los "
+          "dudosos)" % (len(filas), len(todas_las_columnas)))
+    print("   de los cuales hay que revisar: %d" % len(revisar))
     print("cambios de casa: %d" % con_cambio)
     print("creditos       : %d" % creditos)
     print("guardado en %s" % ruta)
