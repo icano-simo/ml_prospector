@@ -467,8 +467,166 @@ def main() -> None:
         print("⚠ campos sin explicación: %s" % ", ".join(faltan))
     print("diccionario     : %d campos" % (len(dicc) - 1))
 
-    # ── la hoja que explica, que es la que evita que alguien lea mal ────────
+    # ── como INTERPRETAR, que es distinto de que significa cada campo ──────
+    # El diccionario contesta «que es esta columna». Esta hoja contesta «que
+    # hago con ella», que es la pregunta que de verdad tiene quien abre el
+    # archivo. Las reglas de negocio --las compuertas, la banda de volumen
+    # del ICP, los arquetipos-- salen del modelo de prospeccion que ya
+    # existe, no de criterio propio; lo que se agrega aca es como se conecta
+    # cada dato de Model Match con ellas.
     con_cambio = sum(1 for f in buenas if f.get("cambio_de_brokerage") == "si")
+    n_cautivos = sum(1 for f in buenas
+                     if str(f.get("fidelidad", "")).startswith("CAUTIVO"))
+    n_fha = sum(1 for f in buenas if f.get("hace_fha") == "sí")
+    n_casa1 = sum(1 for f in buenas if f.get("ops_con_la_casa") == 1)
+    n_produce = sum(1 for f in buenas
+                    if (f.get("mm_compras_financiadas_u") or 0) >= 9)
+
+    interpretacion = [
+        ["LO PRIMERO: QUÉ CONTESTA ESTE ARCHIVO", ""],
+        ["", "Contesta «quién es esta persona hoy y cuánto negocio "
+             "hipotecario mueve». NO contesta «a quién llamo primero»: eso "
+             "lo decide el modelo de scoring, que mira además el estado, el "
+             "idioma y el perfil de Instagram. Esto es el insumo fresco para "
+             "ese modelo, no un reemplazo."],
+        ["", "Todo lo de Model Match es de los últimos 12 meses salvo la "
+             "columna de Everett, que mira todo el historial."],
+
+        ["EL ORDEN DE LECTURA: PRIMERO DESCARTAR, DESPUÉS ORDENAR", ""],
+        ["", "El error caro es ordenar por producción y llamar desde arriba. "
+             "Primero se descarta, y recién después se ordena lo que queda."],
+        ["1 · ¿Está bien identificado?",
+         "Si la Confianza dice «contradicha por el teléfono», el resto de la "
+         "fila puede ser de otra persona. No se actúa sobre esa fila hasta "
+         "resolverla en la hoja Revisar."],
+        ["2 · ¿Ya es de la casa?",
+         "«¿Ya financia con la casa?» en SÍ es exclusión por "
+         "no-canibalización. PERO mirá primero la columna de al lado: %d de "
+         "los 79 tienen UNA sola operación con la casa, y una operación "
+         "suelta hace años no es una relación. Ahí la exclusión es una "
+         "decisión, no un automatismo." % n_casa1],
+        ["3 · ¿Produce lo suficiente?",
+         "La regla del modelo es 9 operaciones al año. Acá hay una medida "
+         "mejor que la de siempre: «Compras FINANCIADAS (u)», que son las "
+         "veces reales que puede presentar un prestamista. %d de los %d "
+         "llegan a 9 o más." % (n_produce, len(buenas))],
+        ["4 · ¿Hay algo que decirle?",
+         "Eso no está en este archivo: sale del idioma, el apellido, el "
+         "brokerage y el perfil de Instagram. Un realtor que produce mucho "
+         "pero no tiene ningún gancho va a campaña masiva, no a llamada."],
+
+        ["LOS CINCO NÚMEROS QUE DECIDEN", ""],
+        ["Compras FINANCIADAS (u)",
+         "El más importante de todos. No es cuánto vende: es cuántas veces "
+         "al año tiene delante a un comprador que necesita hipoteca. La "
+         "banda dulce del ICP es 15-20: ahí ya es constante pero todavía no "
+         "institucionalizó su flujo hipotecario."],
+        ["% unidades financiadas",
+         "Bajo = libro con mucho efectivo, y ahí hay poco que hacer por más "
+         "volumen que tenga. Un realtor de 40 operaciones con 30 % "
+         "financiado vale menos que uno de 15 con 90 %."],
+        ["Nº originadores",
+         "Mide la captividad, que antes solo se podía suponer por el "
+         "volumen. Pocos LOs = hay a quién desplazar y cuesta; muchos = "
+         "entrar es fácil porque ya reparte. En esta lista hay %d cautivos "
+         "de un solo LO y la mediana es 10." % n_cautivos],
+        ["Loan medio de sus compradores",
+         "En qué banda de precio piden prestado sus clientes. Es la "
+         "asequibilidad medida en la persona y no en el estado: un loan "
+         "medio bajo dice que sus compradores son exactamente el cliente de "
+         "entrada que buscamos."],
+        ["¿Produce FHA?",
+         "FHA es el producto del comprador de primera vivienda con enganche "
+         "chico. %d de los %d producen algo de FHA. Es un sí/no: NO dice qué "
+         "parte de su negocio es." % (n_fha, len(buenas))],
+
+        ["CUATRO LECTURAS COMBINADAS", ""],
+        ["Muchas financiadas + UN solo LO",
+         "El caso más valioso y el más caro. Hay flujo real y hay a quién "
+         "desplazar. Requiere una razón concreta para cambiar, no una "
+         "presentación. Mirá «Su loan officer principal»: ese es el nombre "
+         "contra el que se compite."],
+        ["Muchas financiadas + muchos LOs",
+         "El más fácil. Ya reparte entre diez o más, así que sumar uno no le "
+         "cuesta nada emocionalmente. Es entrada, no desplazamiento, y el "
+         "mensaje es otro."],
+        ["Mucho volumen + poco % financiado",
+         "Trampa. Se ve grande en la lista y no tiene nada que referir. "
+         "Ordenar por volumen los pone arriba y hacen perder toques."],
+        ["Cambió de brokerage",
+         "Momento de apertura: acaba de mudarse y sus relaciones están "
+         "sueltas. Pero también significa que lo que sabíamos de su oficina "
+         "está viejo — ver la advertencia de abajo."],
+
+        ["LO QUE MODEL MATCH PERMITE DEJAR DE SUPONER", ""],
+        ["Antes se suponía la captividad por el volumen",
+         "La regla decía que arriba de 60 operaciones el realtor ya tiene "
+         "lender cautivo. Ahora no hace falta suponerlo: «Nº originadores» "
+         "lo mide. Hay realtors de 100 operaciones que reparten entre 20 "
+         "LOs y realtors de 12 que dependen de uno."],
+        ["Antes la producción venía de MMI y estaba vieja",
+         "Ahora hay dos columnas de producción, la de MMI y la de Model "
+         "Match, y se ven una al lado de la otra. No son comparables "
+         "directamente (distinta ventana y distinta fecha), pero una "
+         "diferencia grande es señal de que el registro hay que refrescarlo."],
+        ["⚠ El brokerage con el que se puntuó puede estar viejo",
+         "%d de los realtors cambiaron de inmobiliaria desde lo que "
+         "teníamos. El criterio de «brokerage con identidad latina» se "
+         "calculó sobre el brokerage ANTERIOR en todos esos casos, así que "
+         "ese puntaje hay que recalcularlo con la columna nueva."
+         % con_cambio],
+
+        ["LAS TRAMPAS DE ESTOS DATOS", ""],
+        ["Ningún porcentaje de la API se usa sin comprobar",
+         "Van tres que no significaban lo que parecía. El 'pctUnits' del "
+         "desglose de originadores llegó a dar 167 % en una fila. Las bandas "
+         "de FHA medían la proporción dentro de un prestamista, no la del "
+         "agente. Los porcentajes que quedaron en este archivo están "
+         "recalculados acá con el denominador correcto o validados contra un "
+         "caso conocido."],
+        ["La ventana cambia la respuesta",
+         "Everett a 24 meses da 28 realtors; a historial completo da 79. "
+         "Siempre que un número de acá se cite, tiene que ir con su ventana."],
+        ["Los nombres de prestamistas vienen crudos",
+         "Sin normalizar: la misma empresa aparece con varias grafías, y una "
+         "tiene 'Everett' mal escrito. No se agrupan por texto sin revisar."],
+        ["Lo que Model Match NO sabe",
+         "Las operaciones una por una con su tipo de préstamo y su monto no "
+         "salen por esta vía a un costo razonable: eso se sigue pegando a "
+         "mano desde la pestaña Transactions."],
+
+        ["CÓMO SE USA ESTO, Y CÓMO NO", ""],
+        ["Es para decidir a qué REALTOR se contacta",
+         "Es información comercial sobre profesionales inmobiliarios. No se "
+         "usa para decidir nada sobre un consumidor ni sobre su crédito."],
+        ["El origen del realtor no entra acá",
+         "Este archivo no trae ni infiere apellido, etnia ni origen. Esas "
+         "señales viven en el modelo de scoring y sirven para elegir el "
+         "idioma de la conversación con un profesional — nunca para una "
+         "decisión de crédito sobre una persona."],
+        ["Que un realtor trabaje con la casa es contexto",
+         "Sirve para no pisarle el cliente a un colega. No es un argumento "
+         "de venta ni se le menciona al realtor como gancho."],
+        ["Datos de contacto",
+         "Correos y teléfonos son de uso interno del equipo. No se comparten "
+         "fuera ni se cargan en herramientas de terceros sin aprobación."],
+    ]
+    ws = wb.create_sheet("Cómo interpretar")
+    escribir_hoja(ws, ["Tema", "Cómo se lee"], [38, 112], interpretacion)
+    for fila in ws.iter_rows(min_row=2, max_col=2):
+        fila[1].alignment = Alignment(wrap_text=True, vertical="top")
+        if fila[0].value and not fila[1].value:
+            fila[0].font = Font(bold=True, size=11, color="1F3864")
+            fila[0].fill = PatternFill("solid", fgColor="D9E2F3")
+            fila[1].fill = PatternFill("solid", fgColor="D9E2F3")
+        else:
+            fila[0].alignment = Alignment(wrap_text=True, vertical="top")
+
+    # La guia de lectura va SEGUNDA, pegada a los datos: si queda al final
+    # nadie la abre, y este archivo tiene demasiadas formas de leerse mal.
+    wb.move_sheet("Cómo interpretar", offset=-(len(wb.sheetnames) - 2))
+
+    # ── la hoja que explica, que es la que evita que alguien lea mal ────────
     creditos = sum(f.get("creditos_gastados") or 0 for f in filas)
     notas = [
         ["Qué es esto", ""],
