@@ -170,6 +170,12 @@ COLUMNAS = [
      "(NMLS 2129, que opera como Supreme Lending), en todo el historial. Es "
      "la exclusión por no-canibalización: ese realtor ya tiene relación con "
      "la casa."),
+    ("ops_con_la_casa", "Operaciones con la casa (al menos)", 22, APARTE,
+     "Cuántas de sus operaciones financió la casa, medido por tramos: 1, 2, "
+     "3, 5, 10 o 20. Un '1' es una relación suelta y un '10' es una "
+     "relación de verdad, y hasta ahora los dos se veían igual. Está "
+     "comprobado contra Armando Ochoa, que tiene 3 en su tabla cruda de "
+     "lenders y cae exactamente en el tramo 3."),
     ("mm_lenders_n", "Nº lenders", 10, FICHA,
      "Con cuántos prestamistas DISTINTOS se financiaron sus operaciones. "
      "Pocos = depende de uno; muchos = reparte."),
@@ -231,6 +237,11 @@ def cargar() -> list[dict]:
     if os.path.exists(EVERETT):
         with open(EVERETT, encoding="utf-8") as fh:
             con_la_casa = {c.get("mm_id") for c in json.load(fh)}
+    peso: dict[str, dict] = {}
+    ruta_peso = os.path.join(RAIZ, "data", "trabajo", "everett_peso.json")
+    if os.path.exists(ruta_peso):
+        with open(ruta_peso, encoding="utf-8") as fh:
+            peso = json.load(fh)["peso"]
     mix: dict[str, set] = {}
     if os.path.exists(MIX):
         with open(MIX, encoding="utf-8") as fh:
@@ -243,6 +254,8 @@ def cargar() -> list[dict]:
         f["trabaja_con_la_casa"] = (
             "sin comprobar" if not f.get("mm_id")
             else ("SÍ" if f["mm_id"] in con_la_casa else "no"))
+        f["ops_con_la_casa"] = (peso.get(f.get("mm_id") or "") or {}).get(
+            "al_menos") or ("" if f["trabaja_con_la_casa"] != "SÍ" else None)
         for nombre, clave in TIPOS:
             f["hace_%s" % nombre] = (
                 "sin comprobar" if not (f.get("mm_id") and mix)
