@@ -184,6 +184,26 @@ def gastado_en_el_ciclo() -> float | None:
     return round(float(g), 4) if isinstance(g, (int, float)) else None
 
 
+def un_agente_de_prueba() -> str:
+    """Un `mma_…` cualquiera de los ya extraidos, para los scripts de sonda.
+
+    Los scripts que miden costos o prueban rutas necesitan UN agente real.
+    Tenerlo escrito en el codigo puso el id --y con el nombre de la variable,
+    la persona-- en un repo publico. Se lee de `data/trabajo/`, que esta
+    fuera de git, y si no hay nada el script para en vez de inventar.
+    """
+    import glob
+    carpeta = os.path.join(RAIZ, "data", "trabajo", "mm_por_realtor")
+    for a in sorted(glob.glob(os.path.join(carpeta, "*.json"))):
+        with open(a, encoding="utf-8") as fh:
+            f = json.load(fh)
+        if f.get("mm_id"):
+            return f["mm_id"]
+    raise SystemExit(
+        "no hay agentes extraidos en data/trabajo/mm_por_realtor: corre "
+        "primero `python modelmatch/extraer.py --limite 1`")
+
+
 def resumen() -> None:
     print("")
     print("llamadas: %d" % len(LLAMADAS))

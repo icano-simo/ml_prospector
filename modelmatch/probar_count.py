@@ -20,9 +20,9 @@ RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, RAIZ)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from modelmatch.cliente import llamar, saldo  # noqa: E402
+from modelmatch.cliente import llamar, saldo, un_agente_de_prueba  # noqa: E402
 
-ANA = "mma_d776087e62127785"
+AGENTE = un_agente_de_prueba()
 
 
 def medir(etiqueta, ruta, cuerpo=None, metodo=None):
@@ -53,8 +53,8 @@ for ruta in ("/v1/loans/count", "/v1/count/loans"):
         break
 
 print("")
-print("── las propiedades de Ana, para cruzarlas con loans ──")
-d = medir("props_ana", "/v1/agents/%s/properties" % ANA,
+print("── las propiedades del agente, para cruzarlas con loans ──")
+d = medir("props_agente", "/v1/agents/%s/properties" % AGENTE,
           {"period": "last24Months", "pagination": {"size": 100}})
 props = [x.get("mmPropertyId") for x in ((d or {}).get("data") or [])
          if x.get("mmPropertyId")]

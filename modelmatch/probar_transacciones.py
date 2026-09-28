@@ -22,9 +22,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from modelmatch.cliente import llamar, saldo  # noqa: E402
+from modelmatch.cliente import llamar, saldo, un_agente_de_prueba  # noqa: E402
 
-ANA = "mma_d776087e62127785"
+AGENTE = un_agente_de_prueba()
 
 
 def medir(etiqueta, ruta, cuerpo=None, metodo=None):
@@ -38,7 +38,7 @@ def medir(etiqueta, ruta, cuerpo=None, metodo=None):
 
 
 print("── 1 · las ventas del agente ──")
-d = medir("agent_sales", "/v1/agents/%s/sales" % ANA,
+d = medir("agent_sales", "/v1/agents/%s/sales" % AGENTE,
           {"period": "last12Months", "pagination": {"size": 3}})
 if d:
     filas = d.get("data") or []
@@ -52,8 +52,8 @@ if d:
 print("")
 print("── 2 · los prestamos vinculados ──")
 for ruta, cuerpo, met in (
-        ("/v1/agents/%s/related?to=loans&limit=5" % ANA, None, "GET"),
-        ("/v1/agents/%s/related" % ANA, {"to": "loans", "limit": 5}, None)):
+        ("/v1/agents/%s/related?to=loans&limit=5" % AGENTE, None, "GET"),
+        ("/v1/agents/%s/related" % AGENTE, {"to": "loans", "limit": 5}, None)):
     d = medir("agent_related", ruta, cuerpo, met)
     if d:
         print("      %s" % str(d)[:400])
@@ -61,7 +61,7 @@ for ruta, cuerpo, met in (
 
 print("")
 print("── 3 · las propiedades del agente ──")
-d = medir("agent_properties", "/v1/agents/%s/properties" % ANA,
+d = medir("agent_properties", "/v1/agents/%s/properties" % AGENTE,
           {"period": "last12Months", "pagination": {"size": 2}})
 if d:
     filas = d.get("data") or []
@@ -72,7 +72,7 @@ if d:
 print("")
 print("── 4 · un breakdown por tipo de prestamo ──")
 for dim in ("loantypes", "loan-types", "loanTypes", "products"):
-    d = medir("bd_%s" % dim, "/v1/agents/%s/breakdowns/%s" % (ANA, dim), {})
+    d = medir("bd_%s" % dim, "/v1/agents/%s/breakdowns/%s" % (AGENTE, dim), {})
     if d:
         print("      %s" % str(d)[:300])
         break
@@ -80,7 +80,7 @@ for dim in ("loantypes", "loan-types", "loanTypes", "products"):
 print("")
 print("── 5 · el filtro footprint.product (mix de loanType) ──")
 d = medir("footprint_fha", "/v1/agents",
-          {"flatFilters": {"id": ANA},
+          {"flatFilters": {"id": AGENTE},
            "footprint": {"dimension": "lender",
                          "product": {"mix": "loanType", "key": "fha"}},
            "period": "last12Months", "pagination": {"size": 1}})

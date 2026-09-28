@@ -16,9 +16,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from modelmatch.cliente import llamar, saldo  # noqa: E402
+from modelmatch.cliente import llamar, saldo, un_agente_de_prueba  # noqa: E402
 
-ANA = "mma_d776087e62127785"
+AGENTE = un_agente_de_prueba()
 
 print("saldo antes: %s" % saldo())
 
@@ -42,7 +42,7 @@ if filas:
     for k in sorted(fila):
         print("   %-30s %r" % (k, str(fila[k])[:52]))
 
-# El detalle de Ana ya esta guardado de la medicion anterior: se compara
+# El detalle ya esta guardado de la medicion anterior: se compara
 # contra el crudo, sin volver a pagarlo.
 import glob  # noqa: E402
 import json  # noqa: E402
