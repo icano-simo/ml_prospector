@@ -14,9 +14,10 @@ Es distinto del caso `product.shareOfUnits`, que mordio: ahi la dimension era
 «cualquier lender» y el porcentaje se media dentro de un bucket suelto. Aca el
 bucket es la casa, que es justo lo que se quiere medir.
 
-Igual NO se da por bueno: se comprueba contra Armando Ochoa, que en su tabla
-cruda de lenders tiene 3 unidades con «everett financial inc». Tiene que
-aparecer en los umbrales 1, 2 y 3, y desaparecer en el 5.
+Igual NO se da por bueno: se comprueba contra un testigo elegido solo, uno de
+los realtors cuya tabla CRUDA de lenders nombra a la casa. Si tiene tres
+unidades ahi, tiene que aparecer en los umbrales 1, 2 y 3 y desaparecer en el
+5; si no cuadra, el script lo dice y avisa de no usar el numero.
 
 Cuesta 1 por fila devuelta, y los umbrales altos devuelven pocas filas.
 """
@@ -25,6 +26,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import sys
 
 RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -40,8 +42,29 @@ SALIDA = os.path.join(RAIZ, "data", "trabajo", "everett_peso.json")
 
 UMBRALES = (1, 2, 3, 5, 10, 20)
 LOTE = 100
-#: Armando Ochoa: 3 unidades con Everett segun su tabla cruda de lenders.
-TESTIGO = ("ARMANDO OCHOA", 3)
+
+#: El testigo de la comprobacion NO se escribe a mano: se busca.
+#:
+#: Antes estaba puesto el nombre de un realtor y sus operaciones con la casa,
+#: y este repo es PUBLICO: eso es publicar la relacion comercial de una
+#: persona. Ahora se toma de los que tienen la tabla cruda de lenders --que
+#: vive en `data/`, fuera de git-- y en el codigo no queda ningun nombre.
+#: De paso el test deja de romperse cuando ese realtor cambia.
+HUELE_A_CASA = re.compile(r"everett|evertt", re.IGNORECASE)
+
+
+def buscar_testigo(nombre_de: dict) -> tuple[str, str, int] | None:
+    """Un realtor con la casa en su tabla CRUDA, para contrastar el umbral.
+
+    Devuelve (mm_id, nombre, unidades). El nombre solo se usa para imprimir
+    en pantalla; no se guarda ni se versiona.
+    """
+    for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
+        f = json.load(open(a, encoding="utf-8"))
+        for x in (f.get("mm_lenders") or []):
+            if HUELE_A_CASA.search(str(x.get("nombre") or "")):
+                return f["mm_id"], f.get("nombre"), x.get("unidades") or 0
+    return None
 
 
 def main() -> None:
@@ -73,15 +96,16 @@ def main() -> None:
         print("   %2d o mas operaciones con la casa: %3d" % (u, len(encontrados)))
 
     # ── la comprobacion, antes de creerle al numero ─────────────────────────
-    testigo_id = next((k for k, v in nombre_de.items() if v == TESTIGO[0]), None)
+    testigo = buscar_testigo(nombre_de)
     print("")
-    if testigo_id:
+    if testigo:
+        testigo_id, testigo_nombre, testigo_u = testigo
         print("── testigo: %s, con %d unidades segun su tabla cruda"
-              % TESTIGO)
+              % (testigo_nombre, testigo_u))
         bien = True
         for u in UMBRALES:
             esta = testigo_id in por_umbral[u]
-            debe = u <= TESTIGO[1]
+            debe = u <= testigo_u
             ok = esta == debe
             bien = bien and ok
             print("   umbral %-2d  esperado %-3s  medido %-3s  %s"

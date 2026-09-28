@@ -8,8 +8,9 @@ Reglas que vienen del pedido y que el codigo hace cumplir, no recuerda:
     hermanos, que SON el numero de filas de cada breakdown: por eso el costo
     se sabe antes de gastarlo.
   · **Desambiguar con el correo o el telefono que ya teniamos.** El nombre
-    solo no decide: buscando el email de Ana Osorio salen cinco candidatas,
-    dos de ellas «ana osorio de vega». El criterio y la confianza quedan
+    solo no decide: en un caso medido, buscando el email de una agente
+    salieron cinco candidatas y dos compartian nombre y apellido con ella,
+    en otros estados. El criterio y la confianza quedan
     escritos en la salida, y los candidatos descartados tambien.
   · **Todos los correos y todos los telefonos.** Model Match mete varios en un
     mismo campo separados por `;`, y el detalle trae mas en `linkedProfiles`.

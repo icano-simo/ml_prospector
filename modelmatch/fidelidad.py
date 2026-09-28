@@ -61,7 +61,7 @@ print("   mediana %.0f · media %.1f · max %d"
 # ── 2 · la concentracion real, en los 38 que la tienen ──────────────────────
 print("")
 print("── concentracion real, en los que SI tienen el desglose ──")
-# El `pct_unidades` que devuelve la API NO sirve para esto: Ana Pena da 167%,
+# El `pct_unidades` que devuelve la API NO sirve para esto: una fila da 167%,
 # o sea que su denominador no son las operaciones del agente. Tiene sentido --
 # la guia avisa que las unidades hipotecarias se miden aparte de las de venta
 # y pueden ser MAS-- pero convierte el campo en inutilizable como «parte de
