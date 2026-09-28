@@ -304,10 +304,10 @@ EVERETT = os.path.join(RAIZ, "data", "trabajo", "everett.json")
 
 #: El mix de tipo de prestamo. SOLO se usan las consultas de umbral 0 --«hace
 #: algo de esto»--, que estan validadas contra el conteo real de prestamos de
-#: Ana: 3 FHA, 12 convencionales, 0 VA, y las tres banderas coinciden.
+#: un caso testigo: 3 FHA, 12 convencionales y 0 VA, y las tres coinciden.
 #:
 #: Las bandas por `shareOfUnits` NO se usan: no miden la proporcion del
-#: agente sino la de un bucket de lender, y Ana aparece en «>=50% FHA» cuando
+#: agente sino la de un bucket de lender: el testigo cae en «>=50% FHA» cuando
 #: su proporcion real es 20%. Estan en el archivo y se ignoran a proposito.
 MIX = os.path.join(RAIZ, "data", "trabajo", "mix_prestamos.json")
 TIPOS = (("fha", "fha"), ("convencional", "convencional"), ("va", "va"))
@@ -823,8 +823,8 @@ def main() -> None:
         ["⚠ Lo que NO dice: la proporción",
          "No hay forma barata de saber QUÉ PARTE de su producción es FHA. Se "
          "intentó con bandas de porcentaje y no sirven: miden la proporción "
-         "dentro de un lender, no la del agente. Ana aparece en la banda "
-         "'≥50% FHA' cuando su proporción real es 20%. Por eso esas bandas "
+         "dentro de un lender, no la del agente. El caso testigo aparece en "
+         "la banda '≥50% FHA' cuando su proporción real es 20%. Esas bandas "
          "no están en esta hoja. La proporción real se saca contando los "
          "préstamos de sus propiedades, y eso cuesta ~30 créditos por "
          "realtor."],

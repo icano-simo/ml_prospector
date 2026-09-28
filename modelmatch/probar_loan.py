@@ -1,6 +1,6 @@
 """¿Que trae un prestamo? Decide si Transactions se puede reconstruir.
 
-`agentRelated{to:loans}` da 48 ids para Ana. Si `getLoan` trae tipo de
+`agentRelated{to:loans}` dio 48 ids para un agente. Si `getLoan` trae tipo de
 prestamo, lender y monto, entonces la pestaña Transactions SI se puede
 reconstruir por API y mi conclusion de la fase 1 estaba mal. Si trae solo
 identificadores, no.
