@@ -178,8 +178,8 @@ COLUMNAS = [
      "Cuántas de sus operaciones financió la casa, medido por tramos: 1, 2, "
      "3, 5, 10 o 20. Un '1' es una relación suelta y un '10' es una "
      "relación de verdad, y hasta ahora los dos se veían igual. Está "
-     "comprobado contra Armando Ochoa, que tiene 3 en su tabla cruda de "
-     "lenders y cae exactamente en el tramo 3."),
+     "comprobado contra un caso testigo que tiene 3 operaciones con la casa "
+     "en su tabla cruda de lenders y cae exactamente en el tramo 3."),
     ("mm_lenders_n", "Nº lenders", 10, FICHA,
      "Con cuántos prestamistas DISTINTOS se financiaron sus operaciones. "
      "Pocos = depende de uno; muchos = reparte."),
@@ -818,8 +818,8 @@ def main() -> None:
         ["¿Produce FHA / convencional / VA?",
          "Es un SÍ/NO: tiene al menos una operación de ese tipo en los "
          "últimos 24 meses. Está validado contra el conteo real de préstamos "
-         "de Ana Osorio (3 FHA, 12 convencionales, 0 VA) y las tres banderas "
-         "coinciden."],
+         "de un caso testigo (3 FHA, 12 convencionales y 0 VA sobre sus 38 "
+         "propiedades) y las tres banderas coinciden."],
         ["⚠ Lo que NO dice: la proporción",
          "No hay forma barata de saber QUÉ PARTE de su producción es FHA. Se "
          "intentó con bandas de porcentaje y no sirven: miden la proporción "

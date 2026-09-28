@@ -117,7 +117,13 @@ pyrightconfig.json
 Thumbs.db
 
 # Claude Code memory (local only)
-.claude/
+# Se excluye el CONTENIDO y no la carpeta: si se excluye `.claude/`, git no
+# entra a mirar y la excepcion de abajo no se evalua nunca.
+.claude/*
+# Las skills del proyecto SI se versionan: son documentacion de como se leen
+# estos datos y tienen que viajar con el repo, no vivir en la maquina de una
+# persona. No llevan PII: describen campos y reglas.
+!.claude/skills/
 
 # Secrets / env
 .env

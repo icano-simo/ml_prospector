@@ -32,11 +32,12 @@ print("")
 print("══ 2 · instantSearch ══")
 for ruta in ("/v1/instant-search", "/v1/search", "/v1/instantsearch"):
     # Primero GET con query, que es lo natural para un typeahead.
-    d = llamar(ruta + "?q=ana+osorio", etiqueta="is_get%s" % ruta.replace("/", "_"))
+    d = llamar(ruta + "?q=john+smith",
+               etiqueta="is_get%s" % ruta.replace("/", "_"))
     if d is not None:
         print("      GET funciona · %s" % str(d)[:300])
         break
-    d = llamar(ruta, {"query": "ana osorio"},
+    d = llamar(ruta, {"query": "john smith"},
                etiqueta="is_post%s" % ruta.replace("/", "_"))
     if d is not None:
         print("      POST funciona · %s" % str(d)[:300])
