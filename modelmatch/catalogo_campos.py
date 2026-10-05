@@ -515,6 +515,203 @@ add("8 · Otros dominios (no usados)", [
 }, "")
 
 
+def _ultimo(patron: str):
+    """El crudo mas reciente que matchea, ya parseado. None si no hay."""
+    ar = sorted(glob.glob(os.path.join(CRUDO, patron)))
+    if not ar:
+        return None
+    try:
+        with open(ar[-1], encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def agente_de_ejemplo() -> tuple[str, dict, dict]:
+    """El agente con MAS crudo guardado, para el ejemplo. Sin nombres en el codigo.
+
+    Se elige el de las sondas --el unico que tiene ventas, propiedades y
+    prestamos vinculados ademas de la ficha y los breakdowns-- comprobando
+    ademas que este entre los realtors del Excel. Si no lo estuviera, se cae
+    al que mas archivos crudos propios tenga.
+
+    Devuelve (mm_id, su JSON de trabajo, sus crudos por familia).
+    """
+    trabajo = {}
+    for p in glob.glob(os.path.join(RAIZ, "data", "trabajo",
+                                    "mm_por_realtor", "*.json")):
+        with open(p, encoding="utf-8") as fh:
+            g = json.load(fh)
+        if g.get("mm_id"):
+            trabajo[g["mm_id"]] = g
+
+    det = _ultimo("mm_agent_detalle_*.json") or {}
+    mm = ((det.get("data") or {}) if isinstance(det.get("data"), dict)
+          else {}).get("id")
+
+    if mm not in trabajo:
+        # Respaldo: el que mas crudos propios tenga.
+        cuenta: dict[str, int] = {}
+        for a in glob.glob(os.path.join(CRUDO, "*.json")):
+            m = re.search(r"(mma_[0-9a-f]+)", os.path.basename(a))
+            if m and m.group(1) in trabajo:
+                cuenta[m.group(1)] = cuenta.get(m.group(1), 0) + 1
+        mm = max(cuenta, key=cuenta.get) if cuenta else next(iter(trabajo))
+
+    crudos = {
+        "detalle": (_ultimo("mm_det_%s_*.json" % mm)
+                    or _ultimo("mm_agent_detalle_*.json") or {}),
+        "ventas": _ultimo("mm_agent_sales_*.json") or {},
+        "propiedades": (_ultimo("mm_agent_properties_*.json")
+                        or _ultimo("mm_props_*.json") or {}),
+        "related": (_ultimo("mm_agent_related_*.json")
+                    or _ultimo("mm_related_*.json") or {}),
+        "mercado": _ultimo("mm_market_cook_county_*.json") or {},
+        "cuenta": _ultimo("mm_me_antes_*.json") or {},
+        "creditos": _ultimo("mm_saldo_*.json") or {},
+    }
+    for fam, pat in (("lenders", "mm_bd_lenders_%s_*.json"),
+                     ("originators", "mm_bd_originators_%s_*.json"),
+                     ("companies", "mm_bd_companies_%s_*.json"),
+                     ("counties", "mm_bd_counties_%s_*.json")):
+        crudos[fam] = (_ultimo(pat % mm)
+                       or _ultimo("mm_agent_%s_*.json" % fam)
+                       or _ultimo("mm_breakdown_%s_*.json" % fam) or {})
+    return mm, trabajo.get(mm, {}), crudos
+
+
+def _buscar(obj, ruta: str):
+    """Valor de una ruta tipo `scored.total_x` o `licenses[].number`."""
+    actual = obj
+    for parte in ruta.split("."):
+        lista = parte.endswith("[]")
+        parte = parte[:-2] if lista else parte
+        if not isinstance(actual, dict):
+            return None
+        actual = actual.get(parte)
+        if lista:
+            if not isinstance(actual, list) or not actual:
+                return None
+            actual = actual[0]
+    return actual
+
+
+#: Los nombres de campo SE REPITEN entre dominios: `id`, `city`, `state`,
+#: `date`, `propertyType` y `loanType` existen en ventas, en propiedades y en
+#: mercado. Indexar solo por nombre hace que el ultimo dominio pise a los
+#: anteriores, y la hoja termina diciendo que el estado de una venta es el de
+#: una fila de mercado. Por eso la llave es (dominio, campo).
+D_BUSQ = "1 · Búsqueda de agente"
+D_FICHA = "2 · Ficha del agente"
+D_SCORED = "2 · Ficha · bloque `scored` (financiado)"
+D_BD = "3 · Breakdowns del agente"
+D_VENTAS = "4 · Ventas del agente"
+D_PROPS = "5 · Propiedades del agente"
+D_REL = "5 · Préstamos vinculados"
+D_MERCADO = "6 · Mercado (HMDA)"
+D_CUENTA = "7 bis · Nuestra cuenta (GET /v1/me)"
+D_SALDO = "7 · Cuenta y saldo"
+
+
+def valores_del_ejemplo(mm: str, trab: dict, crudos: dict) -> dict:
+    """(dominio, campo) -> valor real de ese agente, o ausente."""
+    v: dict[tuple[str, str], object] = {}
+    det = crudos["detalle"].get("data") or {}
+    if isinstance(det, list):
+        det = det[0] if det else {}
+
+    for clave in ("phone", "licenseNumber", "linkedProfileCount",
+                  "buyerUnits", "buyerVolume", "sellerUnits", "sellerVolume",
+                  "dualUnits", "dualVolume", "totalLendersWorkedWith",
+                  "totalOriginatorsWorkedWith", "totalCompaniesWorkedWith"):
+        if det.get(clave) is not None:
+            v[(D_FICHA, clave)] = det[clave]
+    for sub in ("number", "state", "type", "expirationDate"):
+        x = _buscar(det, "licenses[].%s" % sub)
+        if x is not None:
+            v[(D_FICHA, "licenses[].%s" % sub)] = x
+    for sub in ("name", "email", "phone", "officePhone", "transactions",
+                "firstTransactionDate", "lastTransactionDate"):
+        x = _buscar(det, "linkedProfiles[].%s" % sub)
+        if x is not None:
+            v[(D_FICHA, "linkedProfiles[].%s" % sub)] = x
+    for k, val in (det.get("scored") or {}).items():
+        v[(D_SCORED, "scored.%s" % k)] = val
+
+    # Busqueda: la fila del agente dentro de alguna respuesta de instant-search.
+    for a in glob.glob(os.path.join(CRUDO, "mm_is_*.json")):
+        try:
+            with open(a, encoding="utf-8") as fh:
+                d = json.load(fh)
+        except Exception:  # noqa: BLE001
+            continue
+        hallado = False
+        for ag in (((d.get("results") or {}).get("agents")) or []):
+            if ag.get("id") == mm:
+                v[(D_BUSQ, "id / modelMatchId")] = mm
+                for k in ("fullName", "firstName", "lastName", "email",
+                          "office", "officeKey", "city", "state", "zip",
+                          "volume", "units", "avgSoldPrice"):
+                    v[(D_BUSQ, k)] = ag.get(k)
+                v[(D_BUSQ, "_geo.lat")] = (ag.get("_geo") or {}).get("lat")
+                v[(D_BUSQ, "_geo.lng")] = (ag.get("_geo") or {}).get("lng")
+                hallado = True
+                break
+        if hallado:
+            break
+
+    for fam in ("lenders", "originators", "companies", "counties"):
+        filas = (crudos[fam].get("data") or []) if crudos[fam] else []
+        if not filas:
+            continue
+        for campo in ("id", "label", "units", "volume", "pctUnits",
+                      "pctVolume"):
+            if campo in filas[0]:
+                v[(D_BD, "%s[].%s" % (fam, campo))] = (
+                    "%s   (fila 1 de %d)" % (filas[0][campo], len(filas)))
+
+    for fam, dom in (("ventas", D_VENTAS), ("propiedades", D_PROPS)):
+        filas = (crudos[fam].get("data") or []) if crudos[fam] else []
+        if not filas:
+            continue
+        for c, val in filas[0].items():
+            if isinstance(val, dict):
+                for k2, v2 in val.items():
+                    v[(dom, "%s.%s" % (c, k2))] = v2
+            else:
+                v[(dom, c)] = val
+
+    rel = crudos["related"] or {}
+    if rel:
+        v[(D_REL, "related.id (loan_mm_…)")] = (
+            rel.get("data") or [{}])[0].get("id")
+        v[(D_REL, "related.total")] = rel.get("total")
+        v[(D_REL, "related.linkQuality")] = rel.get("linkQuality")
+
+    # El mercado NO es de este agente: es una fila del condado. Se dice en el
+    # propio valor para que nadie lo lea como suyo.
+    mer = (crudos["mercado"].get("data") or []) if crudos["mercado"] else []
+    if mer:
+        for k, val in mer[0].items():
+            v[(D_MERCADO, k)] = "%s   ← de una fila del condado, NO de este agente" % val
+
+    cta = crudos["cuenta"] or {}
+    for pre in ("user", "organization", "auth"):
+        for k, val in (cta.get(pre) or {}).items():
+            v[(D_CUENTA, "%s.%s" % (pre, k))] = val
+    cr = crudos["creditos"] or {}
+    for pre in ("balance", "allowance", "usage"):
+        for k, val in (cr.get(pre) or {}).items():
+            if isinstance(val, dict):
+                for k2, v2 in val.items():
+                    v[(D_SALDO, "%s.%s.%s" % (pre, k, k2))] = v2
+            else:
+                v[(D_SALDO, "%s.%s" % (pre, k))] = val
+    if cr.get("organizationId"):
+        v[(D_SALDO, "organizationId")] = cr["organizationId"]
+    return v
+
+
 def main() -> None:
     # Cuántos campos distintos vimos de verdad en el crudo, para el pie.
     vistos = len(glob.glob(os.path.join(CRUDO, "*.json")))
@@ -604,6 +801,46 @@ def main() -> None:
             fila[1].fill = PatternFill("solid", fgColor="D9E2F3")
     ws2.freeze_panes = "A2"
 
+    # ── hoja 3: UN realtor, campo por campo ────────────────────────────────
+    mm, trab, crudos = agente_de_ejemplo()
+    vals = valores_del_ejemplo(mm, trab, crudos)
+    ws3 = wb.create_sheet("Ejemplo · un realtor")
+    ws3.append(["Dominio", "Campo", "¿Está en el Excel de realtors?",
+                "VALOR PARA ESTE REALTOR", "Qué significa",
+                "¿Cuesta créditos?"])
+    con_valor = 0
+    for dom, campo, extraido, sig, _fuente, costo, _nota in CAMPOS:
+        valor = vals.get((dom, campo))
+        if valor is None:
+            # `no pedido` y `vino vacio` NO son lo mismo y no se escriben igual.
+            valor = ("— no se pidió para este realtor"
+                     if extraido == NO else "— vino vacío")
+        else:
+            con_valor += 1
+        ws3.append([dom, campo,
+                    "sí" if extraido == SI_EXCEL else "no",
+                    str(valor)[:600], sig, costo])
+
+    for i, an in enumerate([30, 42, 24, 66, 80, 26], 1):
+        ws3.column_dimensions[get_column_letter(i)].width = an
+        c = ws3.cell(row=1, column=i)
+        c.fill = PatternFill("solid", fgColor="1F3864")
+        c.font = Font(bold=True, color="FFFFFF", size=10)
+        c.alignment = Alignment(wrap_text=True, vertical="center")
+    ws3.row_dimensions[1].height = 30
+    amarillo = PatternFill("solid", fgColor="FFF2CC")
+    for i in range(2, len(CAMPOS) + 2):
+        for col in (4, 5):
+            ws3.cell(row=i, column=col).alignment = Alignment(
+                wrap_text=True, vertical="top")
+        # Lo que YA pagamos y NO esta en el Excel: resaltado. Es lo
+        # recuperable sin gastar un credito, y es el punto de la hoja.
+        if (ws3.cell(row=i, column=3).value == "no"
+                and not str(ws3.cell(row=i, column=4).value).startswith("—")):
+            ws3.cell(row=i, column=4).fill = amarillo
+    ws3.freeze_panes = "C2"
+    ws3.auto_filter.ref = ws3.dimensions
+
     os.makedirs(SALIDA, exist_ok=True)
     ruta = os.path.join(SALIDA, "modelmatch_catalogo_de_campos.xlsx")
     try:
@@ -620,6 +857,14 @@ def main() -> None:
     print("   ya extraidos    : %d" % ya)
     print("   disponibles sin usar: %d" % (len(CAMPOS) - ya))
     print("respuestas crudas en disco: %d" % vistos)
+    print("")
+    print("hoja de ejemplo · agente %s (%s)" % (mm, trab.get("nombre")))
+    print("   campos con valor real      : %d de %d" % (con_valor, len(CAMPOS)))
+    en_excel = sum(1 for f in CAMPOS
+                   if f[2] == SI_EXCEL and vals.get((f[0], f[1])) is not None)
+    print("   de esos, ya en el Excel    : %d" % en_excel)
+    print("   PAGADOS y fuera del Excel  : %d  (recuperables sin gastar)"
+          % (con_valor - en_excel))
     print("guardado en %s" % ruta)
 
 
