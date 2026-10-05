@@ -236,6 +236,18 @@ Pedir únicamente si `totalXWorkedWith ≤ (tope − gastado)`. Si no cabe, la
 celda dice «no consultado · N filas y quedaban M créditos», que es
 información, no un hueco.
 
+**NO se puede pedir solo la primera fila. Medido, no supuesto.** Se le mandó
+`pagination: {size: 1}` con `sort` por unidades descendente a un agente de 4
+lenders: **no rechazó la petición, la ignoró** — devolvió 3 filas y cobró 3.
+No hay forma de comprar solo el lender o el LO de mayor wallet share: o se
+compra la lista entera o ninguna. No reintentar.
+
+**Y `totalXWorkedWith` es un techo, no una igualdad.** En esa misma prueba la
+ficha decía 4 y el breakdown trajo 3. En las otras cuatro mediciones coincidió
+exacto (8→8, 10→10, 7→7, 3→3). La guarda del presupuesto usa el número de la
+ficha, así que **sobreestima**, que es la dirección segura: nunca gasta más de
+lo previsto.
+
 ---
 
 ## 4 · Columna por columna
