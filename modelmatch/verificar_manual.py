@@ -177,6 +177,28 @@ def main() -> None:
     print("   revisadas %d lineas" % len(lineas))
 
     print("")
+    print("── 3 quater · bloques copiables sin anotaciones ──")
+    # Un bloque ``` cuyas lineas son valores para copiar NO puede llevar
+    # comentarios al margen: quien copia se lleva el comentario dentro del
+    # valor. Paso dos veces --en los ids de la casa y en los textos de
+    # fidelidad-- asi que deja de ser un descuido y pasa a comprobarse.
+    #
+    # Se revisan solo los bloques SIN lenguaje (``` pelado), que son los de
+    # valores; los de JSON y los de rutas llevan llaves y barras a proposito.
+    import re as _re2
+    for bloque in _re2.findall(r"\n```\n(.*?)\n```", texto, _re2.S):
+        for linea in bloque.splitlines():
+            if not linea.strip() or linea.lstrip().startswith(("/", "{", "}")):
+                continue
+            # Dos o mas espacios seguidos de algo, o un parentesis, o una
+            # flecha: todo eso es anotacion, no valor.
+            if _re2.search(r"\S {2,}\S", linea) or "←" in linea \
+                    or _re2.search(r"\(\s*n\s*=", linea):
+                fallos.append("bloque copiable con anotacion al margen: %r"
+                              % linea.strip()[:70])
+    print("   revisados los bloques de valores")
+
+    print("")
     print("── 3 ter · referencias internas que apunten a algo ──")
     import re as _re
     secciones = set(_re.findall(r"^#{2,4} ([^\n]+)$", texto, _re.M))

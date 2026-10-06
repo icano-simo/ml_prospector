@@ -45,10 +45,12 @@ se puede reejecutar igual. Es el mismo backend y el mismo medidor.
 
 ### Autenticación
 
+Las tres cabeceras de toda llamada:
+
 ```
-Cabecera:  x-api-key: <MODELMATCH_API_KEY>
-           Content-Type: application/json
-           Accept: application/json
+x-api-key: <MODELMATCH_API_KEY>
+Content-Type: application/json
+Accept: application/json
 ```
 
 La llave vive en el `.env` de la raíz del repo, variable
@@ -141,8 +143,18 @@ POST /v1/instant-search
 {"query": "<correo nuestro>"}
 ```
 
-Una llamada por correo, **máximo 2**. Si ninguna resuelve, **una más** con el
-nombre completo. No más de 3 en total.
+Una llamada por correo, **máximo 2**. Si ninguna **resuelve**, **una más** con
+el nombre completo. No más de 3 en total.
+
+**«Resuelve» significa: alguno de nuestros correos aparece en el campo `email`
+de algún candidato** — es decir, se llegó al caso 1 o al 2. Nada más cuenta
+como resolver: que un candidato comparta nombre y estado **no** resuelve,
+porque eso todavía puede ser un homónimo.
+
+**La búsqueda por nombre se hace siempre que el correo no resolvió**, y los
+casos 3 a 7 se evalúan **sobre todos los candidatos de todas las búsquedas
+juntas**, sin repetidos por `id`. Si no se hiciera, dos agentes con el mismo
+realtor llegarían a listas de candidatos distintas.
 
 La respuesta trae `results.agents[]`, cada uno con: `id`, `modelMatchId`,
 `fullName`, `firstName`, `lastName`, `email`, `office`, `officeKey`, `city`,
@@ -329,12 +341,11 @@ tomar el principal.**
 
 #### Los tres breakdowns y su prioridad dentro del tope
 
-Hay tres rutas posibles, todas `POST` con cuerpo `{}`:
+Dos rutas, las únicas que se usan. Ambas `POST` con cuerpo `{}`:
 
 ```
 /v1/agents/{mm_id}/breakdowns/originators
 /v1/agents/{mm_id}/breakdowns/lenders
-/v1/agents/{mm_id}/breakdowns/companies
 ```
 
 **Con tope 2 y la ficha ya pagada queda 1 crédito, así que cabe como mucho un
@@ -491,16 +502,27 @@ identificado solo por nombre y el teléfono NO coincide: puede ser otra persona 
 identificado solo por nombre, sin confirmar con correo ni teléfono
 ```
 
-**`¿Fidelizado con un LO?`** — según `Nº originadores`
+**`¿Fidelizado con un LO?`** — los seis textos, copiables tal cual:
 
 ```
-sin operaciones financiadas atribuidas   (n = 0)
-CAUTIVO · 1 solo LO                      (n = 1)
+sin operaciones financiadas atribuidas
+CAUTIVO · 1 solo LO
 muy concentrado · 2-3 LOs
 concentrado · 4-6 LOs
 reparte · 7-12 LOs
 reparte mucho · 13+ LOs
 ```
+
+Y a qué tramo de `Nº originadores` corresponde cada uno:
+
+| `Nº originadores` | texto |
+|---|---|
+| 0 | `sin operaciones financiadas atribuidas` |
+| 1 | `CAUTIVO · 1 solo LO` |
+| 2 a 3 | `muy concentrado · 2-3 LOs` |
+| 4 a 6 | `concentrado · 4-6 LOs` |
+| 7 a 12 | `reparte · 7-12 LOs` |
+| 13 o más | `reparte mucho · 13+ LOs` |
 
 ⚠ **Cero NO es cautivo.** Cero loan officers significa que Model Match no le
 atribuye ninguna operación financiada, no que dependa de uno: es lo contrario
