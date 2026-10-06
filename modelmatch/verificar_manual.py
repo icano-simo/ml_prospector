@@ -72,9 +72,47 @@ VOCABULARIOS = {
 }
 
 
+#: Variantes PROHIBIDAS: textos que se parecen a los buenos y no lo son.
+#:
+#: Esta lista existe por un fallo concreto de este mismo script: paso en
+#: verde mientras el manual seguia diciendo «alta, confirmada por telefono»
+#: con coma en el paso 3. Comprobar que los valores BUENOS esten presentes no
+#: detecta que haya valores MALOS en otra parte del archivo, y el agente que
+#: lee el paso 3 antes que la seccion E copia el equivocado.
+#:
+#: (patron a buscar, por que esta mal)
+PROHIBIDAS = [
+    ("alta, confirmada", "lleva separador `·`, no coma"),
+    ("alta confirmada por", "falta el separador `·`"),
+    ("«a revisión»", "el valor es `contradicha por el teléfono`"),
+    ("quedaban M créditos", "el centinela dice `creditos` sin acento y "
+                            "termina en `del tope`"),
+    ("quedaban <M> créditos", "idem"),
+    ("creditos del tope\"", "idem: revisar comillas y formato"),
+    ("34 columnas aprobadas", "son 47: 34 de la API y 13 calculadas"),
+    ("tercera fila de la tabla", "es la SEGUNDA columna de la tabla"),
+    ("= `muy concentrado`;", "el texto completo es `muy concentrado · 2-3 LOs`"),
+    ("1 = `CAUTIVO · 1 solo LO`;", "n=0 tambien hay que cubrirlo y no es "
+                                   "cautivo"),
+]
+
+
 def main() -> None:
     texto = open(MANUAL, encoding="utf-8").read()
     fallos = []
+
+    print("── 0 · variantes PROHIBIDAS en cualquier parte del manual ──")
+    for patron, porque in PROHIBIDAS:
+        if patron in texto:
+            # La linea, para poder ir derecho.
+            linea = next((i for i, l in enumerate(texto.splitlines(), 1)
+                          if patron in l), "?")
+            print("   ⚠ linea %s · %r → %s" % (linea, patron, porque))
+            fallos.append("variante prohibida en linea %s: %r (%s)"
+                          % (linea, patron, porque))
+    if not fallos:
+        print("   ninguna")
+    print("")
 
     print("── 1 · vocabularios cerrados ──")
     for col, valores in VOCABULARIOS.items():
@@ -99,16 +137,37 @@ def main() -> None:
             print("   %-22s ok" % col)
 
     print("")
-    print("── 3 · toda columna esta nombrada en el manual ──")
-    for clave, titulo, _an, fuente, _sig in COLUMNAS:
+    print("── 3 · toda columna esta nombrada Y con su posicion ──")
+    for i, (clave, titulo, _an, fuente, _sig) in enumerate(COLUMNAS, 1):
         if fuente == NUESTRO:
             continue
         if "`%s`" % titulo not in texto:
             fallos.append("columna sin nombrar en el manual: %s" % titulo)
+        # La tabla de posiciones: la fila «| <n> | `<titulo>` |».
+        if "| %d | `%s` |" % (i, titulo) not in texto:
+            fallos.append("columna sin su numero de posicion (%d): %s"
+                          % (i, titulo))
     n_mm = sum(1 for c in COLUMNAS if c[3] in (FICHA, APARTE))
     n_calc = sum(1 for c in COLUMNAS if c[3] == CALC)
     print("   de Model Match %d · calculadas %d · total a documentar %d"
           % (n_mm, n_calc, n_mm + n_calc))
+
+    print("")
+    print("── 4 · cada caso de identificacion tiene sus tres textos ──")
+    # Cada criterio tiene que aparecer en una fila de la tabla E bis, o sea
+    # en la misma linea que una Confianza valida.
+    for criterio in VOCABULARIOS["match_criterio"]:
+        lineas = [l for l in texto.splitlines()
+                  if "`%s`" % criterio in l and l.startswith("|")]
+        if not lineas:
+            fallos.append("criterio sin fila en la tabla de casos: %s"
+                          % criterio)
+            continue
+        if not any(any("`%s`" % c in l for c in VOCABULARIOS["confianza_final"])
+                   for l in lineas):
+            fallos.append("criterio %s aparece sin su Confianza al lado"
+                          % criterio)
+    print("   %d criterios comprobados" % len(VOCABULARIOS["match_criterio"]))
 
     print("")
     if fallos:

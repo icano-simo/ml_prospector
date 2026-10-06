@@ -435,8 +435,12 @@ def preparar(f: dict) -> dict:
             d["lo_principal"] = top.get("nombre")
             d["lo_principal_pct"] = round(
                 100.0 * (top.get("unidades") or 0) / total)
-    d["mm_emails_n"] = len(f.get("mm_emails") or [])
-    d["mm_telefonos_n"] = len(f.get("mm_telefonos") or [])
+    # Vacio no es cero. De un realtor que no encontramos NO sabemos cuantos
+    # correos tiene Model Match; escribir 0 afirmaria que no tiene ninguno.
+    d["mm_emails_n"] = (len(f.get("mm_emails") or [])
+                        if f.get("encontrado") else "")
+    d["mm_telefonos_n"] = (len(f.get("mm_telefonos") or [])
+                           if f.get("encontrado") else "")
     for b, destino in (("lenders", "lenders_txt"),
                        ("originators", "originators_txt")):
         v = f.get("mm_%s" % b)

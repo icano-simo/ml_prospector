@@ -18,10 +18,12 @@ le piden a nadie.
 **Tope: 2 créditos por realtor.**
 
 > ⚠ **Los textos de las columnas de vocabulario cerrado son exactos, y el
-> scoring filtra por igualdad.** Escribir `alta, confirmada por teléfono` en
-> vez de `alta · confirmada por teléfono` no es un matiz de estilo: deja fuera
-> a 51 realtors. No se reescriben, no se traducen, no se les quita el acento
-> ni el separador `·`.
+> scoring filtra por igualdad.** Poner una coma donde va el separador `·`, o
+> quitar un acento, no es un matiz de estilo: deja fuera a 51 realtors. No se
+> reescriben, no se traducen, no se abrevian.
+>
+> Por eso este manual **no escribe en ninguna parte una variante equivocada**,
+> ni siquiera como contraejemplo: alguien la copiaría.
 >
 > `python modelmatch/verificar_manual.py` comprueba que este manual y el
 > código digan lo mismo carácter a carácter, y falla nombrando el valor que
@@ -191,9 +193,9 @@ Con la ficha ya pagada, sin llamadas nuevas:
 
 1. criterio empieza por `email_exacto` → **alta**. Un teléfono distinto **no**
    lo contradice: Model Match suele tener el de oficina y nosotros el celular.
-2. si no, y el teléfono coincide → **alta, confirmada por teléfono**.
-3. si no, y el teléfono **no** coincide → **a revisión**, aunque el nombre y el
-   estado calcen. Es la señal de que son dos personas.
+2. si no, y el teléfono coincide → `alta · confirmada por teléfono`.
+3. si no, y el teléfono **no** coincide → `contradicha por el teléfono`,
+   aunque el nombre y el estado calcen. Es la señal de que son dos personas.
 4. si no hay teléfono para comparar → se queda con la confianza del paso 1.
 
 ### Paso 4 · Banderas y exclusión — 0 créditos
@@ -276,7 +278,7 @@ POST /v1/agents/{mm_id}/breakdowns/originators
 ```
 
 **Pedir SOLO si `totalOriginatorsWorkedWith ≤ (2 − gastado)`.** Si no cabe, la
-celda dice «no consultado · N filas y quedaban M créditos».
+celda lleva el centinela de la sección 4·C, con su texto exacto.
 
 ⛔ **NO se puede pedir solo la primera fila. Medido.** Se mandó
 `pagination: {size: 1}` con `sort` por unidades: **no lo rechazó, lo ignoró** —
@@ -301,12 +303,20 @@ Hay tres rutas posibles, todas `POST` con cuerpo `{}`:
 **Con tope 2 y la ficha ya pagada queda 1 crédito, así que cabe como mucho un
 breakdown de 1 fila.** El orden de prioridad es fijo y no se negocia:
 
-1. **`originators`** — da `Su loan officer principal`, que es el nombre
-   contra el que se compite. Pedirlo solo si `totalOriginatorsWorkedWith == 1`.
-2. **`lenders`** — solo si el de originadores no se pidió (porque el agente
-   tenía 0 LOs) **y** `totalLendersWorkedWith == 1`.
-3. **`companies`** — **no se pide en el minado estándar.** No produce ninguna
-   de las 47 columnas.
+**La condición es una sola, y es la misma para los dos:** se pide un
+breakdown si `totalXWorkedWith ≤ (TOPE − gastado)` **y** `> 0`. Con tope 2 y
+la ficha pagada, eso equivale a `== 1`. Si mañana el tope sube, la regla sigue
+valiendo sin reescribirla.
+
+1. **`originators`** primero — da `Su loan officer principal`, que es el
+   nombre contra el que se compite.
+2. **`lenders`** después, **solo con lo que sobre**: si el de originadores se
+   pidió, ya no sobra nada bajo tope 2. En la práctica se pide solo cuando
+   `totalOriginatorsWorkedWith` es 0 y `totalLendersWorkedWith` es 1.
+3. **`companies`** — **nunca en el minado estándar.** No produce ninguna de
+   las 47 columnas.
+
+**Se pide como mucho uno por realtor.** Nunca los dos.
 
 Si no cabe ninguno, las columnas `Lenders (si cupo en el tope)` y
 `Originadores (si cupo)` llevan el centinela, con este formato **exacto**:
@@ -323,8 +333,9 @@ archivo y que el scoring reconoce.)
 ## 4 · Campo por campo
 
 Para cada columna: de qué llamada sale, qué campo de la API es, y qué
-transformación se le aplica. **El nombre de la columna es exactamente el de la
-tercera fila de la tabla** — no se renombra.
+transformación se le aplica. **El nombre de la columna es, carácter a
+carácter, el de la segunda columna de cada tabla** — no se renombra, no se
+traduce, no se le quitan acentos ni el `⚠`.
 
 ### A · De la ficha `GET /v1/agents/{id}` — 26 columnas, 1 crédito
 
@@ -372,7 +383,7 @@ tercera fila de la tabla** — no se renombra.
 | columna | cómo |
 |---|---|
 | `Su loan officer principal` | del breakdown de originadores, el `label` de la fila con **más `units`** (no la primera que devuelve la API) |
-| `Lenders (si cupo en el tope)` | `"<label> (<units> u)"` unidos con `" · "`; si no se pidió, `"no consultado · <N> filas y quedaban <M> créditos"` |
+| `Lenders (si cupo en el tope)` | `"<label> (<units> u)"` unidos con `" · "`; si no se pidió, el centinela exacto: `no consultado · <N> filas y quedaban <K> creditos del tope` |
 | `Originadores (si cupo)` | ídem con originadores |
 
 ### D · Calculadas — 13 columnas, 0 créditos
@@ -386,8 +397,9 @@ tercera fila de la tabla** — no se renombra.
 | `¿Teléfono coincide?` | `"si"` / `"no"` / `"sin_dato"` |
 | `Candidatos vistos` | cuántos `id` distintos devolvió la búsqueda |
 | `¿Cambió de casa?` | `"si"` / `"no"` / `"sin_dato"` |
-| `Nº emails` · `Nº teléfonos` | el largo de cada lista |
-| `¿Fidelizado con un LO?` | tramos de `Nº originadores`: 1 = `CAUTIVO · 1 solo LO`; 2-3 = `muy concentrado`; 4-6 = `concentrado`; 7-12 = `reparte`; 13+ = `reparte mucho` |
+| `Nº emails` | cuántos correos distintos trae Model Match — el largo de `Emails en Model Match`. **No** es «cuántos son nuevos respecto de los nuestros» |
+| `Nº teléfonos` | ídem con `Teléfonos en Model Match` |
+| `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en la sección 4·E** |
 | `% por su LO principal` | unidades del LO top ÷ **suma de las unidades de todos sus LOs**. ⚠ **NO usar el `pctUnits` de la API**: su denominador no son las operaciones del agente y llega a dar 167 % |
 | `Créditos gastados` | el acumulado real del realtor. Entero |
 | `Consultado` | ISO 8601 con zona UTC, p. ej. `2026-09-24T20:59:16.308783+00:00` |
@@ -455,6 +467,38 @@ que no tiene ninguno.
 
 **`¿Ya financia con la casa?`** → `SÍ` · `no` · `sin comprobar`.
 
+### E bis · La tabla que une los tres textos — **la más importante**
+
+Las tres columnas de identificación se llenan **juntas**. El scoring acepta la
+identidad solo si `Confianza` es `alta`, `alta · confirmada por teléfono` o
+`media` **y** `⚠ Revisar porque…` está vacía. Poner el texto equivocado en un
+caso `media` deja fuera a ese realtor.
+
+Esta tabla cubre **todos** los casos posibles. No hay más.
+
+| caso | `Cómo se identificó` | `Confianza` | `⚠ Revisar porque…` |
+|---|---|---|---|
+| nuestro correo está en su ficha | `email_exacto` | `alta` | *(vacía)* |
+| el correo coincide en varios perfiles | `email_exacto_varios_perfiles` | `alta` | *(vacía)* |
+| nombre + estado, y el teléfono coincide | `nombre_exacto_y_estado` | `alta · confirmada por teléfono` | *(vacía)* |
+| nombre + estado, sin teléfono para comparar | `nombre_exacto_y_estado` | `media` | *(vacía)* |
+| nombre + estado, el teléfono **no** coincide | `nombre_exacto_y_estado` | `contradicha por el teléfono` | `identificado solo por nombre y el teléfono NO coincide: puede ser otra persona con el mismo nombre` |
+| varios con nombre + estado, teléfono coincide | `nombre_y_estado_varios` | `alta · confirmada por teléfono` | *(vacía)* |
+| varios con nombre + estado, sin teléfono | `nombre_y_estado_varios` | `baja` | `identificado solo por nombre, sin confirmar con correo ni teléfono` |
+| varios con nombre + estado, teléfono **no** coincide | `nombre_y_estado_varios` | `contradicha por el teléfono` | `identificado solo por nombre y el teléfono NO coincide: puede ser otra persona con el mismo nombre` |
+| nombre exacto sin estado, teléfono coincide | `nombre_exacto_sin_estado` | `alta · confirmada por teléfono` | *(vacía)* |
+| nombre exacto sin estado, sin teléfono | `nombre_exacto_sin_estado` | `baja` | `identificado solo por nombre, sin confirmar con correo ni teléfono` |
+| nombre exacto sin estado, teléfono **no** coincide | `nombre_exacto_sin_estado` | `contradicha por el teléfono` | `identificado solo por nombre y el teléfono NO coincide: puede ser otra persona con el mismo nombre` |
+| hubo candidatos y ninguno convenció | `ambiguo` | `no encontrado` | `no se encontró en Model Match` |
+| la búsqueda no devolvió nada | `sin_candidatos` | `no encontrado` | `no se encontró en Model Match` |
+
+**Las dos reglas que se leen de la tabla:**
+
+- un match por **correo** nunca va a revisión, aunque el teléfono difiera;
+- `ninguna` es un valor que el vocabulario admite pero que **ninguna fila
+  produce**: aparecería solo si se eligiera un candidato sin criterio, cosa
+  que este manual prohíbe.
+
 ### F · Qué escribir cuando el realtor NO se identifica
 
 **Nunca `no`, nunca `0`.** Un `no` en «¿Produce FHA?» para alguien a quien no
@@ -471,7 +515,31 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | `Operaciones con la casa (al menos)` | **vacía** |
 | `Lenders (si cupo en el tope)` · `Originadores (si cupo)` | `no consultado · ` (con el motivo vacío, porque no hubo conteo) |
 | `¿Fidelizado con un LO?` · `Su loan officer principal` · `% por su LO principal` | **vacías** |
+| `¿Teléfono coincide?` · `¿Cambió de casa?` | `sin_dato` |
+| `Nº emails` · `Nº teléfonos` | **vacías** (no se sabe cuántos tiene, no es que tenga cero) |
+| `Candidatos vistos` | el número real de candidatos distintos que devolvió la búsqueda, **también cuando no se eligió ninguno** |
 | `Créditos gastados` | `0` |
+| `Consultado` | el sello de tiempo igual: se consultó, aunque no se resolviera |
+
+### F bis · Celdas sin regla obvia, para identificados
+
+| situación | columna | valor |
+|---|---|---|
+| no se pidió ningún breakdown | `Su loan officer principal` | **vacía** |
+| no se pidió ningún breakdown | `% por su LO principal` | **vacía** |
+| `¿Ya financia con la casa?` = `no` | `Operaciones con la casa (al menos)` | **vacía** |
+| la casa da `SÍ` pero el tramo N = 2 da 0 | `Operaciones con la casa (al menos)` | `1` |
+| `Nº originadores` = 1 y se compró el breakdown | `% por su LO principal` | `100` |
+| la API devuelve un porcentaje > 100 | el que sea | **se guarda tal cual**, no se recorta |
+
+### F ter · Los realtors en revisión SÍ se completan
+
+Un realtor con `⚠ Revisar porque…` no vacío **ya pagó su ficha**, así que los
+pasos 4 y 5 se hacen igual: los conteos son gratis y el breakdown, si cabe,
+cuesta lo mismo. Sus columnas se llenan como las de cualquier otro.
+
+Lo que está en revisión es **la identidad**, no el dato: si resulta ser otra
+persona, se descarta la fila entera, no se recalcula.
 
 ### G · Ordenamientos y desempates
 
@@ -499,6 +567,64 @@ deja de ser comparable.
 
 ---
 
+### I · Las 47 columnas, con su número de posición
+
+En la hoja *Realtors* del archivo de 113 columnas. **Van de la 4 a la 56, pero
+no son contiguas**: las posiciones 11, 14, 17, 21, 26 y 27 son de nuestra base
+y no se le piden a Model Match.
+
+| nº | encabezado exacto | origen |
+|---|---|---|
+| 4 | `¿En Model Match?` | calculada |
+| 5 | `Cómo se identificó` | calculada |
+| 6 | `Confianza` | calculada |
+| 7 | `⚠ Revisar porque…` | calculada |
+| 8 | `¿Teléfono coincide?` | calculada |
+| 9 | `Candidatos vistos` | calculada |
+| 10 | `ID Model Match` | ficha |
+| 12 | `Brokerage (Model Match, hoy)` | ficha |
+| 13 | `¿Cambió de casa?` | calculada |
+| 15 | `Emails en Model Match` | ficha |
+| 16 | `Nº emails` | calculada |
+| 18 | `Teléfonos en Model Match` | ficha |
+| 19 | `Nº teléfonos` | calculada |
+| 20 | `Perfiles enlazados` | ficha |
+| 22 | `Ciudad (MM)` | ficha |
+| 23 | `Estado (MM)` | ficha |
+| 24 | `ZIP (MM)` | ficha |
+| 25 | `Licencia (MM)` | ficha |
+| 28 | `Unidades 12m (MM)` | ficha |
+| 29 | `Volumen 12m (MM)` | ficha |
+| 30 | `Precio medio` | ficha |
+| 31 | `Compras (u)` | ficha |
+| 32 | `Compras ($)` | ficha |
+| 33 | `Ventas (u)` | ficha |
+| 34 | `Ventas ($)` | ficha |
+| 35 | `Dual (u)` | ficha |
+| 36 | `Compras FINANCIADAS (u)` | ficha |
+| 37 | `Compras financiadas ($)` | ficha |
+| 38 | `Ventas financiadas (u)` | ficha |
+| 39 | `% unidades financiadas` | ficha |
+| 40 | `% volumen financiado` | ficha |
+| 41 | `Loan medio de sus compradores` | ficha |
+| 42 | `¿Produce FHA?` | aparte |
+| 43 | `¿Produce convencional?` | aparte |
+| 44 | `¿Produce VA?` | aparte |
+| 45 | `¿Ya financia con la casa?` | aparte |
+| 46 | `Operaciones con la casa (al menos)` | aparte |
+| 47 | `Nº lenders` | ficha |
+| 48 | `Nº originadores` | ficha |
+| 49 | `¿Fidelizado con un LO?` | calculada |
+| 50 | `Su loan officer principal` | aparte |
+| 51 | `% por su LO principal` | calculada |
+| 52 | `Nº compañías` | ficha |
+| 53 | `Lenders (si cupo en el tope)` | aparte |
+| 54 | `Originadores (si cupo)` | aparte |
+| 55 | `Créditos gastados` | calculada |
+| 56 | `Consultado` | calculada |
+
+---
+
 ## 5 · Llamadas prohibidas
 
 Si el código las menciona, el cliente revienta antes de salir a la red.
@@ -509,7 +635,7 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 | cualquier `*BulkDelivery` sin aprobación escrita | 1 crédito por fila, sin tope natural |
 | seguir el `cursor` | multiplica el costo en silencio |
 | `POST /v1/agents` para un agente concreto | cuesta lo mismo que la ficha y trae menos |
-| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 34 columnas aprobadas |
+| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 47 columnas aprobadas |
 | breakdowns de `lenders`, `companies`, `counties` sin que quepan en el tope | 1 por fila |
 | los filtros de tract de `/v1/market` para **elegir** a quién contactar | `minorityTractPct`, `majorityMinorityTract`, `lowModIncomeTract`: segmentar por ahí es redlining y es exposición de fair lending |
 
@@ -542,13 +668,34 @@ Lo que sí es comparable de aquella corrida, porque no depende del tope:
 |---|---|
 | realtors procesados | 298 |
 | identificados | 273 — 189 por correo, 51 confirmados por teléfono |
-| a revisión | 50 |
+| con `⚠ Revisar porque…` no vacío | 52 |
 | no encontrados | 25 |
 | el ledger confirmó el modelo de costo | 422 previstos, 422 reales |
 
 **Bajo este manual, una corrida de 298 debería costar entre 273 y 300
 créditos** (1 por identificado, más los pocos breakdowns de una fila que
 quepan). Si da mucho más, algo se está pidiendo que no está acá.
+
+### Dónde va cada cosa
+
+| qué | dónde |
+|---|---|
+| un registro por realtor, con todo lo extraído | `data/trabajo/mm_por_realtor/<realtor_id>.json` |
+| **toda** respuesta cruda, antes de mirarla | `data/raw/mm_<etiqueta>_<sello>.json` |
+| los candidatos de los no resueltos | dentro del registro del realtor, clave `candidatos`, con nombre, brokerage, ciudad, estado y correo de cada uno |
+| las tablas crudas de lenders y originadores | dentro del registro, claves `mm_lenders` y `mm_originators` |
+| la hoja de los que hay que revisar a mano | hoja *Revisar* del Excel, con los candidatos en una celda |
+| las tablas largas, una fila por relación | hojas *Lenders*, *Originadores* y *Companias* |
+
+**Nada de esto se versiona**: lleva nombre, correo y teléfono de personas
+reales y el repo es público. `data/` está en el `.gitignore`.
+
+### Datos de contacto
+
+Los correos y teléfonos son **de uso interno del equipo**. No se comparten
+fuera ni se cargan en herramientas de terceros sin aprobación. Esta
+información es comercial, sobre profesionales inmobiliarios, y no se usa para
+decidir nada sobre un consumidor ni sobre su crédito.
 
 ### Y una advertencia sobre reproducibilidad
 
@@ -567,8 +714,11 @@ Para que nadie lo busque ahí:
 - **Instagram** — es scraper propio.
 - **Idioma, apellido, origen** — no están, y es correcto que no estén. Esas
   señales salen de Instagram y del modelo de scoring.
-- **Antigüedad en la industria del realtor** — no existe el campo. El rodeo:
-  pedir producción en un año viejo (`period: "2024"`, `units {gte:1}`), que
-  además es más duro, porque exige que estuviera produciendo.
+- **Antigüedad en la industria del realtor** — no existe el campo.
+  ⛔ **No se ejecuta en el minado estándar**, porque no produce ninguna de las
+  47 columnas y la regla cero manda. Si algún día se aprueba como columna
+  nueva, el rodeo medido sería pedir producción en un año viejo
+  (`period: "2024"`, `units {gte:1}`), que además es más exigente que la
+  licencia porque obliga a que estuviera produciendo.
 - **Las operaciones una por una con su tipo de préstamo y monto** — la
   pestaña Transactions se sigue pegando a mano.
