@@ -1,165 +1,153 @@
 ---
 name: modelmatch-minado
-description: Manual reproducible del minado de Model Match que produce las 47 columnas de realtors del Excel de HOMESÍ — cómo conectarse, el modelo de costo medido, el tope de 2 créditos por lead, la desambiguación sin adivinar, y qué llamada produce cada columna. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Contiene el presupuesto por perfil y las trampas de porcentajes, ventanas y conteos que no se pueden re-derivar del dato.
+description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 34 columnas aprobadas, el payload exacto de cada llamada, la transformación de cada campo, el tope de 2 créditos por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
 ---
 
-# Minado de Model Match — manual reproducible
+# Minado de Model Match — manual operativo
 
-Produce, para cada realtor de una lista, **34 columnas directas de Model Match
-y 13 derivadas de ellas**. Está escrito para que otro agente lo ejecute y
-obtenga el mismo resultado, no para que lo lea por encima.
+**Regla cero: si una llamada no está en este manual, no se hace.** Cada
+llamada cuesta dinero y cada campo de más es un campo que alguien va a leer
+mal. Lo aprobado son **34 columnas**, y están listadas una por una.
 
-**El tope es 2 créditos por lead.** Con el método de abajo, el gasto real es
-**1 crédito** en el 97 % de los casos. Si una corrida promedia más de 2, algo
-se está pidiendo que no está en este manual: parar y revisar.
+**Tope: 2 créditos por realtor.** Con este procedimiento el gasto real es
+**1** en el 97 % de los casos.
 
 ---
 
-## 0 · Antes de la primera llamada
+## 1 · Conexión
 
-### Conexión
+### Qué usar
 
-Hay dos puertas al mismo backend y al mismo medidor de créditos:
-
-| | cuándo |
+| | |
 |---|---|
-| **API REST** (`https://api.modelmatch.com`) | **para esto**. Un lote de cientos de realtors, repetible, con el crudo en disco |
-| **MCP** (`https://mcp.modelmatch.com/mcp`, OAuth 2.1) | para explorar y validar formas a mano |
+| **API REST** `https://api.modelmatch.com` | **para esto**: un lote, repetible, con el crudo en disco |
+| MCP `https://mcp.modelmatch.com/mcp` | solo para explorar a mano. **No se usa para un lote** |
 
-El MCP no sirve para un lote: no guarda el crudo, cada respuesta pasa por el
-contexto de un chat y no se puede reejecutar igual. Las herramientas del MCP
-se generan desde los mismos endpoints REST, así que lo que se aprende en uno
-vale en el otro.
+El MCP no guarda el crudo, pasa cada respuesta por el contexto de un chat y no
+se puede reejecutar igual. Es el mismo backend y el mismo medidor.
 
-**Autenticación REST:** cabecera `x-api-key`. La llave vive en el `.env` de la
-raíz del repo, en `MODELMATCH_API_KEY`, y la carga `supabase.config.cargar_env`.
-**Nunca se escribe en código ni se pega en un chat.** Si aparece en un diff,
-la tarea se detiene y la llave se rota.
+### Autenticación
 
-El cliente ya existe: `modelmatch/cliente.py`. Impone, sin que haya que
-acordarse: guarda el crudo antes de mirarlo, no sigue el cursor salvo que se
-pida, revienta antes de salir a la red si la ruta menciona enrichment o
-bulk-delivery, y reintenta el 429.
+```
+Cabecera:  x-api-key: <MODELMATCH_API_KEY>
+           Content-Type: application/json
+           Accept: application/json
+```
 
-### Comprobar el saldo (gratis)
+La llave vive en el `.env` de la raíz del repo, variable
+`MODELMATCH_API_KEY`, y la carga `supabase.config.cargar_env()`.
+
+- **Nunca** se escribe en código, en un docstring, en un log ni en un chat.
+- Si aparece en un diff, **la tarea se detiene y la llave se rota**.
+
+### El cliente
+
+Usar `modelmatch/cliente.py`. Ya impone, sin que haya que acordarse: guarda el
+crudo antes de mirarlo, no sigue el cursor, revienta antes de salir a la red
+si la ruta menciona `enrich` o `bulk-delivery`, reintenta el 429 y espera
+entre llamadas.
+
+```python
+from modelmatch.cliente import llamar, saldo
+d = llamar("/v1/agents/%s" % mm_id, etiqueta="det_%s" % mm_id)
+```
+
+### Comprobar el saldo (cuesta 0)
 
 ```
 GET /v1/me/credits
 ```
 
-Usar **`balance.total`**. `usage.spent` va con retraso: se comprobó que no se
-movió ni una décima mientras siete llamadas bajaban el saldo 30. `usage.
-spentByCategory` separa lo nuestro (`api`) de lo que gasta el chat de la app
-(`ai_agent`), y conviene mirarlo antes de culpar a la extracción por un
-consumo que no es suyo.
+Leer **`balance.total`**. **NO usar `usage.spent`**: va con retraso — se midió
+que no se movió ni una décima mientras `balance.total` bajaba 30.
 
 ---
 
-## 1 · El modelo de costo, medido contra el ledger
+## 2 · El presupuesto, y cómo se hace cumplir
 
-No está documentado por el proveedor. Esto se midió leyendo `balance.total`
-antes y después de cada llamada. **Ninguno está estimado.**
+```
+TOPE_POR_REALTOR = 2
+```
+
+### El modelo de costo, medido contra el ledger
 
 | llamada | costo |
 |---|---|
 | `POST /v1/instant-search` | **0** |
-| `POST /v1/agents/count`, `/v1/loans/count` | **0** |
-| `GET /v1/me`, `/v1/me/credits` | **0** |
+| `POST /v1/agents/count` | **0** |
+| `GET /v1/me/credits` | **0** |
 | errores 400 · 404 · 429 · 402 | **0** |
 | `GET /v1/agents/{id}` | **1** |
 | `POST /v1/agents` (lista) | **1 por fila devuelta** |
-| `POST /v1/agents/{id}/breakdowns/*` | **1 por fila** |
-| `/sales`, `/properties`, `/related`, `/v1/market` | **1 por fila** |
-| bulk delivery | 1 por fila; cancelar NO cobra |
-| enrichment (skip-trace) | 10 por match · **PROHIBIDO** |
+| `POST /v1/agents/{id}/breakdowns/*` | **1 por fila devuelta** |
 
-**La regla que lo resume: se cobra lo que devuelve FILAS. Lo que devuelve un
-NÚMERO es gratis.** De ahí sale todo el método: contar antes de listar, y usar
-el conteo con un id concreto para obtener un sí/no por agente sin pagar.
+**La regla: se cobra lo que devuelve FILAS. Lo que devuelve un NÚMERO es
+gratis.**
 
-**El corolario que hace cumplible el tope:** `totalLendersWorkedWith`,
-`totalOriginatorsWorkedWith` y `totalCompaniesWorkedWith` vienen en la ficha y
-**son** el número de filas de su breakdown. Después de pagar 1 crédito se sabe
-exactamente lo que costaría cada listado antes de pedirlo.
+### Reparto esperado por realtor
 
----
-
-## 2 · El presupuesto por lead
-
-```
-tope_duro = 2 créditos por realtor
-```
-
-Se comprueba **antes** de cada pedido, no después. Reparto esperado:
-
-| paso | costo | qué columnas paga |
+| paso | costo | columnas que paga |
 |---|---|---|
-| identificar con `instant-search` | **0** | ninguna; da el `mm_id` |
-| ficha `GET /v1/agents/{id}` | **1** | las 26 de la ficha |
-| banderas FHA / convencional / VA | **0** | 3 |
-| exclusión por la casa + su peso | **0** | 2 |
-| **subtotal** | **1** | **31 de 34** |
-| breakdown de originadores, solo si `totalOriginatorsWorkedWith ≤ 1` | 0 ó 1 | 1 |
+| 1 · identificar | 0 | — |
+| 2 · ficha | **1** | 26 |
+| 3 · verificar | 0 | — |
+| 4 · banderas y exclusión | 0 | 5 |
+| 5 · breakdown, solo si cabe | 0 ó 1 | 3 |
 
-Las dos columnas que quedan —`lenders_txt` y `originators_txt`, con los
-nombres— cuestan 1 por fila y **no entran en el tope** para un agente normal:
-la mediana es 10 lenders y 10 LOs. Se piden solo cuando el conteo de la ficha
-dice que caben.
+### Las cuatro guardas, obligatorias
 
-**Guardas obligatorias en el código:**
-
-1. Antes de cada breakdown, comparar `totalXWorkedWith` con lo que queda del
-   tope. Si no cabe, **no se pide** y la celda dice por qué.
-2. El acumulado por realtor se lleva en el propio registro
-   (`creditos_gastados`), y cada script posterior que compre algo para ese
-   realtor **tiene que volver a comprobar el tope**. Esto ya falló una vez:
-   una compra dirigida posterior sumó sobre perfiles que ya estaban en el
-   tope y siete terminaron entre 6 y 8 créditos.
-3. Conciliar con el ledger cada 25 realtors: comparar el gasto previsto por el
-   modelo contra `balance.total`. Si divergen, parar. En la corrida de
-   referencia el modelo predijo 422 y el ledger dijo 422.
+1. **Antes de cada breakdown**, comparar `totalXWorkedWith` de la ficha con lo
+   que queda del tope. Si no cabe, **no se pide** y la celda dice por qué.
+2. **El acumulado vive en el registro del realtor** (`creditos_gastados`), y
+   **cualquier script posterior que compre algo para ese realtor tiene que
+   volver a comprobar el tope**. Esto ya falló: una compra dirigida sumó sobre
+   perfiles que ya estaban en el tope y siete terminaron entre 6 y 8.
+3. **Conciliar con el ledger cada 25 realtors**: gasto previsto contra
+   `balance.total`. Si divergen, parar. En la corrida de referencia el modelo
+   predijo 422 y el ledger dijo 422.
+4. **Reanudable**: cada realtor se guarda apenas termina, en su propio
+   archivo. Volver a correr no re-paga lo hecho.
 
 ---
 
 ## 3 · El procedimiento, paso a paso
 
-### Paso 0 · La lista de trabajo
+### Paso 1 · Identificar al realtor — 0 créditos
 
-Por cada realtor hacen falta, de nuestra base: nombre, **todos** los correos,
-**todos** los teléfonos, estado, y el brokerage que teníamos. Los correos son
-la llave de desambiguación y los teléfonos la verificación posterior.
+**Lo que hace falta de nuestra base:** nombre completo, **todos** los correos,
+**todos** los teléfonos, estado, y el brokerage que teníamos.
 
-`modelmatch/construir_lista.py` la arma. **Pagina siempre**: PostgREST corta
-en ~1000 filas y no avisa.
+#### Llamada
 
-### Paso 1 · Identificar — 0 créditos
-
-```
-POST /v1/instant-search   {"query": "<un correo nuestro>"}
+```json
+POST /v1/instant-search
+{"query": "<correo nuestro>"}
 ```
 
-Una llamada por correo (máximo 2). Si ninguna resuelve, una más con el nombre
-completo. La respuesta trae `results.agents[]` con id, nombre, correos,
-brokerage, ciudad, estado y volumen.
+Una llamada por correo, **máximo 2**. Si ninguna resuelve, **una más** con el
+nombre completo. No más de 3 en total.
 
-**La búsqueda es DIFUSA.** Buscando el correo de una agente salieron cinco
-candidatas, dos con su mismo nombre y apellido en otros estados. Por eso el
-nombre nunca decide solo.
+La respuesta trae `results.agents[]`, cada uno con: `id`, `modelMatchId`,
+`fullName`, `firstName`, `lastName`, `email`, `office`, `officeKey`, `city`,
+`state`, `zip`, `volume`, `units`, `avgSoldPrice`, `_geo`.
 
-**Orden de decisión, sin excepciones:**
+#### Cómo decidir cuál es — en este orden, sin saltarse ninguno
 
-1. **`email_exacto`** — alguno de nuestros correos aparece en el campo `email`
-   del candidato (que trae **varios separados por `;`**). Llave dura.
-2. **`email_exacto_varios_perfiles`** — el correo coincide en más de uno: son
-   perfiles duplicados del mismo agente. Gana el de más volumen, y queda
-   dicho en la columna.
-3. **`nombre_exacto_y_estado`** — nombre normalizado idéntico **y** mismo
-   estado, y solo uno cumple.
-4. **`nombre_exacto_sin_estado`** / **`ambiguo`** / **`sin_candidatos`** — no
-   alcanza. **No se elige ninguno.** Se guardan los candidatos con su
-   brokerage, ciudad y correo para decidir a mano.
+La búsqueda es **difusa**: buscando un correo pueden salir cinco personas, dos
+con el mismo nombre y apellido en otros estados.
 
 Normalizar = minúsculas, sin tildes, sin puntuación, espacios colapsados.
+
+| orden | criterio | se anota como | confianza |
+|---|---|---|---|
+| 1 | alguno de **nuestros correos** está en el campo `email` del candidato (que trae **varios separados por `;`**) | `email_exacto` | alta |
+| 2 | el correo coincide en **más de un** candidato (perfiles duplicados) → gana el de mayor `volume` | `email_exacto_varios_perfiles` | alta |
+| 3 | `fullName` normalizado idéntico **y** `state` igual al nuestro, y **solo uno** cumple | `nombre_exacto_y_estado` | media |
+| 4 | nada de lo anterior | `nombre_exacto_sin_estado`, `ambiguo` o `sin_candidatos` | **ninguna** |
+
+**En el caso 4 NO se elige a nadie y NO se gasta ni un crédito.** Se guardan
+los candidatos con su nombre, brokerage, ciudad, estado y correo para que una
+persona decida.
 
 ### Paso 2 · La ficha — 1 crédito
 
@@ -167,40 +155,40 @@ Normalizar = minúsculas, sin tildes, sin puntuación, espacios colapsados.
 GET /v1/agents/{mm_id}
 ```
 
-Paga 26 columnas de golpe, incluido el bloque `scored`, que **no viene en la
-fila de lista aunque cueste lo mismo**. Por eso siempre la ficha y nunca la
-lista para un agente concreto.
+Sin cuerpo. Devuelve `data` con 27 campos de primer nivel más el bloque
+`scored`. **Paga 26 de las 34 columnas de una sola vez.**
 
-De aquí se arman también los campos múltiples:
-
-- **correos**: partir `email` por `;` y sumar los de `linkedProfiles[]`;
-- **teléfonos**: `phone` más `phone` y `officePhone` de cada
-  `linkedProfiles[]`, comparados sin `+1` ni guiones.
+**Siempre la ficha, nunca `POST /v1/agents` para un agente concreto:** cuestan
+lo mismo (1) y la lista **no trae el bloque `scored`**, que es donde están las
+compras financiadas.
 
 ### Paso 3 · Verificar la identificación — 0 créditos
 
-Con la ficha ya pagada:
+Con la ficha ya pagada, sin llamadas nuevas:
 
 - **`telefono_coincide`**: ¿alguno de nuestros teléfonos está entre los suyos?
-- **`cambio_de_brokerage`**: comparar el brokerage nuestro con su `office`,
-  normalizados y por las primeras palabras, para que «Realty Concepts Ltd» y
-  «realty concepts, ltd. - fresno» no cuenten como cambio.
+  Comparar **solo dígitos**, quitando el `1` inicial si quedan 11.
+- **`cambio_de_brokerage`**: comparar nuestro brokerage con `office`,
+  normalizados y **por los primeros 12 caracteres**, para que «Realty Concepts
+  Ltd» y «realty concepts, ltd. - fresno» no cuenten como cambio.
 
-**Regla de confianza final, y el orden importa:**
+**Confianza final — el orden importa:**
 
-- identificado por correo → **alta**. Un teléfono distinto **no** lo
-  contradice: Model Match suele tener el de la oficina y nosotros el celular;
-- si el correo no resolvió y el teléfono coincide → **alta, confirmada por
-  teléfono**;
-- si el correo no resolvió y el teléfono **no** coincide → **a revisión**,
-  aunque el nombre y el estado calcen. Es justo la señal de que son dos
-  personas.
+1. criterio empieza por `email_exacto` → **alta**. Un teléfono distinto **no**
+   lo contradice: Model Match suele tener el de oficina y nosotros el celular.
+2. si no, y el teléfono coincide → **alta, confirmada por teléfono**.
+3. si no, y el teléfono **no** coincide → **a revisión**, aunque el nombre y el
+   estado calcen. Es la señal de que son dos personas.
+4. si no hay teléfono para comparar → se queda con la confianza del paso 1.
 
 ### Paso 4 · Banderas y exclusión — 0 créditos
 
-Usar el endpoint de **conteo**, que no cobra, con el id del agente:
+**Usar el endpoint de CONTEO, que no cobra, con el id del agente.** `total`
+devuelve **1** (sí) o **0** (no).
 
-```
+#### Tipo de préstamo — 3 llamadas, una por tipo
+
+```json
 POST /v1/agents/count
 {"flatFilters": {"id": "<mm_id>"},
  "footprint": {"dimension": "lender",
@@ -208,180 +196,180 @@ POST /v1/agents/count
  "period": "last24Months"}
 ```
 
-`total` da **1** o **0**: ese es el sí/no. Repetir con `conventional` y `va`.
+Repetir con `"key": "conventional"` y `"key": "va"`.
 
-Para la casa, el mismo patrón con la lista de ids de Everett y
-`units: {gte: N}` para el tramo:
+⚠ **NO agregar `shareOfUnits` ni ningún umbral de porcentaje a este
+footprint.** Con `dimension: lender` sin lender fijo, el porcentaje se mide
+**dentro de un bucket de lender suelto**, no sobre el agente: un agente con
+20 % de FHA real aparece en la banda «≥50 %». Costó 503 créditos descubrirlo.
+**Solo el sí/no es válido.**
 
+#### Relación con la casa — 1 llamada
+
+```json
+POST /v1/agents/count
+{"flatFilters": {"id": "<mm_id>"},
+ "footprint": {"lender": [<ids de la casa>]},
+ "period": "allTime"}
 ```
-"footprint": {"lender": [<ids de la casa>], "units": {"gte": 3}}
-```
 
-**Dos cosas que hay que respetar o el número miente:**
-
-- **la ventana**: con `last24Months` dan 28 realtors y con `allTime` dan 79.
-  Para una exclusión va `allTime`: una operación con la casa hace tres años
-  sigue siendo una relación. Citar siempre el número con su ventana;
-- **la lista de ids**: está en `modelmatch/everett.py`, comprobada contra
-  `instant-search`, junto con `NO_ES_LA_CASA` — hay bancos de la ciudad de
+- Los ids están en `modelmatch/everett.py`, lista `CASA`, **comprobados contra
+  `instant-search`**. Ahí mismo está `NO_ES_LA_CASA`: bancos de la ciudad de
   Everett y una persona apellidada Everette que **no** son la casa.
+- **`period` = `allTime`, no `last24Months`.** Con 24 meses dan 28 realtors y
+  con el historial completo dan 79. Para una exclusión, una operación de hace
+  tres años sigue contando.
 
-### Paso 5 · Breakdowns — solo si caben
+#### El peso de esa relación — solo si la anterior dio 1
 
+Repetir la misma llamada agregando `"units": {"gte": N}` dentro del
+`footprint`, con N = 2, 3, 5, 10, 20. El mayor N que devuelva 1 es el tramo.
+
+✅ **Acá el umbral SÍ significa lo que dice**, porque el lender es explícito.
+Comprobado contra un caso con 3 operaciones en su tabla cruda: aparece en 1, 2
+y 3 y desaparece en 5.
+
+### Paso 5 · Breakdown de originadores — solo si cabe
+
+```json
+POST /v1/agents/{mm_id}/breakdowns/originators
+{}
 ```
-POST /v1/agents/{mm_id}/breakdowns/{lenders|originators|companies|counties}
-```
 
-Pedir únicamente si `totalXWorkedWith ≤ (tope − gastado)`. Si no cabe, la
-celda dice «no consultado · N filas y quedaban M créditos», que es
-información, no un hueco.
+**Pedir SOLO si `totalOriginatorsWorkedWith ≤ (2 − gastado)`.** Si no cabe, la
+celda dice «no consultado · N filas y quedaban M créditos».
 
-**NO se puede pedir solo la primera fila. Medido, no supuesto.** Se le mandó
-`pagination: {size: 1}` con `sort` por unidades descendente a un agente de 4
-lenders: **no rechazó la petición, la ignoró** — devolvió 3 filas y cobró 3.
-No hay forma de comprar solo el lender o el LO de mayor wallet share: o se
-compra la lista entera o ninguna. No reintentar.
+⛔ **NO se puede pedir solo la primera fila. Medido.** Se mandó
+`pagination: {size: 1}` con `sort` por unidades: **no lo rechazó, lo ignoró** —
+devolvió 3 filas y cobró 3. **No reintentar.**
 
-**Y `totalXWorkedWith` es un techo, no una igualdad.** En esa misma prueba la
-ficha decía 4 y el breakdown trajo 3. En las otras cuatro mediciones coincidió
-exacto (8→8, 10→10, 7→7, 3→3). La guarda del presupuesto usa el número de la
-ficha, así que **sobreestima**, que es la dirección segura: nunca gasta más de
-lo previsto.
+⚠ **El orden que devuelve la API es por VOLUMEN, no por unidades.** Para
+nosotros manda **unidades**: lo que cuenta es a cuántos clientes les presentó
+un prestamista, no cuán caras eran las casas. En un caso real el primero por
+volumen tenía 2 operaciones y el segundo 4. **Reordenar por `units` antes de
+tomar el principal.**
 
 ---
 
-## 4 · Columna por columna
+## 4 · Campo por campo
 
-### A · De la ficha, `GET /v1/agents/{id}` — 1 crédito las 26
+Para cada columna: de qué llamada sale, qué campo de la API es, y qué
+transformación se le aplica. **El nombre de la columna es exactamente el de la
+tercera fila de la tabla** — no se renombra.
 
-| columna del Excel | campo de la API |
-|---|---|
-| ID Model Match | `id` / `modelMatchId` |
-| Brokerage (Model Match, hoy) | `office` |
-| Emails en Model Match | `email` partido por `;` + `linkedProfiles[].email` |
-| Teléfonos en Model Match | `phone` + `linkedProfiles[].phone` + `.officePhone` |
-| Perfiles enlazados | `linkedProfileCount` |
-| Ciudad (MM) · Estado (MM) · ZIP (MM) | `city` · `state` · `zip` |
-| Licencia (MM) | `licenseNumber` (vacío en ~la mitad) |
-| Unidades 12m · Volumen 12m | `units` · `volume` |
-| Precio medio | `avgSoldPrice` |
-| Compras (u) · Compras ($) | `buyerUnits` · `buyerVolume` |
-| Ventas (u) · Ventas ($) | `sellerUnits` · `sellerVolume` |
-| Dual (u) | `dualUnits` |
-| **Compras FINANCIADAS (u)** | `scored.total_mortgaged_buyer_units` |
-| Compras financiadas ($) | `scored.total_mortgaged_buyer_volume` |
-| Ventas financiadas (u) | `scored.total_mortgaged_listing_units` |
-| % unidades financiadas | `scored.total_percent_units_mortgaged` |
-| % volumen financiado | `scored.total_percent_volume_mortgaged` |
-| Loan medio de sus compradores | `scored.average_mortgaged_loan_amount` |
-| Nº lenders | `totalLendersWorkedWith` |
-| Nº originadores | `totalOriginatorsWorkedWith` |
-| Nº compañías | `totalCompaniesWorkedWith` |
+### A · De la ficha `GET /v1/agents/{id}` — 26 columnas, 1 crédito
 
-### B · De consultas aparte — 8 columnas
-
-| columna | de dónde | costo |
+| campo de la API | columna del Excel | transformación |
 |---|---|---|
-| ¿Produce FHA? · ¿convencional? · ¿VA? | `agents/count` + `footprint.product` | **0** |
-| ¿Ya financia con la casa? | `agents/count` + `footprint.lender` | **0** |
-| Operaciones con la casa (al menos) | el mismo, con `units {gte:N}` por tramos | **0** |
-| Su loan officer principal | `breakdowns/originators` | 1 por fila |
-| Lenders (si cupo) | `breakdowns/lenders` | 1 por fila |
-| Originadores (si cupo) | `breakdowns/originators` | 1 por fila |
+| `id` | `ID Model Match` | tal cual |
+| `office` | `Brokerage (Model Match, hoy)` | tal cual |
+| `email` + `linkedProfiles[].email` | `Emails en Model Match` | partir por `;` y `,`, minúsculas, quedarse con los que tienen `@`, quitar repetidos, ordenar, unir con `" · "` |
+| `phone` + `linkedProfiles[].phone` + `linkedProfiles[].officePhone` | `Teléfonos en Model Match` | solo dígitos; si quedan 11 y empieza por `1`, quitar el `1`; quitar repetidos y vacíos; unir con `" · "` |
+| `linkedProfileCount` | `Perfiles enlazados` | si viene vacío, usar `len(linkedProfiles)` |
+| `city` | `Ciudad (MM)` | tal cual |
+| `state` | `Estado (MM)` | tal cual |
+| `zip` | `ZIP (MM)` | tal cual |
+| `licenseNumber` | `Licencia (MM)` | tal cual. Vacío en ~la mitad: vacío es «no lo sabe», no «no tiene» |
+| `units` | `Unidades 12m (MM)` | tal cual |
+| `volume` | `Volumen 12m (MM)` | tal cual |
+| `avgSoldPrice` | `Precio medio` | tal cual |
+| `buyerUnits` | `Compras (u)` | tal cual |
+| `buyerVolume` | `Compras ($)` | tal cual |
+| `sellerUnits` | `Ventas (u)` | tal cual |
+| `sellerVolume` | `Ventas ($)` | tal cual |
+| `dualUnits` | `Dual (u)` | tal cual |
+| `scored.total_mortgaged_buyer_units` | `Compras FINANCIADAS (u)` | tal cual. **Es el número que decide el encaje** |
+| `scored.total_mortgaged_buyer_volume` | `Compras financiadas ($)` | tal cual |
+| `scored.total_mortgaged_listing_units` | `Ventas financiadas (u)` | tal cual |
+| `scored.total_percent_units_mortgaged` | `% unidades financiadas` | redondear a 1 decimal |
+| `scored.total_percent_volume_mortgaged` | `% volumen financiado` | redondear a 1 decimal |
+| `scored.average_mortgaged_loan_amount` | `Loan medio de sus compradores` | tal cual |
+| `totalLendersWorkedWith` | `Nº lenders` | tal cual |
+| `totalOriginatorsWorkedWith` | `Nº originadores` | tal cual |
+| `totalCompaniesWorkedWith` | `Nº compañías` | tal cual |
 
-### C · Calculadas — 13 columnas, 0 créditos
+### B · De los conteos — 5 columnas, 0 créditos
+
+| llamada | columna | valor |
+|---|---|---|
+| count + `product.key: fha` | `¿Produce FHA?` | `total == 1` → `"sí"`, si no `"no"` |
+| count + `product.key: conventional` | `¿Produce convencional?` | ídem |
+| count + `product.key: va` | `¿Produce VA?` | ídem |
+| count + `footprint.lender: CASA`, `allTime` | `¿Ya financia con la casa?` | `total == 1` → `"SÍ"`, si no `"no"` |
+| el mismo con `units {gte:N}` por tramos | `Operaciones con la casa (al menos)` | el mayor N que dio 1 |
+
+### C · Del breakdown — 3 columnas, 1 por fila
 
 | columna | cómo |
 |---|---|
-| ¿En Model Match? | si el paso 1 resolvió |
-| Cómo se identificó | el criterio del paso 1 |
-| Confianza | la regla del paso 3 |
-| ⚠ Revisar porque… | el motivo concreto, vacío si no hay |
-| ¿Teléfono coincide? | nuestros teléfonos ∩ los suyos, sin `+1` ni guiones |
-| Candidatos vistos | cuántos ids distintos devolvió la búsqueda |
-| ¿Cambió de casa? | brokerage nuestro vs `office`, normalizados |
-| Nº emails · Nº teléfonos | el largo de cada lista |
-| ¿Fidelizado con un LO? | tramos de `totalOriginatorsWorkedWith` |
-| % por su LO principal | unidades del LO top ÷ **suma de los suyos** |
-| Créditos gastados | el acumulado real del realtor |
-| Consultado | sello de tiempo UTC |
+| `Su loan officer principal` | del breakdown de originadores, el `label` de la fila con **más `units`** (no la primera que devuelve la API) |
+| `Lenders (si cupo en el tope)` | `"<label> (<units> u)"` unidos con `" · "`; si no se pidió, `"no consultado · <N> filas y quedaban <M> créditos"` |
+| `Originadores (si cupo)` | ídem con originadores |
+
+### D · Calculadas — 13 columnas, 0 créditos
+
+| columna | cómo |
+|---|---|
+| `¿En Model Match?` | `"sí"` si el paso 1 resolvió, si no `"NO"` |
+| `Cómo se identificó` | el criterio del paso 1, textual |
+| `Confianza` | la regla del paso 3 |
+| `⚠ Revisar porque…` | el motivo concreto; **vacío** si el match es confiable |
+| `¿Teléfono coincide?` | `"si"` / `"no"` / `"sin_dato"` |
+| `Candidatos vistos` | cuántos `id` distintos devolvió la búsqueda |
+| `¿Cambió de casa?` | `"si"` / `"no"` / `"sin_dato"` |
+| `Nº emails` · `Nº teléfonos` | el largo de cada lista |
+| `¿Fidelizado con un LO?` | tramos de `Nº originadores`: 1 = `CAUTIVO · 1 solo LO`; 2-3 = `muy concentrado`; 4-6 = `concentrado`; 7-12 = `reparte`; 13+ = `reparte mucho` |
+| `% por su LO principal` | unidades del LO top ÷ **suma de las unidades de todos sus LOs**. ⚠ **NO usar el `pctUnits` de la API**: su denominador no son las operaciones del agente y llega a dar 167 % |
+| `Créditos gastados` | el acumulado real del realtor |
+| `Consultado` | sello de tiempo UTC |
 
 ---
 
-## 5 · Las trampas. Ninguna es opcional
+## 5 · Llamadas prohibidas
 
-**1 · Ningún porcentaje de esta API significa lo que parece hasta comprobarlo.**
-Van tres comprobadas:
+Si el código las menciona, el cliente revienta antes de salir a la red.
 
-- `footprint.product.shareOfUnits` con `dimension: lender` mide la proporción
-  **dentro de un bucket de lender**, no la del agente. Un agente con 20 % de
-  FHA real aparece en la banda «≥50 %». Costó 503 créditos descubrirlo;
-- `pctUnits` del breakdown de originadores llegó a **167 %**: su denominador
-  no son las operaciones del agente. La concentración se calcula a mano, como
-  unidades del LO sobre la **suma de los LOs de ese agente**;
-- en cambio `footprint` con un **lender explícito** y `units {gte:N}` sí
-  significa «N operaciones con ese lender».
-
-**Antes de usar cualquier porcentaje, contrastarlo con un caso cuya respuesta
-se conozca por otra vía.** Los scripts de `modelmatch/` lo hacen solos y
-avisan si deja de cuadrar.
-
-**2 · La ventana cambia la respuesta**, a veces por un factor de tres. Todo
-número se cita con su ventana.
-
-**3 · Un negativo puede ser que la pregunta no podía verlo.** «La pestaña
-Transactions no se puede reconstruir» estuvo mal semanas: se habían probado
-`/v1/sales` con filtros y `/v1/related`, pero no las rutas colgadas del
-agente, que sí existen. Cuando algo no aparezca por varias vías, sospechar de
-las vías.
-
-**4 · Los nombres de lenders vienen crudos**, con varias grafías de la misma
-empresa y alguna con el nombre mal escrito. No agrupar por texto sin revisar.
-
-**5 · PostgREST corta en ~1000 filas y no avisa.** Paginar siempre.
-
-**6 · El crudo se guarda antes de mirarlo.** Es lo que permite volver a leer
-sin re-pagar. 812 respuestas de la corrida de referencia siguen en
-`data/raw/`, y de ahí salieron después columnas que nadie había pedido.
+| | por qué |
+|---|---|
+| `enrichProperty`, `enrichPropertiesBatch`, `enrichPropertiesBulk` | skip-trace del **dueño de la propiedad**: nombre, teléfono y correo de un consumidor, para un prestamista. **10 créditos por match** |
+| cualquier `*BulkDelivery` sin aprobación escrita | 1 crédito por fila, sin tope natural |
+| seguir el `cursor` | multiplica el costo en silencio |
+| `POST /v1/agents` para un agente concreto | cuesta lo mismo que la ficha y trae menos |
+| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 34 columnas aprobadas |
+| breakdowns de `lenders`, `companies`, `counties` sin que quepan en el tope | 1 por fila |
+| los filtros de tract de `/v1/market` para **elegir** a quién contactar | `minorityTractPct`, `majorityMinorityTract`, `lowModIncomeTract`: segmentar por ahí es redlining y es exposición de fair lending |
 
 ---
 
-## 6 · Reanudación y verificación
+## 6 · Antes de dar por buena una corrida
 
-**Reanudable o no sirve.** Cada realtor se guarda apenas termina, en su propio
-archivo. Volver a correr **no re-paga** lo hecho: es la única protección real
-contra un corte a mitad de un lote largo.
-
-Al terminar, comprobar las cuatro:
-
-1. **gasto previsto == gasto del ledger**. Si no, el modelo de costo cambió;
-2. **ningún realtor por encima del tope**;
-3. **ningún match inventado**: los no resueltos están marcados, con sus
-   candidatos;
-4. **cuadran dos caminos al mismo hecho**: por ejemplo, los realtors con la
-   casa según `footprint` deben coincidir con los que tienen a la casa en su
-   tabla cruda de lenders, en los que se haya comprado esa tabla.
+1. **gasto previsto == gasto del ledger**. Si no, el modelo de costo cambió.
+2. **ningún realtor por encima de 2 créditos.**
+3. **ningún match inventado**: los no resueltos están marcados y con sus
+   candidatos guardados.
+4. **dos caminos al mismo hecho coinciden**: los marcados con la casa por
+   `footprint` tienen que aparecer con la casa en su tabla cruda de lenders,
+   en aquellos donde se haya comprado esa tabla.
+5. **ningún porcentaje de la API usado sin contrastar** contra un caso cuya
+   respuesta se conozca por otra vía.
 
 ### Resultado de referencia
 
-Un lote de 298 realtors dio: 273 identificados (189 por correo, 51 por nombre
-confirmado con teléfono), 50 a revisión manual, **445 créditos**, media 1,49
-por realtor, y el ledger confirmó el modelo al crédito.
+298 realtors → 273 identificados (189 por correo, 51 por teléfono), 50 a
+revisión, **445 créditos**, media 1,49. El ledger confirmó el modelo al
+crédito.
 
 ---
 
-## 7 · Lo prohibido
+## 7 · Lo que NO sale de Model Match
 
-- **`enrichProperty` / `enrichPropertiesBatch` / `enrichPropertiesBulk`.** Es
-  skip-trace del dueño de la propiedad: nombre, teléfono y correo de un
-  consumidor, para un prestamista. 10 créditos por match. El cliente revienta
-  antes de salir a la red si la ruta lo menciona.
-- **Paginar sin pedirlo.** Seguir el cursor multiplica el costo en silencio.
-- **Los filtros de tract de `/v1/market`** —`minorityTractPct`,
-  `majorityMinorityTract`, `lowModIncomeTract`— para **elegir** a quién
-  contactar. Segmentar por el porcentaje de minoría del tract es redlining y
-  es exposición de fair lending. Sirven para medir nuestra cobertura, nunca
-  para elegir.
-- **Nombres de realtors en el código o en los docstrings**, ni como ejemplo:
-  este repo es público. El agente de prueba se busca en `data/`, que está
-  fuera de git.
+Para que nadie lo busque ahí:
+
+- **Instagram** — es scraper propio.
+- **Idioma, apellido, origen** — no están, y es correcto que no estén. Esas
+  señales salen de Instagram y del modelo de scoring.
+- **Antigüedad en la industria del realtor** — no existe el campo. El rodeo:
+  pedir producción en un año viejo (`period: "2024"`, `units {gte:1}`), que
+  además es más duro, porque exige que estuviera produciendo.
+- **Las operaciones una por una con su tipo de préstamo y monto** — la
+  pestaña Transactions se sigue pegando a mano.
