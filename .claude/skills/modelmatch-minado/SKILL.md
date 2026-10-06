@@ -155,16 +155,33 @@ con el mismo nombre y apellido en otros estados.
 
 Normalizar = minúsculas, sin tildes, sin puntuación, espacios colapsados.
 
-| orden | criterio | se anota como | confianza |
+| orden | criterio | se anota como | ¿se elige candidato? |
 |---|---|---|---|
-| 1 | alguno de **nuestros correos** está en el campo `email` del candidato (que trae **varios separados por `;`**) | `email_exacto` | alta |
-| 2 | el correo coincide en **más de un** candidato (perfiles duplicados) → gana el de mayor `volume` | `email_exacto_varios_perfiles` | alta |
-| 3 | `fullName` normalizado idéntico **y** `state` igual al nuestro, y **solo uno** cumple | `nombre_exacto_y_estado` | media |
-| 4 | nada de lo anterior | `nombre_exacto_sin_estado`, `ambiguo` o `sin_candidatos` | **ninguna** |
+| 1 | alguno de **nuestros correos** está en el campo `email` del candidato (que trae **varios separados por `;`**) | `email_exacto` | sí, ése |
+| 2 | el correo coincide en **más de un** candidato (perfiles duplicados) | `email_exacto_varios_perfiles` | sí, **el de mayor `volume`** |
+| 3 | `fullName` normalizado idéntico **y** `state` igual al nuestro, y **solo uno** cumple | `nombre_exacto_y_estado` | sí, ése |
+| 4 | varios cumplen nombre **y** estado | `nombre_y_estado_varios` | sí, **el de mayor `volume`** |
+| 5 | `fullName` idéntico pero **ninguno** en nuestro estado, y hay exactamente uno | `nombre_exacto_sin_estado` | sí, ése |
+| 6 | había candidatos y ninguno encaja | `ambiguo` | **no** |
+| 7 | la búsqueda no devolvió nada | `sin_candidatos` | **no** |
 
-**En el caso 4 NO se elige a nadie y NO se gasta ni un crédito.** Se guardan
-los candidatos con su nombre, brokerage, ciudad, estado y correo para que una
-persona decida.
+**Dos grupos, y la diferencia es si se gasta:**
+
+- **Casos 1 a 5 → se compra UNA ficha** (paso 2), la del candidato elegido.
+  **Una sola, nunca varias**, aunque haya tres homónimos: el tope es por
+  realtor, no por candidato. Los casos 4 y 5 son identificaciones flojas, y
+  por eso la ficha sirve para algo más que traer datos — el teléfono que
+  devuelve es lo que las confirma o las refuta en el paso 3.
+- **Casos 6 y 7 → NO se elige a nadie y NO se gasta ni un crédito.** Se
+  guardan los candidatos con su nombre, brokerage, ciudad, estado y correo
+  para que una persona decida.
+
+**Desempate del `volume`:** si dos candidatos empatan, gana el que la búsqueda
+devolvió primero.
+
+> El valor `ninguna` existe dentro del código como confianza intermedia de los
+> casos 6 y 7, pero **nunca llega a la columna `Confianza`**: ahí esos casos
+> se escriben `no encontrado`. No usarlo.
 
 ### Paso 2 · La ficha — 1 crédito
 
@@ -234,6 +251,8 @@ POST /v1/agents/count
 2026-09-25; el espejo ejecutable está en `modelmatch/everett.py`, lista
 `CASA`, y si los dos difieren manda este manual hasta que alguien decida):
 
+El bloque es copiable tal cual: **un id por línea, sin comentarios dentro.**
+
 ```
 everett_financial
 everett_financial_texas
@@ -241,22 +260,33 @@ everett_financial_incdba_lending_supreme
 dba_everett_financial_financial_supr
 dba_everett_financial_lending_spureme
 dba_everett_finance_lending_supreme
-dba_evertt_financial_lending_supreme     ← «Evertt»: el typo es de la fuente
+dba_evertt_financial_lending_supreme
 dba_everett_financial_superme
 dba_dupreme_everett_financial_lending
 ```
+
+El séptimo lleva **«Evertt»** mal escrito: el typo es de la fuente, no de este
+manual. Copiarlo así.
 
 **Y los que NO son la casa, aunque el nombre se parezca.** Agregarlos
 excluiría gente con la que sí se puede trabajar:
 
 ```
-everett_mutual_savings              banco de la ciudad de Everett
-bank_cooperative_everett            Everett Co-operative Bank, NMLS 443050
-everette_f_gary                     una PERSONA apellidada Everette
-lending_mortgage_supreme            Supreme Mortgage Lending Inc., NMLS 2371076
-funding_supreme · credit_supreme · lending_supreme_team
+everett_mutual_savings
+bank_cooperative_everett
+everette_f_gary
+lending_mortgage_supreme
+funding_supreme
+credit_supreme
+lending_supreme_team
 lending_mortgage_solutions_supreme
 ```
+
+Qué es cada uno, por si alguien duda: los dos primeros son bancos de la
+**ciudad** de Everett (el segundo es Everett Co-operative Bank, NMLS 443050);
+`everette_f_gary` es una **persona** apellidada Everette; y los cinco de
+`supreme` son otras empresas, entre ellas Supreme Mortgage Lending Inc.,
+NMLS 2371076.
 - **`period` = `allTime`, no `last24Months`.** Con 24 meses dan 28 realtors y
   con el historial completo dan 79. Para una exclusión, una operación de hace
   tres años sigue contando.
@@ -277,8 +307,8 @@ POST /v1/agents/{mm_id}/breakdowns/originators
 {}
 ```
 
-**Pedir SOLO si `totalOriginatorsWorkedWith ≤ (2 − gastado)`.** Si no cabe, la
-celda lleva el centinela de la sección 4·C, con su texto exacto.
+**Se pide según LA REGLA ÚNICA de abajo, no según ninguna otra condición.** Si
+no cabe, la celda lleva el centinela de la sección 4·C, con su texto exacto.
 
 ⛔ **NO se puede pedir solo la primera fila. Medido.** Se mandó
 `pagination: {size: 1}` con `sort` por unidades: **no lo rechazó, lo ignoró** —
@@ -303,20 +333,25 @@ Hay tres rutas posibles, todas `POST` con cuerpo `{}`:
 **Con tope 2 y la ficha ya pagada queda 1 crédito, así que cabe como mucho un
 breakdown de 1 fila.** El orden de prioridad es fijo y no se negocia:
 
-**La condición es una sola, y es la misma para los dos:** se pide un
-breakdown si `totalXWorkedWith ≤ (TOPE − gastado)` **y** `> 0`. Con tope 2 y
-la ficha pagada, eso equivale a `== 1`. Si mañana el tope sube, la regla sigue
-valiendo sin reescribirla.
+**LA REGLA, ÚNICA.** Se recorren en este orden fijo —**`originators`, después
+`lenders`**— y de cada uno se pide si, y solo si:
 
-1. **`originators`** primero — da `Su loan officer principal`, que es el
-   nombre contra el que se compite.
-2. **`lenders`** después, **solo con lo que sobre**: si el de originadores se
-   pidió, ya no sobra nada bajo tope 2. En la práctica se pide solo cuando
-   `totalOriginatorsWorkedWith` es 0 y `totalLendersWorkedWith` es 1.
-3. **`companies`** — **nunca en el minado estándar.** No produce ninguna de
-   las 47 columnas.
+```
+0 < totalXWorkedWith ≤ (TOPE − gastado hasta ahora)
+```
 
-**Se pide como mucho uno por realtor.** Nunca los dos.
+El presupuesto se descuenta a medida que se compra, así que bajo tope 2 (con
+la ficha ya pagada queda 1) **se compra como mucho UNO**, y es el de
+originadores siempre que quepa. No hay excepciones ni casos «en la práctica»:
+se aplica la fórmula.
+
+`originators` va primero porque da `Su loan officer principal`, que es el
+nombre contra el que se compite. **`companies` no se pide nunca**: no produce
+ninguna de las 47 columnas.
+
+**Qué pasa cuando `totalXWorkedWith` es 0:** no se pide (lo excluye el `> 0`)
+y la celda correspondiente queda **vacía**, no lleva centinela. El centinela
+dice «no cupo»; aquí no es que no cupo, es que no hay nada que traer.
 
 Si no cabe ninguno, las columnas `Lenders (si cupo en el tope)` y
 `Originadores (si cupo)` llevan el centinela, con este formato **exacto**:
@@ -325,8 +360,10 @@ Si no cabe ninguno, las columnas `Lenders (si cupo en el tope)` y
 no consultado · <N> filas y quedaban <K> creditos del tope
 ```
 
-(`creditos` sin acento y `del tope` al final: es el texto que ya está en el
-archivo y que el scoring reconoce.)
+donde **`N` = el `totalXWorkedWith` de la ficha** (las filas que habría
+traído) y **`K` = TOPE − gastado hasta ese momento** (lo que quedaba).
+`creditos` va **sin acento** y `del tope` al final: es el texto que ya está en
+el archivo y que el scoring reconoce.
 
 ---
 
@@ -397,8 +434,15 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `¿Teléfono coincide?` | `"si"` / `"no"` / `"sin_dato"` |
 | `Candidatos vistos` | cuántos `id` distintos devolvió la búsqueda |
 | `¿Cambió de casa?` | `"si"` / `"no"` / `"sin_dato"` |
-| `Nº emails` | cuántos correos distintos trae Model Match — el largo de `Emails en Model Match`. **No** es «cuántos son nuevos respecto de los nuestros» |
+| `Nº emails` | cuántos correos distintos trae Model Match — el largo de `Emails en Model Match`. Vacía si no se identificó |
 | `Nº teléfonos` | ídem con `Teléfonos en Model Match` |
+
+> ⚠ **Discrepancia conocida con otra skill.** La de las 113 columnas describe
+> estas dos como «conteos solo de Model Match», que puede leerse como
+> «cuántos son nuevos respecto de los nuestros». **No es eso**: el código
+> cuenta todos los que trae Model Match, coincidan o no con los nuestros.
+> Manda esta definición, que es la que produce el archivo. La otra skill hay
+> que corregirla desde los ajustes de la cuenta.
 | `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en la sección 4·E** |
 | `% por su LO principal` | unidades del LO top ÷ **suma de las unidades de todos sus LOs**. ⚠ **NO usar el `pctUnits` de la API**: su denominador no son las operaciones del agente y llega a dar 167 % |
 | `Créditos gastados` | el acumulado real del realtor. Entero |
@@ -408,7 +452,7 @@ traduce, no se le quitan acentos ni el `⚠`.
 
 Estas columnas **solo** pueden tomar estos valores. Nada más.
 
-**`Confianza`**
+**`Confianza`** — estos seis y ninguno más
 
 ```
 alta
@@ -416,7 +460,6 @@ alta · confirmada por teléfono
 contradicha por el teléfono
 media
 baja
-ninguna
 no encontrado
 ```
 
@@ -525,8 +568,10 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 
 | situación | columna | valor |
 |---|---|---|
-| no se pidió ningún breakdown | `Su loan officer principal` | **vacía** |
-| no se pidió ningún breakdown | `% por su LO principal` | **vacía** |
+| no se pidió el de **originadores** — por no caber, o por ser 0, o porque se compró el de lenders en su lugar | `Su loan officer principal` | **vacía** |
+| ídem | `% por su LO principal` | **vacía** |
+| `Nº originadores` = 0 | `Originadores (si cupo)` | **vacía**, sin centinela |
+| `Nº lenders` = 0 | `Lenders (si cupo en el tope)` | **vacía**, sin centinela |
 | `¿Ya financia con la casa?` = `no` | `Operaciones con la casa (al menos)` | **vacía** |
 | la casa da `SÍ` pero el tramo N = 2 da 0 | `Operaciones con la casa (al menos)` | `1` |
 | `Nº originadores` = 1 y se compró el breakdown | `% por su LO principal` | `100` |
@@ -558,7 +603,10 @@ deja de ser comparable.
 
 ### H · Formato de los números
 
-- Los importes y las unidades van **tal cual los devuelve la API**, enteros.
+- Los importes y las unidades van **tal cual los devuelve la API, sin
+  redondear ni convertir**. Si devuelve un decimal —pasa con `Precio medio` y
+  `Loan medio de sus compradores`— se guarda el decimal. Lo que no se hace
+  nunca es inventar precisión ni recortarla.
 - `% unidades financiadas` y `% volumen financiado`: **un decimal**.
 - `% por su LO principal`: **entero**.
 - **Vacío no es `0`.** Vacío = no se sabe; `0` = se sabe que es cero.

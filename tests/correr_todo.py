@@ -61,6 +61,8 @@ SUITES = [
      "la compuerta de perfil de Instagram y las ocho correcciones"),
     ("ig_senales", "tests.test_ig_senales",
      "qualifiers con ancla, idioma separado, S6 por token y ECOA"),
+    ("manual_casos", "tests.test_manual_casos",
+     "los 13 casos del manual de minado, contra el codigo real"),
 ]
 
 

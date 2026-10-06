@@ -45,9 +45,14 @@ SALIDA = os.path.join(TRABAJO, "mm_por_realtor")
 TOPE_POR_REALTOR = 5
 #: Orden de valor de los breakdowns: quien lo financia primero, porque es lo
 #: que decide la exclusion por no-canibalizacion y lo que se usa en el pitch.
-BREAKDOWNS = (("lenders", "totalLendersWorkedWith"),
-              ("originators", "totalOriginatorsWorkedWith"),
-              ("companies", "totalCompaniesWorkedWith"))
+#: ORIGINADORES PRIMERO. El orden decide cual se compra cuando solo cabe uno,
+#: y el que cambia una decision comercial es el loan officer: es el nombre
+#: contra el que se compite. Antes iba `lenders` primero por el orden en que
+#: se escribio la tupla, sin que nadie lo hubiera decidido.
+#:
+#: `companies` NO se pide: no produce ninguna de las 47 columnas aprobadas.
+BREAKDOWNS = (("originators", "totalOriginatorsWorkedWith"),
+              ("lenders", "totalLendersWorkedWith"))
 
 
 def normalizar(s) -> str:
