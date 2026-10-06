@@ -213,7 +213,14 @@ Con la ficha ya pagada, sin llamadas nuevas:
 2. si no, y el teléfono coincide → `alta · confirmada por teléfono`.
 3. si no, y el teléfono **no** coincide → `contradicha por el teléfono`,
    aunque el nombre y el estado calcen. Es la señal de que son dos personas.
-4. si no hay teléfono para comparar → se queda con la confianza del paso 1.
+4. si **no hay teléfono para comparar**, la confianza depende del caso del
+   paso 1: **caso 3 → `media`**; **casos 4 y 5 → `baja`**, y además llevan
+   `identificado solo por nombre, sin confirmar con correo ni teléfono` en la
+   columna de revisión.
+
+**«No hay teléfono para comparar»** es cualquiera de las tres: que nosotros no
+tengamos ninguno, que Model Match no devuelva ninguno, o las dos. En los tres
+casos `¿Teléfono coincide?` va `sin_dato`.
 
 ### Paso 4 · Banderas y exclusión — 0 créditos
 
@@ -420,33 +427,34 @@ traduce, no se le quitan acentos ni el `⚠`.
 | columna | cómo |
 |---|---|
 | `Su loan officer principal` | del breakdown de originadores, el `label` de la fila con **más `units`** (no la primera que devuelve la API) |
-| `Lenders (si cupo en el tope)` | `"<label> (<units> u)"` unidos con `" · "`; si no se pidió, el centinela exacto: `no consultado · <N> filas y quedaban <K> creditos del tope` |
-| `Originadores (si cupo)` | ídem con originadores |
+| `Lenders (si cupo en el tope)` | `"<label> (<units> u)"` unidos con `" · "`. Si **no cupo**, el centinela exacto: `no consultado · <N> filas y quedaban <K> creditos del tope`. Si `Nº lenders` es **0**, la celda va **vacía, sin centinela** |
+| `Originadores (si cupo)` | ídem con originadores: centinela si no cupo, **vacía** si `Nº originadores` es 0 |
 
 ### D · Calculadas — 13 columnas, 0 créditos
 
 | columna | cómo |
 |---|---|
-| `¿En Model Match?` | `"sí"` si el paso 1 resolvió, si no `"NO"` |
+| `¿En Model Match?` | `sí` en los casos 1 a 5 del paso 1; `NO` en los casos 6 y 7 |
 | `Cómo se identificó` | el criterio del paso 1, textual |
 | `Confianza` | la regla del paso 3 |
-| `⚠ Revisar porque…` | el motivo concreto; **vacío** si el match es confiable |
-| `¿Teléfono coincide?` | `"si"` / `"no"` / `"sin_dato"` |
+| `⚠ Revisar porque…` | uno de los tres textos de 4·E; **vacía** si el match es confiable |
+| `¿Teléfono coincide?` | `si` / `no` / `sin_dato` |
 | `Candidatos vistos` | cuántos `id` distintos devolvió la búsqueda |
-| `¿Cambió de casa?` | `"si"` / `"no"` / `"sin_dato"` |
+| `¿Cambió de casa?` | `si` / `no` / `sin_dato` |
 | `Nº emails` | cuántos correos distintos trae Model Match — el largo de `Emails en Model Match`. Vacía si no se identificó |
 | `Nº teléfonos` | ídem con `Teléfonos en Model Match` |
-
-> ⚠ **Discrepancia conocida con otra skill.** La de las 113 columnas describe
-> estas dos como «conteos solo de Model Match», que puede leerse como
-> «cuántos son nuevos respecto de los nuestros». **No es eso**: el código
-> cuenta todos los que trae Model Match, coincidan o no con los nuestros.
-> Manda esta definición, que es la que produce el archivo. La otra skill hay
-> que corregirla desde los ajustes de la cuenta.
-| `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en la sección 4·E** |
+| `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en 4·E** |
 | `% por su LO principal` | unidades del LO top ÷ **suma de las unidades de todos sus LOs**. ⚠ **NO usar el `pctUnits` de la API**: su denominador no son las operaciones del agente y llega a dar 167 % |
 | `Créditos gastados` | el acumulado real del realtor. Entero |
 | `Consultado` | ISO 8601 con zona UTC, p. ej. `2026-09-24T20:59:16.308783+00:00` |
+
+> ⚠ **Discrepancia conocida con otra skill, sobre `Nº emails` y
+> `Nº teléfonos`.** La de las 113 columnas las describe como «conteos solo de
+> Model Match», que puede leerse como «cuántos son nuevos respecto de los
+> nuestros». **No es eso**: el código cuenta todos los que trae Model Match,
+> coincidan o no con los nuestros. Manda esta definición, que es la que
+> produce el archivo. La otra skill hay que corregirla desde los ajustes de
+> la cuenta.
 
 ### E · Vocabularios cerrados — copiar carácter a carácter
 
@@ -535,12 +543,9 @@ Esta tabla cubre **todos** los casos posibles. No hay más.
 | hubo candidatos y ninguno convenció | `ambiguo` | `no encontrado` | `no se encontró en Model Match` |
 | la búsqueda no devolvió nada | `sin_candidatos` | `no encontrado` | `no se encontró en Model Match` |
 
-**Las dos reglas que se leen de la tabla:**
-
-- un match por **correo** nunca va a revisión, aunque el teléfono difiera;
-- `ninguna` es un valor que el vocabulario admite pero que **ninguna fila
-  produce**: aparecería solo si se eligiera un candidato sin criterio, cosa
-  que este manual prohíbe.
+**La regla que se lee de la tabla:** un match por **correo** nunca va a
+revisión, aunque el teléfono difiera. Model Match suele tener el de la oficina
+y nosotros el celular.
 
 ### F · Qué escribir cuando el realtor NO se identifica
 
@@ -684,7 +689,8 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 | seguir el `cursor` | multiplica el costo en silencio |
 | `POST /v1/agents` para un agente concreto | cuesta lo mismo que la ficha y trae menos |
 | `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 47 columnas aprobadas |
-| breakdowns de `lenders`, `companies`, `counties` sin que quepan en el tope | 1 por fila |
+| el breakdown de `companies` | **nunca**, quepa o no: no produce ninguna de las 47 columnas |
+| los breakdowns de `lenders` y `counties` sin que quepan en el tope | 1 por fila |
 | los filtros de tract de `/v1/market` para **elegir** a quién contactar | `minorityTractPct`, `majorityMinorityTract`, `lowModIncomeTract`: segmentar por ahí es redlining y es exposición de fair lending |
 
 ---
@@ -733,7 +739,7 @@ quepan). Si da mucho más, algo se está pidiendo que no está acá.
 | los candidatos de los no resueltos | dentro del registro del realtor, clave `candidatos`, con nombre, brokerage, ciudad, estado y correo de cada uno |
 | las tablas crudas de lenders y originadores | dentro del registro, claves `mm_lenders` y `mm_originators` |
 | la hoja de los que hay que revisar a mano | hoja *Revisar* del Excel, con los candidatos en una celda |
-| las tablas largas, una fila por relación | hojas *Lenders*, *Originadores* y *Companias* |
+| las tablas largas, una fila por relación | hojas *Lenders* y *Originadores*. La hoja *Companias* existe en el libro pero **queda siempre vacía**: ese breakdown no se pide |
 
 **Nada de esto se versiona**: lleva nombre, correo y teléfono de personas
 reales y el repo es público. `data/` está en el `.gitignore`.

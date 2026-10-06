@@ -153,6 +153,43 @@ def main() -> None:
           % (n_mm, n_calc, n_mm + n_calc))
 
     print("")
+    print("── 3 bis · tablas partidas ──")
+    # Una tabla markdown se corta con la primera linea que no empieza por `|`.
+    # Si despues de ese corte vuelven filas `|`, la tabla quedo en dos y las
+    # de abajo son invisibles para quien la lea entera. Paso de verdad: un
+    # aviso insertado en medio de la tabla D dejo cuatro columnas sueltas.
+    lineas = texto.splitlines()
+    en_tabla = False
+    corte = None
+    for i, l in enumerate(lineas, 1):
+        es_fila = l.startswith("|")
+        if es_fila and not en_tabla:
+            en_tabla, corte = True, None
+        elif not es_fila and en_tabla:
+            if l.strip() == "":
+                en_tabla = False          # fin normal de la tabla
+            else:
+                corte = i                 # texto pegado: sospechoso
+        elif es_fila and corte:
+            fallos.append("tabla partida: la linea %d corta una tabla y en la "
+                          "%d vuelven las filas" % (corte, i))
+            corte = None
+    print("   revisadas %d lineas" % len(lineas))
+
+    print("")
+    print("── 3 ter · referencias internas que apunten a algo ──")
+    import re as _re
+    secciones = set(_re.findall(r"^#{2,4} ([^\n]+)$", texto, _re.M))
+    pasos = set(_re.findall(r"^### Paso (\d+)", texto, _re.M))
+    for ref in sorted(set(_re.findall(r"(?:secci[óo]n|tabla) (\d+·[A-Z]|[A-Z] bis|[A-Z] ter)", texto))):
+        if not any(ref.split("·")[-1] in s for s in secciones):
+            fallos.append("referencia a una seccion que no existe: %s" % ref)
+    for ref in sorted(set(_re.findall(r"paso (\d+)", texto))):
+        if ref not in pasos:
+            fallos.append("referencia al paso %s, que no existe" % ref)
+    print("   %d secciones y %d pasos reales" % (len(secciones), len(pasos)))
+
+    print("")
     print("── 4 · cada caso de identificacion tiene sus tres textos ──")
     # Cada criterio tiene que aparecer en una fila de la tabla E bis, o sea
     # en la misma linea que una Confianza valida.
