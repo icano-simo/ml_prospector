@@ -44,11 +44,51 @@ def todas(tabla: str, consulta: str, paso: int = 1000) -> list[dict]:
         desde += paso
 
 
+#: De donde sale «quien tiene Instagram».
+#:
+#: Por defecto, de Supabase. Pero el scraper guarda su CSV mucho antes de que
+#: alguien corra la carga a la base, y mientras tanto esos realtors SI tienen
+#: Instagram raspado aunque la base no lo sepa. Con `--desde-csv` se toma de
+#: ahi, que es LECTURA de un archivo local: no escribe en produccion y no
+#: obliga a esperar la carga para poder minar.
+DESDE_CSV = "--desde-csv" in sys.argv
+CSV_IG = os.path.join(RAIZ, "realtor_scraper", "output", "ig_signals.csv")
+
 print("── handles de Instagram ──")
-ig = todas("v_ig_senales_current",
-           "?select=realtor_id,handle,estado_perfil,handle_confianza")
-con_handle = {f["realtor_id"]: f for f in ig if (f.get("handle") or "").strip()}
-print("   filas en la vista: %d · con handle: %d" % (len(ig), len(con_handle)))
+if DESDE_CSV:
+    import csv
+
+    with open(CSV_IG, encoding="utf-8-sig", newline="") as fh:
+        filas_csv = list(csv.DictReader(fh))
+    print("   fuente: %s · %d filas"
+          % (os.path.relpath(CSV_IG, RAIZ), len(filas_csv)))
+    # El CSV no trae realtor_id: se cruza por correo, que es la llave dura.
+    por_correo = {}
+    for r in todas("realtors", "?select=id,email_principal"):
+        c = (r.get("email_principal") or "").strip().lower()
+        if c:
+            por_correo[c] = r["id"]
+    con_handle = {}
+    sin_cruce = 0
+    for f in filas_csv:
+        c = (f.get("email") or "").strip().lower()
+        rid = por_correo.get(c)
+        if not rid or not (f.get("handle") or "").strip():
+            sin_cruce += 1
+            continue
+        con_handle[rid] = {
+            "realtor_id": rid, "handle": f.get("handle"),
+            "estado_perfil": f.get("estado_perfil"),
+            "handle_confianza": f.get("handle_confianza")}
+    print("   cruzaron con un realtor: %d · sin cruce: %d"
+          % (len(con_handle), sin_cruce))
+else:
+    ig = todas("v_ig_senales_current",
+               "?select=realtor_id,handle,estado_perfil,handle_confianza")
+    con_handle = {f["realtor_id"]: f for f in ig
+                  if (f.get("handle") or "").strip()}
+    print("   filas en la vista: %d · con handle: %d"
+          % (len(ig), len(con_handle)))
 
 print("── clase del perfil ──")
 clases = {f["realtor_id"]: f for f in

@@ -337,15 +337,23 @@ def cargar() -> list[dict]:
     for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
         with open(a, encoding="utf-8") as fh:
             f = json.load(fh)
-        f["trabaja_con_la_casa"] = (
-            "sin comprobar" if not f.get("mm_id")
-            else ("SÍ" if f["mm_id"] in con_la_casa else "no"))
-        f["ops_con_la_casa"] = (peso.get(f.get("mm_id") or "") or {}).get(
-            "al_menos") or ("" if f["trabaja_con_la_casa"] != "SÍ" else None)
-        for nombre, clave in TIPOS:
-            f["hace_%s" % nombre] = (
-                "sin comprobar" if not (f.get("mm_id") and mix)
-                else ("sí" if f["mm_id"] in mix.get(clave, ()) else "no"))
+        # El registro del realtor manda sobre los archivos sueltos. `paso4.py`
+        # escribe ahi el resultado del conteo, que es el metodo del manual y
+        # cuesta 0; los archivos laterales son del metodo viejo, con lista
+        # paga. Donde estan los dos, se comprobo que coinciden exacto (79 =
+        # 79), asi que preferir el registro no cambia ningun valor: cambia de
+        # donde viene, y deja de haber dos fuentes para el mismo dato.
+        if not f.get("paso4_en"):
+            f["trabaja_con_la_casa"] = (
+                "sin comprobar" if not f.get("mm_id")
+                else ("SÍ" if f["mm_id"] in con_la_casa else "no"))
+            f["ops_con_la_casa"] = (
+                (peso.get(f.get("mm_id") or "") or {}).get("al_menos")
+                or ("" if f["trabaja_con_la_casa"] != "SÍ" else None))
+            for nombre, clave in TIPOS:
+                f["hace_%s" % nombre] = (
+                    "sin comprobar" if not (f.get("mm_id") and mix)
+                    else ("sí" if f["mm_id"] in mix.get(clave, ()) else "no"))
         f.update(ig.get(f.get("realtor_id") or "") or {})
         filas.append(f)
     return filas
