@@ -1,16 +1,31 @@
 ---
 name: modelmatch-minado
-description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 34 columnas aprobadas, el payload exacto de cada llamada, la transformación de cada campo, el tope de 2 créditos por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
+description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 47 columnas aprobadas (34 de la API y 13 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 2 créditos por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
 ---
 
 # Minado de Model Match — manual operativo
 
 **Regla cero: si una llamada no está en este manual, no se hace.** Cada
 llamada cuesta dinero y cada campo de más es un campo que alguien va a leer
-mal. Lo aprobado son **34 columnas**, y están listadas una por una.
+mal.
 
-**Tope: 2 créditos por realtor.** Con este procedimiento el gasto real es
-**1** en el 97 % de los casos.
+**Lo aprobado son 47 columnas**: **34 salen de la API** (26 de la ficha, 8 de
+consultas aparte) y **13 se calculan** a partir de ellas sin gastar nada.
+Están listadas una por una en la sección 4. En el archivo de 113 columnas
+ocupan de la 4 a la 56; las demás son de nuestra base y de Instagram, y no se
+le piden a nadie.
+
+**Tope: 2 créditos por realtor.**
+
+> ⚠ **Los textos de las columnas de vocabulario cerrado son exactos, y el
+> scoring filtra por igualdad.** Escribir `alta, confirmada por teléfono` en
+> vez de `alta · confirmada por teléfono` no es un matiz de estilo: deja fuera
+> a 51 realtors. No se reescriben, no se traducen, no se les quita el acento
+> ni el separador `·`.
+>
+> `python modelmatch/verificar_manual.py` comprueba que este manual y el
+> código digan lo mismo carácter a carácter, y falla nombrando el valor que
+> falte. **Correrlo después de tocar cualquiera de los dos.**
 
 ---
 
@@ -213,9 +228,33 @@ POST /v1/agents/count
  "period": "allTime"}
 ```
 
-- Los ids están en `modelmatch/everett.py`, lista `CASA`, **comprobados contra
-  `instant-search`**. Ahí mismo está `NO_ES_LA_CASA`: bancos de la ciudad de
-  Everett y una persona apellidada Everette que **no** son la casa.
+**Los ids de la casa, fijados acá** (comprobados contra `instant-search` el
+2026-09-25; el espejo ejecutable está en `modelmatch/everett.py`, lista
+`CASA`, y si los dos difieren manda este manual hasta que alguien decida):
+
+```
+everett_financial
+everett_financial_texas
+everett_financial_incdba_lending_supreme
+dba_everett_financial_financial_supr
+dba_everett_financial_lending_spureme
+dba_everett_finance_lending_supreme
+dba_evertt_financial_lending_supreme     ← «Evertt»: el typo es de la fuente
+dba_everett_financial_superme
+dba_dupreme_everett_financial_lending
+```
+
+**Y los que NO son la casa, aunque el nombre se parezca.** Agregarlos
+excluiría gente con la que sí se puede trabajar:
+
+```
+everett_mutual_savings              banco de la ciudad de Everett
+bank_cooperative_everett            Everett Co-operative Bank, NMLS 443050
+everette_f_gary                     una PERSONA apellidada Everette
+lending_mortgage_supreme            Supreme Mortgage Lending Inc., NMLS 2371076
+funding_supreme · credit_supreme · lending_supreme_team
+lending_mortgage_solutions_supreme
+```
 - **`period` = `allTime`, no `last24Months`.** Con 24 meses dan 28 realtors y
   con el historial completo dan 79. Para una exclusión, una operación de hace
   tres años sigue contando.
@@ -248,6 +287,36 @@ nosotros manda **unidades**: lo que cuenta es a cuántos clientes les presentó
 un prestamista, no cuán caras eran las casas. En un caso real el primero por
 volumen tenía 2 operaciones y el segundo 4. **Reordenar por `units` antes de
 tomar el principal.**
+
+#### Los tres breakdowns y su prioridad dentro del tope
+
+Hay tres rutas posibles, todas `POST` con cuerpo `{}`:
+
+```
+/v1/agents/{mm_id}/breakdowns/originators
+/v1/agents/{mm_id}/breakdowns/lenders
+/v1/agents/{mm_id}/breakdowns/companies
+```
+
+**Con tope 2 y la ficha ya pagada queda 1 crédito, así que cabe como mucho un
+breakdown de 1 fila.** El orden de prioridad es fijo y no se negocia:
+
+1. **`originators`** — da `Su loan officer principal`, que es el nombre
+   contra el que se compite. Pedirlo solo si `totalOriginatorsWorkedWith == 1`.
+2. **`lenders`** — solo si el de originadores no se pidió (porque el agente
+   tenía 0 LOs) **y** `totalLendersWorkedWith == 1`.
+3. **`companies`** — **no se pide en el minado estándar.** No produce ninguna
+   de las 47 columnas.
+
+Si no cabe ninguno, las columnas `Lenders (si cupo en el tope)` y
+`Originadores (si cupo)` llevan el centinela, con este formato **exacto**:
+
+```
+no consultado · <N> filas y quedaban <K> creditos del tope
+```
+
+(`creditos` sin acento y `del tope` al final: es el texto que ya está en el
+archivo y que el scoring reconoce.)
 
 ---
 
@@ -320,8 +389,113 @@ tercera fila de la tabla** — no se renombra.
 | `Nº emails` · `Nº teléfonos` | el largo de cada lista |
 | `¿Fidelizado con un LO?` | tramos de `Nº originadores`: 1 = `CAUTIVO · 1 solo LO`; 2-3 = `muy concentrado`; 4-6 = `concentrado`; 7-12 = `reparte`; 13+ = `reparte mucho` |
 | `% por su LO principal` | unidades del LO top ÷ **suma de las unidades de todos sus LOs**. ⚠ **NO usar el `pctUnits` de la API**: su denominador no son las operaciones del agente y llega a dar 167 % |
-| `Créditos gastados` | el acumulado real del realtor |
-| `Consultado` | sello de tiempo UTC |
+| `Créditos gastados` | el acumulado real del realtor. Entero |
+| `Consultado` | ISO 8601 con zona UTC, p. ej. `2026-09-24T20:59:16.308783+00:00` |
+
+### E · Vocabularios cerrados — copiar carácter a carácter
+
+Estas columnas **solo** pueden tomar estos valores. Nada más.
+
+**`Confianza`**
+
+```
+alta
+alta · confirmada por teléfono
+contradicha por el teléfono
+media
+baja
+ninguna
+no encontrado
+```
+
+**`Cómo se identificó`**
+
+```
+email_exacto
+email_exacto_varios_perfiles
+nombre_exacto_y_estado
+nombre_y_estado_varios
+nombre_exacto_sin_estado
+ambiguo
+sin_candidatos
+```
+
+**`⚠ Revisar porque…`** — vacío cuando el match es confiable, o uno de:
+
+```
+no se encontró en Model Match
+identificado solo por nombre y el teléfono NO coincide: puede ser otra persona con el mismo nombre
+identificado solo por nombre, sin confirmar con correo ni teléfono
+```
+
+**`¿Fidelizado con un LO?`** — según `Nº originadores`
+
+```
+sin operaciones financiadas atribuidas   (n = 0)
+CAUTIVO · 1 solo LO                      (n = 1)
+muy concentrado · 2-3 LOs
+concentrado · 4-6 LOs
+reparte · 7-12 LOs
+reparte mucho · 13+ LOs
+```
+
+⚠ **Cero NO es cautivo.** Cero loan officers significa que Model Match no le
+atribuye ninguna operación financiada, no que dependa de uno: es lo contrario
+de un objetivo de desplazamiento. Seis realtors salían como `CAUTIVO · 1 solo
+LO` teniendo n = 0, y eso manda a un comercial a disputarle un LO a alguien
+que no tiene ninguno.
+
+**`¿Teléfono coincide?`** y **`¿Cambió de casa?`** → `si` · `no` · `sin_dato`
+(en minúscula y sin acento, los tres).
+
+**`¿En Model Match?`** → `sí` · `NO`.
+
+**`¿Produce FHA?`**, **`¿Produce convencional?`**, **`¿Produce VA?`** →
+`sí` · `no` · `sin comprobar`.
+
+**`¿Ya financia con la casa?`** → `SÍ` · `no` · `sin comprobar`.
+
+### F · Qué escribir cuando el realtor NO se identifica
+
+**Nunca `no`, nunca `0`.** Un `no` en «¿Produce FHA?» para alguien a quien no
+encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
+
+| columna | valor |
+|---|---|
+| `¿En Model Match?` | `NO` |
+| `Cómo se identificó` | `ambiguo` o `sin_candidatos`, según el caso |
+| `Confianza` | `no encontrado` |
+| `⚠ Revisar porque…` | `no se encontró en Model Match` |
+| las 26 de la ficha | **vacías** |
+| `¿Produce FHA?` · `convencional` · `VA` · `¿Ya financia con la casa?` | `sin comprobar` |
+| `Operaciones con la casa (al menos)` | **vacía** |
+| `Lenders (si cupo en el tope)` · `Originadores (si cupo)` | `no consultado · ` (con el motivo vacío, porque no hubo conteo) |
+| `¿Fidelizado con un LO?` · `Su loan officer principal` · `% por su LO principal` | **vacías** |
+| `Créditos gastados` | `0` |
+
+### G · Ordenamientos y desempates
+
+Sin esto, dos corridas producen el mismo dato en distinto orden y el archivo
+deja de ser comparable.
+
+| qué | regla |
+|---|---|
+| correos | minúsculas, sin repetidos, **orden alfabético**, unidos con `" · "` |
+| teléfonos | solo dígitos, sin repetidos, **orden alfabético de la cadena**, unidos con `" · "` |
+| `Lenders (si cupo)` / `Originadores (si cupo)` | en el orden que devuelve la API (por volumen), `"<label> (<units> u)"` unidos con `" · "` |
+| `Su loan officer principal` | el de **más `units`**; si empatan, el de más `volume`; si vuelven a empatar, el primero que devolvió la API |
+| perfiles duplicados con el mismo correo | gana el de mayor `volume`; si empatan, el primero que devolvió la búsqueda |
+| qué correos se buscan | los **2 primeros en orden alfabético** de los nuestros |
+| `Candidatos vistos` | ids **distintos** sumando todas las búsquedas hechas para ese realtor |
+
+### H · Formato de los números
+
+- Los importes y las unidades van **tal cual los devuelve la API**, enteros.
+- `% unidades financiadas` y `% volumen financiado`: **un decimal**.
+- `% por su LO principal`: **entero**.
+- **Vacío no es `0`.** Vacío = no se sabe; `0` = se sabe que es cero.
+- **Los porcentajes no se recortan a 100.** Si la API devuelve más, se guarda
+  tal cual: el recorte, si hace falta, lo hace el scoring.
 
 ---
 
@@ -355,9 +529,34 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 
 ### Resultado de referencia
 
-298 realtors → 273 identificados (189 por correo, 51 por teléfono), 50 a
-revisión, **445 créditos**, media 1,49. El ledger confirmó el modelo al
-crédito.
+⚠ **La corrida de 298 realtors de septiembre de 2026 NO es el resultado
+esperado de este procedimiento, y no sirve de patrón de gasto.** Se hizo con
+un tope de 5, no de 2, y además siete realtors terminaron entre 6 y 8 porque
+una compra dirigida posterior sumó sin volver a mirar el tope. En ese archivo
+`% por su LO principal` tiene valores como 90, imposibles bajo el tope de 2,
+donde esa columna solo puede valer `100` o quedar vacía.
+
+Lo que sí es comparable de aquella corrida, porque no depende del tope:
+
+| | |
+|---|---|
+| realtors procesados | 298 |
+| identificados | 273 — 189 por correo, 51 confirmados por teléfono |
+| a revisión | 50 |
+| no encontrados | 25 |
+| el ledger confirmó el modelo de costo | 422 previstos, 422 reales |
+
+**Bajo este manual, una corrida de 298 debería costar entre 273 y 300
+créditos** (1 por identificado, más los pocos breakdowns de una fila que
+quepan). Si da mucho más, algo se está pidiendo que no está acá.
+
+### Y una advertencia sobre reproducibilidad
+
+Este manual garantiza **el mismo procedimiento y el mismo formato**, no los
+mismos valores: Model Match actualiza sus datos y un realtor puede cambiar de
+brokerage, cerrar más operaciones o aparecer con otro correo. Dos corridas en
+fechas distintas deben dar las mismas **columnas**, con los mismos textos
+exactos, y pueden dar distintos **números**.
 
 ---
 

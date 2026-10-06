@@ -412,9 +412,15 @@ def preparar(f: dict) -> dict:
                            ("mm_telefonos", "mm_telefonos_txt")):
         d[destino] = " · ".join(f.get(clave) or [])
     n = f.get("mm_originadores_n")
+    # CERO no es CAUTIVO. Cero loan officers significa que Model Match no le
+    # atribuye ninguna operacion financiada, no que dependa de uno: es lo
+    # contrario de un objetivo de desplazamiento. Seis realtors salian como
+    # «CAUTIVO · 1 solo LO» teniendo n=0, y eso manda a un comercial a
+    # disputarle un LO a alguien que no tiene ninguno.
     d["fidelidad"] = (
         "" if not isinstance(n, int) else
-        "CAUTIVO · 1 solo LO" if n <= 1 else
+        "sin operaciones financiadas atribuidas" if n == 0 else
+        "CAUTIVO · 1 solo LO" if n == 1 else
         "muy concentrado · 2-3 LOs" if n <= 3 else
         "concentrado · 4-6 LOs" if n <= 6 else
         "reparte · 7-12 LOs" if n <= 12 else
