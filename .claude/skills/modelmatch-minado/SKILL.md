@@ -319,6 +319,76 @@ Repetir la misma llamada agregando `"units": {"gte": N}` dentro del
 Comprobado contra un caso con 3 operaciones en su tabla cruda: aparece en 1, 2
 y 3 y desaparece en 5.
 
+### Paso 4 bis · Everett con número, programas y producción por año — 0 créditos
+
+Todo esto es `POST /v1/agents/count`, así que **no cobra**, y reemplaza a las
+columnas que antes salían de llamadas por fila.
+
+#### Everett, en dos ventanas y con el número
+
+El `footprint` con lender explícito acepta **las dos cotas en la misma
+llamada**, así que la banda se pide de una:
+
+```json
+{"flatFilters": {"id": "<mm_id>"},
+ "footprint": {"lender": [<ids de Everett>], "units": {"gte": 1, "lt": 10}},
+ "period": "allTime"}
+```
+
+✅ **La cota superior recorta de verdad.** Comprobado contra un realtor con 3
+operaciones conocidas por su tabla cruda: la banda `[3,4)` devuelve 1 y la
+`[4,5)` devuelve 0. Si `lt` se ignorara, **todas** las bandas darían positivo
+y el número sería siempre el de la primera — por eso se comprueba antes de
+correr un lote.
+
+Bandas: 1 · 2 · 3 · 4 · 5-9 · 10-19 · 20-49 · 50+. Finas abajo, gruesas
+arriba: la diferencia entre 2 y 3 operaciones decide, la de 60 a 70 no.
+
+Se pide con `period: "allTime"` **y** con `period: "last12Months"`: una
+relación de hace cuatro años no es la misma cosa que una viva.
+
+#### Programas
+
+```json
+{"flatFilters": {"id": "<mm_id>"},
+ "footprint": {"dimension": "lender",
+               "product": {"mix": "loanType", "key": "fha"}},
+ "period": "last24Months"}
+```
+
+⚠ **Solo el sí/no.** Las **unidades** por programa NO son fiables por esta
+vía: con `dimension: lender` y sin lender fijo se miden **dentro del bucket de
+un lender suelto**, no sobre el agente. Si hace falta el número, hay que
+nombrar el lender: `{"lender": [...], "product": {...}}` sí está bien
+definido («N operaciones FHA financiadas por Everett»).
+
+#### Historical units — producción por año
+
+```json
+{"flatFilters": {"id": "<mm_id>", "buyerUnits": {"gte": 3, "lt": 5}},
+ "period": "2024"}
+```
+
+⛔ **El año en curso NO se pide como año literal.** Está medido: para un
+agente con más de cinco operaciones en `yearToDate`, `period: "2026"` devuelve
+**0**. El bucket del año corriente no está poblado, y pedirlo así hace creer
+que el realtor dejó de producir. **Para el año en curso va `yearToDate`.**
+
+Se piden los años completos desde 2017 —el más viejo del enum— más
+`yearToDate` y `last3Months`.
+
+⛔ **No hay trimestres calendario.** El `period` de agentes no los tiene;
+`last3Months` es un trimestre **móvil**. Los trimestres de verdad solo salen
+de `agentAnalyticsTimeSeries`, que devuelve filas y **cuesta**.
+
+#### Derivados, sin una sola llamada más
+
+- **Primer año con producción** = el más viejo con unidades.
+- **Antigüedad aproximada** = año en curso − primer año + 1.
+- ⚠ **Si el primer año es 2017, la antigüedad está topada**: 2017 es el año
+  más viejo del enum, así que su primera operación puede ser anterior y no hay
+  forma de saberlo desde aquí. Esa fila lleva su propio aviso.
+
 ### Paso 5 · Breakdown de originadores — solo si cabe
 
 ```json
