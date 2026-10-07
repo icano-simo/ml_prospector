@@ -162,6 +162,45 @@ COLUMNAS = [
      "Préstamo promedio de sus operaciones financiadas: en qué banda de "
      "precio piden prestado sus compradores."),
 
+    ("mm_ultima_operacion", "Última operación", 13, FICHA,
+     "Fecha de su última operación cerrada. **Es la única señal de recencia "
+     "que hay**: dice si sigue activo o lleva meses sin cerrar. Viene en la "
+     "ficha y hasta ahora se tiraba."),
+    ("mm_licencias", "Licencias (todas)", 34, FICHA,
+     "Todas sus licencias inmobiliarias con su estado y vencimiento. Un "
+     "agente puede tener varias, de varios estados. Vacío en buena parte de "
+     "la lista: vacío es «no lo sabe», no «no tiene»."),
+    ("mm_estados_licencia", "Estados con licencia", 16, FICHA,
+     "En qué estados está habilitado para operar. Distinto de dónde produce."),
+    ("mm_licencia_vence", "Licencia vence", 13, FICHA,
+     "El vencimiento más próximo. Una fecha cercana puede ser señal de que "
+     "está por dejar la actividad."),
+    ("mm_precio_medio_compras", "Precio medio de sus COMPRAS", 20, CALC,
+     "Volumen comprador ÷ unidades compradoras. Distinto de `Precio medio`, "
+     "que mezcla los dos lados: éste es el precio de las casas que compran "
+     "sus clientes, que es la banda que nos importa."),
+    ("mm_precio_medio_compras_fin", "Precio medio de sus compras financiadas",
+     22, CALC,
+     "Lo mismo, solo sobre las que llevaron hipoteca. Es el precio real de "
+     "quien necesita préstamo."),
+    ("mm_precio_medio_listings", "Precio medio de sus listings", 20, CALC,
+     "Volumen vendedor ÷ unidades vendedoras."),
+    ("mm_total_listado", "Suma de precios de listado", 18, FICHA,
+     "Lo que pidió por todo lo que listó, sumado."),
+    ("mm_venta_vs_listado", "Venta vs listado (%)", 16, CALC,
+     "Precio de venta ÷ precio de listado, en porcentaje. Por debajo de 100 "
+     "vende con descuento sobre lo que pide; por encima, con competencia. "
+     "Dice cómo negocia."),
+    ("mm_ventas_financiadas_v", "Ventas financiadas ($)", 18, FICHA,
+     "Dólares de sus listings cuyo comprador financió. Completa el par con "
+     "las unidades, que ya traíamos."),
+    ("mm_dual_v", "Dual ($)", 12, FICHA,
+     "Dólares de doble agencia."),
+    ("mm_dual_financiadas_u", "Dual financiadas (u)", 16, FICHA,
+     "Operaciones de doble agencia que llevaron hipoteca. Suele ser 0."),
+    ("mm_dual_financiadas_v", "Dual financiadas ($)", 16, FICHA,
+     "Sus dólares. Suele ser 0."),
+
     ("hace_fha", "¿Produce FHA?", 12, APARTE,
      "Tiene al menos una operación FHA en 24 meses. Es un sí/no, NO una "
      "proporción (ver la advertencia en «Cómo leer esto»)."),
@@ -169,17 +208,20 @@ COLUMNAS = [
      "Tiene al menos una operación convencional en 24 meses."),
     ("hace_va", "¿Produce VA?", 11, APARTE,
      "Tiene al menos una operación VA en 24 meses."),
-    ("trabaja_con_la_casa", "¿Ya financia con la casa?", 18, APARTE,
-     "'SÍ' = alguna de sus operaciones se financió con Everett Financial "
-     "(NMLS 2129, que opera como Supreme Lending), en todo el historial. Es "
-     "la exclusión por no-canibalización: ese realtor ya tiene relación con "
-     "la casa."),
-    ("ops_con_la_casa", "Operaciones con la casa (al menos)", 22, APARTE,
-     "Cuántas de sus operaciones financió la casa, medido por tramos: 1, 2, "
-     "3, 5, 10 o 20. Un '1' es una relación suelta y un '10' es una "
-     "relación de verdad, y hasta ahora los dos se veían igual. Está "
-     "comprobado contra un caso testigo que tiene 3 operaciones con la casa "
-     "en su tabla cruda de lenders y cae exactamente en el tramo 3."),
+    ("everett_historico", "¿Trabajó con Everett · histórico?", 20, APARTE,
+     "'SÍ' = alguna de sus operaciones la financió Everett Financial (NMLS "
+     "2129, que opera como Supreme Lending), en **todo el historial**. Es la "
+     "exclusión por no-canibalización."),
+    ("everett_u_historico", "Operaciones con Everett · histórico", 22, APARTE,
+     "Cuántas, en todo el historial. Exacto hasta 4 y por bandas arriba. Un "
+     "'1' es una relación suelta; un '20-49' es una relación de verdad, y "
+     "hasta ahora las dos se veían igual."),
+    ("everett_12m", "¿Trabajó con Everett · 12 meses?", 20, APARTE,
+     "La misma pregunta, **solo en los últimos 12 meses**. Es la que dice si "
+     "la relación está VIVA. De 136 con relación histórica, solo 21 la "
+     "tienen en 12 meses: 115 están excluidos hoy por algo que ya no pasa."),
+    ("everett_u_12m", "Operaciones con Everett · 12 meses", 22, APARTE,
+     "Cuántas en los últimos 12 meses."),
     ("mm_lenders_n", "Nº lenders", 10, FICHA,
      "Con cuántos prestamistas DISTINTOS se financiaron sus operaciones. "
      "Pocos = depende de uno; muchos = reparte."),
@@ -191,26 +233,25 @@ COLUMNAS = [
      "tienen el desglose se comprobó que con 1-3 LOs la concentración media "
      "es del 79 % y con 4 o más baja al 43 %, así que el conteo —que es "
      "gratis— sirve de indicador."),
-    ("lo_principal", "Su loan officer principal", 28, APARTE,
-     "El nombre del LO por el que pasa la mayor parte de sus préstamos. Solo "
-     "está donde se compró el desglose: los de 1-3 LOs, que son los que "
-     "importan para desplazar."),
-    ("lo_principal_pct", "% por su LO principal", 16, CALC,
-     "Qué parte de sus préstamos pasa por ese LO. Se calcula como sus "
-     "unidades sobre la SUMA de todos sus LOs. Ojo: NO se usa el 'pctUnits' "
-     "que devuelve la API, porque su denominador no son las operaciones del "
-     "agente y llega a dar 167 %."),
     ("mm_companias_n", "Nº compañías", 12, FICHA,
      "Con cuántas compañías hipotecarias distintas trató."),
-    ("lenders_txt", "Lenders (si cupo en el tope)", 40, APARTE,
-     "Los prestamistas por nombre, con sus unidades. Solo se pidió donde "
-     "cabía en el tope de 5 créditos: cuesta 1 crédito por prestamista, así "
-     "que en la mayoría dice 'no consultado' y queda el conteo de al lado."),
-    ("originators_txt", "Originadores (si cupo)", 40, APARTE,
-     "Los loan officers por nombre, con la misma limitación."),
+    ("historical_units_txt", "Historical units · por año", 40, APARTE,
+     "Unidades del lado comprador, año por año, desde 2017. Sale de contar, "
+     "que no cobra. El año en curso NO se pide como año literal —devuelve "
+     "0 aunque haya producción— sino como `yearToDate`."),
+    ("primer_anio", "Primer año con producción", 16, CALC,
+     "El año más viejo con unidades. Si dice 2017, está topado: es el año "
+     "más antiguo que acepta la API y su primera operación puede ser anterior."),
+    ("anios_produciendo", "Años con producción", 14, CALC,
+     "En cuántos años distintos cerró al menos una operación."),
+    ("antiguedad_aprox", "Antigüedad aproximada (años)", 18, CALC,
+     "Año en curso − primer año + 1. **Aproximada**: es un piso, no la fecha "
+     "en que empezó. Model Match no tiene antigüedad de agentes; esto se "
+     "deriva de su producción, que es más exigente porque obliga a que "
+     "estuviera cerrando, no solo habilitado."),
 
     ("creditos_gastados", "Créditos gastados", 13, CALC,
-     "Lo que costó este realtor. El tope acordado era 5."),
+     "Lo que costó este realtor. El tope es 2."),
     ("consultado_en", "Consultado", 20, CALC,
      "Cuándo se pidió el dato a Model Match (UTC)."),
     ("realtor_id", "realtor_id", 36, NUESTRO,
@@ -449,14 +490,18 @@ def preparar(f: dict) -> dict:
                         if f.get("encontrado") else "")
     d["mm_telefonos_n"] = (len(f.get("mm_telefonos") or [])
                            if f.get("encontrado") else "")
-    for b, destino in (("lenders", "lenders_txt"),
-                       ("originators", "originators_txt")):
-        v = f.get("mm_%s" % b)
-        if v is None:
-            d[destino] = "no consultado · %s" % (f.get("mm_%s_motivo" % b) or "")
-        else:
-            d[destino] = " · ".join(
-                "%s (%s u)" % (x.get("nombre"), x.get("unidades")) for x in v)
+    # Historical units: los años con produccion, en una celda legible, y los
+    # derivados. `anios` lo escribe el script de conteo, que no cobra.
+    anios = f.get("anios_buyside") or {}
+    d["historical_units_txt"] = " · ".join(
+        "%s: %s" % (a, anios[a]) for a in sorted(anios) if anios[a] != "")
+    con_produccion = sorted(a for a in anios
+                            if anios[a] != "" and a.isdigit())
+    d["primer_anio"] = con_produccion[0] if con_produccion else ""
+    d["anios_produciendo"] = len(con_produccion)
+    d["antiguedad_aprox"] = (
+        dt.date.today().year - int(d["primer_anio"]) + 1
+        if d["primer_anio"] else "")
     for k in ("mm_pct_unidades_financiadas", "mm_pct_volumen_financiado"):
         if isinstance(d.get(k), (int, float)):
             d[k] = round(d[k], 1)

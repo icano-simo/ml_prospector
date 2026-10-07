@@ -1,6 +1,6 @@
 ---
 name: modelmatch-minado
-description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 47 columnas aprobadas (34 de la API y 13 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 2 créditos por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
+description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 62 columnas aprobadas (43 de la API y 19 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 2 créditos por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
 ---
 
 # Minado de Model Match — manual operativo
@@ -9,13 +9,17 @@ description: Manual operativo del minado de Model Match para realtors de HOMESÍ
 llamada cuesta dinero y cada campo de más es un campo que alguien va a leer
 mal.
 
-**Lo aprobado son 47 columnas**: **34 salen de la API** (26 de la ficha, 8 de
-consultas aparte) y **13 se calculan** a partir de ellas sin gastar nada.
-Están listadas una por una en la sección 4. En el archivo de 113 columnas
-ocupan de la 4 a la 56; las demás son de nuestra base y de Instagram, y no se
-le piden a nadie.
+**Lo aprobado son 62 columnas**: **43 salen de la API** y **19 se calculan** a
+partir de ellas sin gastar nada. Están listadas una por una en la sección 4, y
+con su número de posición en 4·I — esa tabla **la regenera
+`modelmatch/actualizar_tabla_manual.py` desde el código**, para que no pueda
+desfasarse. Las demás columnas del archivo son de nuestra base y de Instagram,
+y no se le piden a nadie.
 
-**Tope: 2 créditos por realtor.**
+**Tope: 2 créditos por realtor.** Y de esas 62, **solo las de la ficha
+cuestan**: la ficha es 1 crédito y trae 30 columnas de una. Todo lo demás
+—Everett con sus dos ventanas, los programas, la producción por año— sale de
+`count`, que **no cobra**.
 
 > ⚠ **Los textos de las columnas de vocabulario cerrado son exactos, y el
 > scoring filtra por igualdad.** Poner una coma donde va el separador `·`, o
@@ -435,7 +439,7 @@ se aplica la fórmula.
 
 `originators` va primero porque da `Su loan officer principal`, que es el
 nombre contra el que se compite. **`companies` no se pide nunca**: no produce
-ninguna de las 47 columnas.
+ninguna de las 62 columnas.
 
 **Qué pasa cuando `totalXWorkedWith` es 0:** no se pide (lo excluye el `> 0`)
 y la celda correspondiente queda **vacía**, no lleva centinela. El centinela
@@ -712,11 +716,11 @@ deja de ser comparable.
 
 ---
 
-### I · Las 47 columnas, con su número de posición
+### I · Las columnas, con su número de posición
 
-En la hoja *Realtors* del archivo de 113 columnas. **Van de la 4 a la 56, pero
-no son contiguas**: las posiciones 11, 14, 17, 21, 26 y 27 son de nuestra base
-y no se le piden a Model Match.
+<!-- TABLA-POSICIONES:inicio -->
+
+En la hoja *Realtors*. **Van de la 4 a la 71, pero no son contiguas**: las posiciones 11, 14, 17, 21, 26, 27 son de nuestra base y no se le piden a Model Match.
 
 | nº | encabezado exacto | origen |
 |---|---|---|
@@ -752,21 +756,38 @@ y no se le piden a Model Match.
 | 39 | `% unidades financiadas` | ficha |
 | 40 | `% volumen financiado` | ficha |
 | 41 | `Loan medio de sus compradores` | ficha |
-| 42 | `¿Produce FHA?` | aparte |
-| 43 | `¿Produce convencional?` | aparte |
-| 44 | `¿Produce VA?` | aparte |
-| 45 | `¿Ya financia con la casa?` | aparte |
-| 46 | `Operaciones con la casa (al menos)` | aparte |
-| 47 | `Nº lenders` | ficha |
-| 48 | `Nº originadores` | ficha |
-| 49 | `¿Fidelizado con un LO?` | calculada |
-| 50 | `Su loan officer principal` | aparte |
-| 51 | `% por su LO principal` | calculada |
-| 52 | `Nº compañías` | ficha |
-| 53 | `Lenders (si cupo en el tope)` | aparte |
-| 54 | `Originadores (si cupo)` | aparte |
-| 55 | `Créditos gastados` | calculada |
-| 56 | `Consultado` | calculada |
+| 42 | `Última operación` | ficha |
+| 43 | `Licencias (todas)` | ficha |
+| 44 | `Estados con licencia` | ficha |
+| 45 | `Licencia vence` | ficha |
+| 46 | `Precio medio de sus COMPRAS` | calculada |
+| 47 | `Precio medio de sus compras financiadas` | calculada |
+| 48 | `Precio medio de sus listings` | calculada |
+| 49 | `Suma de precios de listado` | ficha |
+| 50 | `Venta vs listado (%)` | calculada |
+| 51 | `Ventas financiadas ($)` | ficha |
+| 52 | `Dual ($)` | ficha |
+| 53 | `Dual financiadas (u)` | ficha |
+| 54 | `Dual financiadas ($)` | ficha |
+| 55 | `¿Produce FHA?` | aparte |
+| 56 | `¿Produce convencional?` | aparte |
+| 57 | `¿Produce VA?` | aparte |
+| 58 | `¿Trabajó con Everett · histórico?` | aparte |
+| 59 | `Operaciones con Everett · histórico` | aparte |
+| 60 | `¿Trabajó con Everett · 12 meses?` | aparte |
+| 61 | `Operaciones con Everett · 12 meses` | aparte |
+| 62 | `Nº lenders` | ficha |
+| 63 | `Nº originadores` | ficha |
+| 64 | `¿Fidelizado con un LO?` | calculada |
+| 65 | `Nº compañías` | ficha |
+| 66 | `Historical units · por año` | aparte |
+| 67 | `Primer año con producción` | calculada |
+| 68 | `Años con producción` | calculada |
+| 69 | `Antigüedad aproximada (años)` | calculada |
+| 70 | `Créditos gastados` | calculada |
+| 71 | `Consultado` | calculada |
+
+<!-- TABLA-POSICIONES:fin -->
 
 ---
 
@@ -780,8 +801,8 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 | cualquier `*BulkDelivery` sin aprobación escrita | 1 crédito por fila, sin tope natural |
 | seguir el `cursor` | multiplica el costo en silencio |
 | `POST /v1/agents` para un agente concreto | cuesta lo mismo que la ficha y trae menos |
-| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 47 columnas aprobadas |
-| el breakdown de `companies` | **nunca**, quepa o no: no produce ninguna de las 47 columnas |
+| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 62 columnas aprobadas |
+| el breakdown de `companies` | **nunca**, quepa o no: no produce ninguna de las 62 columnas |
 | los breakdowns de `lenders` y `counties` sin que quepan en el tope | 1 por fila |
 | los filtros de tract de `/v1/market` para **elegir** a quién contactar | `minorityTractPct`, `majorityMinorityTract`, `lowModIncomeTract`: segmentar por ahí es redlining y es exposición de fair lending |
 
@@ -862,7 +883,7 @@ Para que nadie lo busque ahí:
   señales salen de Instagram y del modelo de scoring.
 - **Antigüedad en la industria del realtor** — no existe el campo.
   ⛔ **No se ejecuta en el minado estándar**, porque no produce ninguna de las
-  47 columnas y la regla cero manda. Si algún día se aprueba como columna
+  62 columnas y la regla cero manda. Si algún día se aprueba como columna
   nueva, el rodeo medido sería pedir producción en un año viejo
   (`period: "2024"`, `units {gte:1}`), que además es más exigente que la
   licencia porque obliga a que estuviera produciendo.

@@ -153,6 +153,21 @@ def main() -> None:
           % (n_mm, n_calc, n_mm + n_calc))
 
     print("")
+    print("── 1 bis · el manual dice el numero REAL de columnas ──")
+    # El numero sale citado en el texto y en la descripcion. Si alguien agrega
+    # una columna y no toca el texto, el manual promete una cosa y el codigo
+    # entrega otra. Ya paso: decia 34 y habia 47.
+    n_api = sum(1 for c in COLUMNAS if c[3] in (FICHA, APARTE))
+    n_cal = sum(1 for c in COLUMNAS if c[3] == CALC)
+    for frase, cuanto in (("%d columnas" % (n_api + n_cal), n_api + n_cal),
+                          ("%d de la API" % n_api, n_api),
+                          ("%d se calculan" % n_cal, n_cal)):
+        if frase not in texto:
+            fallos.append("el manual no dice «%s» y deberia" % frase)
+        else:
+            print("   dice «%s» · ok" % frase)
+
+    print("")
     print("── 3 bis · tablas partidas ──")
     # Una tabla markdown se corta con la primera linea que no empieza por `|`.
     # Si despues de ese corte vuelven filas `|`, la tabla quedo en dos y las
