@@ -538,8 +538,15 @@ POST /v1/agents/count
  "period": "<el año anterior al actual>"}
 ```
 
-**Se pide sobre 20 realtors del lote, y al menos uno tiene que devolver 1.**
-Si ninguno produjo en el último año cerrado, **el lote no se corre.**
+**Se pide sobre los 20 primeros ids del lote en orden alfabético —no 20
+cualesquiera: dos corridas tienen que sondear a los mismos— y al menos 15
+tienen que devolver 1.** Si no, **este paso no se corre**; los otros dos —tipo
+de préstamo y Everett— no dependen de él y sí pueden correrse.
+
+**15 de 20, no 1 de 20.** Con el umbral en 1, un año **poblado a medias**
+—que es exactamente el caso de enero— pasa el sondeo y después escribe «no
+produjo» sobre la mayoría. Si el lote tiene menos de 20 realtors, se exige que
+produzcan **todos** los sondeados.
 
 **Por qué, y por qué no alcanza con lo que ya sabemos:** está medido que el
 año **en curso** devuelve 0 aunque haya producción, porque su bucket no está
@@ -549,8 +556,9 @@ fallo: se ve como un realtor que dejó de producir. Peor, afecta a **todo el
 lote a la vez**, y adelanta el primer año de todos, así que la antigüedad sale
 corta en masa sin que ninguna celda parezca rara.
 
-En la corrida de referencia, 461 de 471 tenían producción en el año anterior;
-el sondeo de 20 habría dado ~19. Si da 0, es que el bucket no está.
+En la corrida de referencia, 461 de 471 tenían producción en el año anterior:
+el sondeo de 20 habría dado unos 19. Un resultado de 0 dice que el bucket no
+está; uno de 7 dice que está a medias, y las dos cosas descartan la corrida.
 
 ##### Qué periodos se piden
 
@@ -685,16 +693,28 @@ traduce, no se le quitan acentos ni el `⚠`.
 
 ### B · De los conteos — 8 columnas, 0 créditos
 
-| llamada | columna | valor |
-|---|---|---|
-| count + `product.key: fha` | `¿Produce FHA?` | `total == 1` → `"sí"`, si no `"no"` |
-| count + `product.key: conventional` | `¿Produce convencional?` | ídem |
-| count + `product.key: va` | `¿Produce VA?` | ídem |
-| count + `footprint.lender`, `allTime` | `¿Trabajó con Everett · histórico?` | `total == 1` → `"SÍ"`, si no `"no"` |
-| el mismo con `units {gte, lt}` por bandas | `Operaciones con Everett · histórico` | la banda que dio 1 |
-| count + `footprint.lender`, `last12Months` | `¿Trabajó con Everett · 12 meses?` | ídem |
-| el mismo con bandas | `Operaciones con Everett · 12 meses` | ídem |
-| count + `buyerUnits` por año | `Historical units · por año` | los años con producción |
+⛔ **Un conteo tiene TRES respuestas, no dos.** `1` es sí, `0` es no, y **una
+llamada sin `total` numérico —error de red, 5xx, respuesta rara— no es
+ninguna de las dos**: va `sin comprobar` y la fila queda pendiente. Escribir
+`no` ante un error de red es una afirmación sobre el realtor que nadie midió,
+y en el caso de Everett es la exclusión al revés: deja entrar como prospecto
+nuevo a alguien que ya es cliente de la casa.
+
+| llamada | columna | `total == 1` | `total == 0` | sin respuesta |
+|---|---|---|---|---|
+| count + `product.key: fha` | `¿Produce FHA?` | `sí` | `no` | `sin comprobar` |
+| count + `product.key: conventional` | `¿Produce convencional?` | `sí` | `no` | `sin comprobar` |
+| count + `product.key: va` | `¿Produce VA?` | `sí` | `no` | `sin comprobar` |
+| count + `footprint.lender`, `allTime` | `¿Trabajó con Everett · histórico?` | `SÍ` | `no` | `sin comprobar` |
+| count + `footprint.lender`, `last12Months` | `¿Trabajó con Everett · 12 meses?` | `SÍ` | `no` | `sin comprobar` |
+| las bandas, `allTime` | `Operaciones con Everett · histórico` | la banda que dio 1 | *(vacía)* | *(vacía)* |
+| las bandas, `last12Months` | `Operaciones con Everett · 12 meses` | la banda que dio 1 | *(vacía)* | *(vacía)* |
+| count + `buyerUnits` por periodo | `Historical units · por año` | ver 4·C | *(el periodo no se escribe)* | *(celda entera vacía)* |
+
+**Y el registro no se sella.** Vale para los tres pasos por igual: si alguna
+de sus llamadas quedó `sin comprobar`, el paso no se marca como hecho, así que
+la corrida siguiente lo retoma. Un `sin comprobar` que se sella es un dato
+faltante que nadie va a volver a buscar.
 
 ### C · El formato de las cuatro celdas por bandas
 
@@ -751,15 +771,24 @@ vocabulario cerrado.
 > dólares fueran precios tendrían que **coincidir** con `buyerVolume`, que son
 > precios de venta sin discusión.
 >
-> | | |
-> |---|---|
-> | realtors con todas sus compras financiadas | 32 |
-> | `mortgaged_buyer_volume ÷ buyerVolume`, mediana | **0,87** |
-> | de ésos, cuántos dan exactamente 1,0 | **0** |
-> | lo mismo del lado vendedor (83 casos), mediana | **0,90** |
+> | lado | casos | mín | mediana | máx | en 1,0 exacto | por encima de 1 |
+> |---|---|---|---|---|---|---|
+> | comprador | 32 | 0,66 | **0,87** | 1,06 | **0** | 1 |
+> | vendedor | 83 | 0,38 | **0,90** | 2,44 | **0** | 8 |
 >
-> Mismas operaciones, 13 % menos de dólares, en los dos lados y sin una sola
-> excepción. Eso que falta es el pie.
+> **Lo decisivo es la columna del medio: 0 de 115.** Si esos dólares fueran
+> precios de venta, sobre un conjunto de operaciones idéntico tendrían que
+> coincidir **exactamente**, y no coinciden en ningún caso. Las medianas
+> —13 % menos del lado comprador, 10 % del vendedor— dicen además que la
+> diferencia tiene el tamaño de un pie.
+>
+> ⚠ **Y hay nueve casos por encima de 1**, uno comprador y ocho vendedores,
+> con un máximo de 2,44. **Un préstamo mayor que el precio no se explica con
+> un pie**, así que esos casos no los explica esta lectura: pueden ser
+> segundas hipotecas, refinanciaciones contadas aparte, o datos sucios. **El
+> lado vendedor es el más ruidoso de los dos** —rango de 0,38 a 2,44— y por
+> eso el peso de la prueba lo lleva el lado comprador, que es el limpio. Se
+> dicen los dos para que nadie tenga que volver a medirlo.
 >
 > **Dos consecuencias que hay que tener presentes al leer:**
 >
@@ -975,13 +1004,27 @@ Un «sin comprobar» en una celda que nadie mira **se lee como «comprobado y
 no»**, que es lo contrario. Por eso hay una columna para eso:
 
 **`⚠ Datos pendientes`** — vacía cuando la fila está completa; si no, nombra
-qué falta y termina en `NO PUNTUAR`. Los tres textos que la componen, unidos
-con `" · "`:
+qué falta y termina en `NO PUNTUAR`. Los tres textos, **en este orden fijo, el
+de los pasos**, unidos con `" · "`:
 
 ```
+tipo de préstamo
 Everett
 producción por año
-tipo de préstamo
+```
+
+**El orden no es decorativo:** la celda se compara por igualdad, así que una
+fila a la que le faltan Everett y la producción tiene que escribir siempre lo
+mismo, no a veces al revés. Una celda completa se ve así:
+
+```
+tipo de préstamo · Everett · producción por año · NO PUNTUAR
+```
+
+y una a la que solo le falta Everett, así:
+
+```
+Everett · NO PUNTUAR
 ```
 
 **El riesgo concreto, que es de scoring y no de prolijidad:** un cliente de
@@ -1262,9 +1305,10 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 7. **`⚠ Datos pendientes` vacía en todas las filas identificadas.** Una fila
    pendiente no se entrega y no se puntúa: ver 4·F quater. Los pasos que
    faltan son todos gratis, así que no hay razón para entregar con pendientes.
-8. **el sondeo del último año cerrado dio al menos un positivo** antes de
-   correr la producción por año. Si no, el bucket de ese año no está poblado y
-   la antigüedad sale corta para todo el lote.
+8. **el sondeo del último año cerrado dio 15 de 20** antes de correr la
+   producción por año. Si no, ese bucket no está poblado —o lo está a medias—
+   y la antigüedad sale corta para todo el lote. **Descarta ese paso, no el
+   lote entero**: los otros dos no dependen de él.
 
 ### Resultado de referencia
 

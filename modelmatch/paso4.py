@@ -88,24 +88,35 @@ def main() -> None:
     print("saldo: %s · este paso NO debe gastar nada" % s0)
     print("")
 
-    con_fha = 0
+    con_fha = sin_comprobar = 0
     for i, (ruta, f) in enumerate(pendientes, 1):
         mm = f["mm_id"]
         for clave, columna in TIPOS:
             f[columna] = tipo_de_prestamo(mm, clave)
-        f["paso4_en"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        # NO se sella si alguna quedo sin comprobar. Un «sin comprobar»
+        # sellado es un dato faltante que nadie va a volver a buscar: la
+        # proxima corrida lo saltaria por tener fecha.
+        if any(f.get(c) == "sin comprobar" for _k, c in TIPOS):
+            f.pop("paso4_en", None)
+            sin_comprobar += 1
+        else:
+            f["paso4_en"] = dt.datetime.now(dt.timezone.utc).isoformat()
         with open(ruta, "w", encoding="utf-8") as fh:
             json.dump(f, fh, ensure_ascii=False, indent=1)
         if f.get("hace_fha") == "sí":
             con_fha += 1
         if i % 20 == 0 or i == len(pendientes):
-            print("   %4d/%d · con FHA hasta ahora: %d · saldo %s"
-                  % (i, len(pendientes), con_fha, saldo()))
+            print("   %4d/%d · con FHA hasta ahora: %d · pendientes %d · "
+                  "saldo %s"
+                  % (i, len(pendientes), con_fha, sin_comprobar, saldo()))
 
     s1 = saldo()
     gasto = None if None in (s0, s1) else round(s0 - s1, 2)
     print("")
     print("con FHA: %d de %d" % (con_fha, len(pendientes)))
+    if sin_comprobar:
+        print("PENDIENTES: %d  (alguna bandera quedo «sin comprobar»; no se "
+              "sellaron y los retoma la proxima corrida)" % sin_comprobar)
     print("Everett va aparte: python modelmatch/everett_bandas.py")
     print("gasto: %s creditos  %s"
           % (gasto, "OK, el paso 4 es gratis" if gasto == 0

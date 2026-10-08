@@ -574,15 +574,19 @@ def preparar(f: dict) -> dict:
     # Que quedo sin comprobar. Un pendiente INVISIBLE es peor que un dato
     # faltante: «sin comprobar» en una celda que nadie mira se lee como
     # «comprobado y no», que es lo contrario.
+    # El orden es FIJO --el de los pasos-- para que dos corridas escriban la
+    # misma celda y el scoring pueda compararla por igualdad.
     falta = []
     if f.get("mm_id"):
+        if not f.get("paso4_en") or "sin comprobar" in (
+                f.get("hace_fha"), f.get("hace_convencional"),
+                f.get("hace_va")):
+            falta.append("tipo de préstamo")
         if "sin comprobar" in (f.get("everett_historico"),
                                f.get("everett_12m")):
             falta.append("Everett")
         if pendiente or not anios:
             falta.append("producción por año")
-        if not f.get("paso4_en"):
-            falta.append("tipo de préstamo")
     d["pendientes"] = (" · ".join(falta) + " · NO PUNTUAR") if falta else ""
     for k in ("mm_pct_unidades_financiadas", "mm_pct_volumen_financiado"):
         if isinstance(d.get(k), (int, float)):

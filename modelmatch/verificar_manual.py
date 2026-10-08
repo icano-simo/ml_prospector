@@ -105,6 +105,14 @@ PROHIBIDAS = [
     ("quedaban <M> créditos", "idem"),
     ("creditos del tope\"", "idem: revisar comillas y formato"),
     ("tercera fila de la tabla", "es la SEGUNDA columna de la tabla"),
+    # Un conteo tiene TRES respuestas. «si no» mete el fallo de red en la
+    # misma bolsa que el 0, y entonces un error escribe «no trabajo con
+    # Everett», que es la exclusion al reves. La tabla 4·B lo decia asi
+    # mientras la escalera de bandas decia lo contrario.
+    ("si no `\"no\"`", "un conteo tiene TRES respuestas: 1, 0 y sin "
+                       "respuesta. «si no» mete el fallo con el 0"),
+    ("si no `\"NO\"`", "idem"),
+    ("si no \"no\"", "idem"),
     ("= `muy concentrado`;", "el texto completo es `muy concentrado · 2-3 LOs`"),
     ("1 = `CAUTIVO · 1 solo LO`;", "n=0 tambien hay que cubrirlo y no es "
                                    "cautivo"),
@@ -333,6 +341,23 @@ def main() -> None:
                               "las tres copias coinciden"
                               if all(v == list(CASA) for v in tres.values())
                               else "⚠ DIFIEREN"))
+
+    print("")
+    print("── 5 bis · cada bandera tiene su caso de FALLO escrito ──")
+    # No alcanza con prohibir «si no»: hay que exigir que el tercer caso este.
+    # Una columna cuyo valor sale de un conteo PUEDE quedar «sin comprobar», y
+    # si el manual no lo dice, el agente escribe `no` y el fallo de red se
+    # vuelve una afirmacion.
+    for col in ("¿Produce FHA?", "¿Produce convencional?", "¿Produce VA?",
+                "¿Trabajó con Everett · histórico?",
+                "¿Trabajó con Everett · 12 meses?"):
+        filas_col = [l for l in texto.splitlines()
+                     if "`%s`" % col in l and l.startswith("|")]
+        if not any("sin comprobar" in l for l in filas_col):
+            fallos.append("la bandera `%s` no tiene ninguna fila de tabla que "
+                          "diga que hacer cuando la llamada falla "
+                          "(`sin comprobar`)" % col)
+    print("   5 banderas comprobadas")
 
     print("")
     print("── 6 bis · las columnas de Instagram, congeladas ──")

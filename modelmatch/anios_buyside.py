@@ -97,8 +97,14 @@ def unidades(mm: str, periodo: str):
     return FALLO
 
 
-#: Cuantos realtors se sondean para ver si el ultimo año cerrado esta poblado.
+#: Cuantos realtors se sondean para ver si el ultimo año cerrado esta poblado,
+#: y cuantos de ellos tienen que dar positivo.
 MUESTRA = 20
+#: 15 de 20, no 1 de 20. Con el umbral en 1, un año poblado A MEDIAS --que es
+#: justo el caso de enero-- pasa el sondeo y despues escribe «no produjo» sobre
+#: la mayoria. En la corrida de referencia, 461 de 471 tenian produccion en el
+#: año anterior: el sondeo deberia dar unos 19.
+MINIMO = 15
 
 
 def probar_el_ultimo_año_cerrado(ids: list[str]) -> bool:
@@ -110,17 +116,21 @@ def probar_el_ultimo_año_cerrado(ids: list[str]) -> bool:
     ve como un realtor que dejo de producir-- y ademas adelanta el primer año
     y achica la antiguedad de TODO el lote a la vez.
 
-    Asi que se sondea: si de una muestra ninguno produjo en ese año, el bucket
-    no esta poblado y el lote no se corre.
+    La muestra son los 20 PRIMEROS ids en orden alfabetico, no 20 cualquiera:
+    dos corridas sobre el mismo lote tienen que sondear a los mismos y dar la
+    misma respuesta.
     """
     ultimo = str(ANIO - 1)
+    muestra = sorted(ids)[:MUESTRA]
     positivos = 0
-    for mm in ids[:MUESTRA]:
+    for mm in muestra:
         if (cuenta(mm, ultimo, 1, None) or 0) >= 1:
             positivos += 1
-    print("   %s: %d de %d sondeados tienen produccion"
-          % (ultimo, positivos, min(len(ids), MUESTRA)))
-    return positivos > 0
+    print("   %s: %d de %d sondeados tienen produccion (hacen falta %d)"
+          % (ultimo, positivos, len(muestra), MINIMO))
+    # Con una muestra mas chica que el umbral se exige que produzcan todos:
+    # un lote de 3 realtors no puede dar 15 positivos.
+    return positivos >= min(MINIMO, len(muestra))
 
 
 def main() -> None:
@@ -135,11 +145,14 @@ def main() -> None:
     print("── 1 · ¿el ultimo año cerrado esta poblado? ──")
     if not probar_el_ultimo_año_cerrado([f["mm_id"] for _r, f in pendientes]):
         raise SystemExit(
-            "\nNinguno de los sondeados produjo en %d. O el bucket de ese año "
+            "\nEl sondeo de %d no llego al minimo. O el bucket de ese año "
             "todavia no esta poblado --pasa con el año en curso, esta medido-- "
-            "o la muestra es rarisima. En cualquiera de los dos casos, correr "
-            "el lote escribiria «no produjo» sobre gente que si produjo, y eso "
-            "achica la antiguedad de todos. NO se corre." % (ANIO - 1))
+            "o esta poblado a medias. En cualquiera de los dos casos, correr "
+            "este paso escribiria «no produjo» sobre gente que si produjo, y "
+            "eso achica la antiguedad de todo el lote a la vez.\n"
+            "NO se corre la produccion por año. Los otros dos pasos --tipo de "
+            "prestamo y Everett-- no dependen de esto y pueden correrse."
+            % (ANIO - 1))
     print("")
 
     s0 = saldo()

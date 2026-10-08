@@ -89,7 +89,34 @@ ROTURAS = [
      "\nIG · handle confianza\n", "\n"),
     ("la fila de la banda sin tope vuelve a decir `50`",
      "| 50 | — | `50+` |", "| 50 | — | `50` |"),
+    ("una bandera pierde su caso de fallo y vuelve a ser si/no",
+     "| count + `product.key: fha` | `¿Produce FHA?` | `sí` | `no` | "
+     "`sin comprobar` |",
+     "| count + `product.key: fha` | `¿Produce FHA?` | `total == 1` → "
+     "`\"sí\"`, si no `\"no\"` |"),
 ]
+
+
+def test_el_orden_de_los_pendientes_es_fijo():
+    """La celda se compara por igualdad: no puede salir a veces al reves."""
+    from modelmatch.a_excel import preparar
+
+    f = {"encontrado": True, "mm_id": "x",
+         "everett_historico": "sin comprobar", "everett_12m": "no",
+         "anios_buyside": {}, "hace_fha": "sin comprobar"}
+    assert preparar(f)["pendientes"] == (
+        "tipo de préstamo · Everett · producción por año · NO PUNTUAR")
+
+
+def test_una_bandera_sin_comprobar_cuenta_aunque_el_paso_este_sellado():
+    """Sellar con una bandera caida la volveria invisible para siempre."""
+    from modelmatch.a_excel import preparar
+
+    f = {"encontrado": True, "mm_id": "x", "paso4_en": "ya",
+         "hace_fha": "sí", "hace_convencional": "sin comprobar",
+         "hace_va": "no", "everett_historico": "no", "everett_12m": "no",
+         "anios_buyside": {"2020": 1}, "anios_buyside_en": "ya"}
+    assert preparar(f)["pendientes"].startswith("tipo de préstamo")
 
 
 def test_un_periodo_pendiente_vacia_la_antiguedad():
