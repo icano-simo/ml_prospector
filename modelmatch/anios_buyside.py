@@ -140,14 +140,27 @@ def probar_el_ultimo_año_cerrado(ids: list[str]) -> bool:
     if n_ultimo >= piso:
         return True
 
+    # El umbral absoluto no sirve para decidir la CAUSA, y menos en un lote
+    # chico: con 6 identificados, `piso` es 6 y basta uno flojo para no
+    # llegar. Lo que distingue «el bucket esta vacio» de «este lote produce
+    # poco» no es cuanto da el ultimo año sino cuanto CAE respecto del
+    # anterior, y eso se mide igual con 6 que con 20.
     n_control = sum(1 for mm in muestra
                     if (cuenta(mm, control, 1, None) or 0) >= 1)
     print("   %s (control): %d de %d" % (control, n_control, len(muestra)))
-    if n_control >= piso:
-        print("   => el control responde y el ultimo no: el bucket de %s NO "
-              "esta poblado" % ultimo)
+    cae_a_la_mitad = n_control >= 2 * max(n_ultimo, 1)
+    if n_control >= 3 and cae_a_la_mitad:
+        print("   => el control responde y el ultimo se desploma: el bucket "
+              "de %s NO esta poblado" % ultimo)
         return False
-    print("   => los dos años dan poco: es el LOTE y no el dato. Se corre.")
+    if n_control < 3:
+        # Sin control no hay con que comparar. Entre escribir «no produjo»
+        # sobre gente que si produjo --un numero falso y callado-- y dejar
+        # cuatro columnas vacias --un hueco visible--, se elige el hueco.
+        print("   => el control tampoco responde (%d): la muestra no alcanza "
+              "para decidir, y ante la duda NO se escribe" % n_control)
+        return False
+    print("   => los dos años dan parecido: es el LOTE y no el dato. Se corre.")
     return True
 
 

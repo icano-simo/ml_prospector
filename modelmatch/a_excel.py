@@ -923,7 +923,43 @@ def main() -> None:
 
     # ── la hoja que explica, que es la que evita que alguien lea mal ────────
     creditos = sum(f.get("creditos_gastados") or 0 for f in filas)
+    # El estado del lote tiene que viajar DENTRO del archivo. Quien lo reciba
+    # por correo no vio la pantalla del generador, y una celda vacia en
+    # «Historical units» puede significar dos cosas opuestas: «no compro» o
+    # «no se pregunto». Sin esta linea no hay forma de distinguirlas.
+    _ident = [f for f in filas if f.get("mm_id")]
+    _sin_paso = sum(1 for f in _ident if "anios_buyside" not in f)
+    _pendientes = sum(1 for f in _ident if f.get("pendientes"))
+    if _sin_paso == len(_ident) and _ident:
+        _estado_anios = (
+            "⚠ EL PASO DE PRODUCCIÓN POR AÑO NO SE CORRIÓ EN ESTE LOTE. Las "
+            "cuatro columnas —Historical units, Primer año, Años con "
+            "producción y Antigüedad aproximada— están vacías en TODAS las "
+            "filas, y esa celda vacía NO significa «no compró»: significa "
+            "que no se preguntó. El sondeo previo encontró que el bucket del "
+            "último año cerrado todavía no está poblado, y correrlo así "
+            "habría escrito «no produjo» sobre gente que sí produjo. Se "
+            "vuelve a correr cuando el bucket responda.")
+    elif _sin_paso:
+        _estado_anios = (
+            "⚠ A %d de %d filas identificadas les falta el paso de producción "
+            "por año. No es el caso de lote: falta correrlo para esas. Hasta "
+            "entonces el archivo está incompleto." % (_sin_paso, len(_ident)))
+    else:
+        _estado_anios = (
+            "Producción por año: corrida para las %d filas identificadas. Acá "
+            "una celda vacía en «Historical units» sí significa que no compró "
+            "nada en ese periodo." % len(_ident))
+
     notas = [
+        ["Estado de este archivo", ""],
+        ["", "Filas que NO se pueden puntuar: %d de %d identificadas. %s"
+         % (_pendientes, len(_ident),
+            "Ninguna: el archivo está completo."
+            if not _pendientes else
+            "Llevan texto en «⚠ Datos pendientes» y terminan en NO PUNTUAR: "
+            "se les cayó alguna llamada y el dato que falta las favorece.")],
+        ["", _estado_anios],
         ["Qué es esto", ""],
         ["", "Los %d realtors a los que les buscamos Instagram, cruzados "
              "contra Model Match el %s."
@@ -1037,12 +1073,19 @@ def main() -> None:
              else "⚠ NO ENTREGAR — correr de nuevo el paso que falte"))
     # Y el caso de lote: el paso que no se corrio para nadie. No marca filas
     # --no hay ningun valor falso-- pero tiene que verse.
-    sin_anios = sum(1 for f in ident if not f.get("anios_buyside"))
-    if sin_anios:
-        print("⚠ sin produccion por año: %d de %d. Si son TODOS, el sondeo "
-              "del ultimo año cerrado descarto el paso y las cuatro columnas "
-              "van vacias a proposito; si son algunos, falta correrlo."
-              % (sin_anios, len(ident)))
+    #
+    # Se cuenta por el ESTADO DEL PASO --esta la clave `anios_buyside`?-- y no
+    # por la celda. Un realtor que no compro nada desde 2017 --uno que solo
+    # lista-- tiene la celda vacia con el paso perfectamente corrido, y
+    # contarlo daria un numero intermedio y haria fallar el chequeo 9 sin que
+    # nada estuviera mal. Y se cuenta solo sobre los IDENTIFICADOS, porque a
+    # los demas nunca se les pregunto nada.
+    sin_paso = sum(1 for f in ident if "anios_buyside" not in f)
+    if sin_paso:
+        print("⚠ sin el paso de produccion por año: %d de %d identificados. "
+              "Si son TODOS, el sondeo del ultimo año cerrado lo descarto y "
+              "las cuatro columnas van vacias a proposito; si son algunos, "
+              "falta correrlo." % (sin_paso, len(ident)))
     print("guardado en %s" % ruta)
 
 

@@ -555,10 +555,23 @@ realtors chicos podría no llegar a 15 con el dato perfectamente bien**, y
 entonces el sondeo bloquearía un paso que se puede hacer. El control separa
 las dos causas, con las mismas 20 llamadas y el mismo costo cero:
 
+**La comparación no es contra un umbral sino contra la CAÍDA**, porque un
+umbral absoluto no funciona en un lote chico: con 6 identificados el piso es 6
+y basta uno flojo para no llegar. Cuánto cae el último año respecto del
+anterior se mide igual con 6 que con 20.
+
 | control (año − 2) | último (año − 1) | qué significa | qué se hace |
 |---|---|---|---|
-| ≥ 15 | < 15 | es **el dato**: ese bucket no está poblado | **no se corre** este paso |
-| < 15 | < 15 | es **el lote**: produce poco, y eso es un hallazgo, no un fallo | **se corre** |
+| ≥ 3 y **al menos el doble** del último | por debajo del piso | es **el dato**: ese bucket no está poblado | **no se corre** este paso |
+| ≥ 3 y parecido al último | por debajo del piso | es **el lote**: produce poco, y eso es un hallazgo, no un fallo | **se corre** |
+| **< 3** | por debajo del piso | **no hay con qué comparar**: la muestra no alcanza para decidir | **no se corre** |
+
+**El último renglón es el caso de los lotes muy chicos, y se resuelve a favor
+del hueco.** Entre escribir «no produjo» sobre gente que sí produjo —un número
+falso y callado, que además achica la antigüedad de todos— y dejar cuatro
+columnas vacías —un hueco que se ve—, se elige el hueco. Un lote de tres
+realtors puede quedarse sin esa columna, y está bien: la columna es
+prescindible, un número inventado no.
 
 **Si no se corre, no se corre solo este paso.** El tipo de préstamo y Everett
 no dependen de él.
@@ -1075,9 +1088,22 @@ como sí lo es Everett. **Se entrega**, con esas cuatro columnas vacías para
 todos, y se vuelve a correr el paso cuando el bucket responda.
 
 **Para que ese caso no pase inadvertido**, el generador lo imprime a nivel de
-lote: `sin producción por año: N de M`. Si N == M fue el sondeo; si N es
-alguno, es que **falta correr el paso**, y eso sí hay que corregirlo antes de
-entregar.
+lote: `sin el paso de producción por año: N de M identificados`. Si N == M fue
+el sondeo; si N es alguno, es que **falta correr el paso**, y eso sí hay que
+corregirlo antes de entregar.
+
+⛔ **Y además tiene que quedar DENTRO del archivo, no solo en la pantalla.**
+Quien lo reciba por correo no vio al generador, y una celda vacía en
+`Historical units · por año` significa dos cosas opuestas —«no compró» o «no
+se preguntó»— que sin esta nota no se distinguen. La hoja **Cómo leer esto**
+abre con un bloque `Estado de este archivo` que dice, calculado y no escrito a
+mano:
+
+- cuántas filas llevan `NO PUNTUAR`, de cuántas identificadas;
+- y cuál de los tres casos aplica al paso de producción por año: **no se
+  corrió en todo el lote** —y entonces la celda vacía no significa «no
+  compró»—, **falta en algunas filas**, o **está completo** —y entonces la
+  celda vacía sí significa que no compró—.
 
 ### F ter · Los realtors en revisión SÍ se completan
 
@@ -1350,9 +1376,15 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
    que lo bajo es el lote y no el dato, antes de correr la producción por año.
    **Descarta ese paso, no el lote entero**, y **no impide entregar**: ver
    4·F quater.
-9. **`sin producción por año` es 0, o es TODAS.** Un número intermedio
-   significa que el paso se corrió a medias, y eso sí se corrige antes de
-   entregar.
+9. **`sin el paso de producción por año` es 0, o es TODAS las identificadas.**
+   Un número intermedio significa que el paso se corrió a medias, y eso sí se
+   corrige antes de entregar.
+   ⚠ **Se cuenta por el ESTADO DEL PASO —existe el registro `anios_buyside`—
+   y NO por la celda vacía.** Un realtor que no compró nada desde 2017 —uno
+   que solo lista— tiene la celda vacía con el paso perfectamente corrido, así
+   que contar celdas daría un número intermedio y haría fallar este chequeo
+   sin que nada estuviera mal. Y se cuenta **solo sobre los identificados**:
+   a los demás nunca se les preguntó nada y su celda está vacía siempre.
 
 ### Resultado de referencia
 
