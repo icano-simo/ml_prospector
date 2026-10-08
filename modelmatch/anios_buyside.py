@@ -116,21 +116,39 @@ def probar_el_ultimo_año_cerrado(ids: list[str]) -> bool:
     ve como un realtor que dejo de producir-- y ademas adelanta el primer año
     y achica la antiguedad de TODO el lote a la vez.
 
-    La muestra son los 20 PRIMEROS ids en orden alfabetico, no 20 cualquiera:
-    dos corridas sobre el mismo lote tienen que sondear a los mismos y dar la
-    misma respuesta.
+    La muestra son los 20 PRIMEROS `mm_id` en orden alfabetico --ids de Model
+    Match, y solo de realtors IDENTIFICADOS, porque a los demas no hay a quien
+    preguntarles--. Fijos, no 20 cualquiera: dos corridas sobre el mismo lote
+    tienen que sondear a los mismos y dar la misma respuesta.
+
+    Y se sondean DOS años, no uno. Un umbral fijo sobre un solo año da por
+    hecho un lote parecido al de referencia: uno de realtors chicos podria no
+    llegar a 15 con el dato perfectamente bien. El año anterior sirve de
+    control y separa las dos causas:
+
+        control alto + ultimo bajo -> es el DATO: ese bucket no esta poblado
+        los dos bajos              -> es el LOTE: produce poco, y se corre
     """
-    ultimo = str(ANIO - 1)
+    ultimo, control = str(ANIO - 1), str(ANIO - 2)
     muestra = sorted(ids)[:MUESTRA]
-    positivos = 0
-    for mm in muestra:
-        if (cuenta(mm, ultimo, 1, None) or 0) >= 1:
-            positivos += 1
-    print("   %s: %d de %d sondeados tienen produccion (hacen falta %d)"
-          % (ultimo, positivos, len(muestra), MINIMO))
-    # Con una muestra mas chica que el umbral se exige que produzcan todos:
-    # un lote de 3 realtors no puede dar 15 positivos.
-    return positivos >= min(MINIMO, len(muestra))
+    piso = min(MINIMO, len(muestra))   # un lote de 3 no puede dar 15
+
+    n_ultimo = sum(1 for mm in muestra
+                   if (cuenta(mm, ultimo, 1, None) or 0) >= 1)
+    print("   %s: %d de %d con produccion (hacen falta %d)"
+          % (ultimo, n_ultimo, len(muestra), piso))
+    if n_ultimo >= piso:
+        return True
+
+    n_control = sum(1 for mm in muestra
+                    if (cuenta(mm, control, 1, None) or 0) >= 1)
+    print("   %s (control): %d de %d" % (control, n_control, len(muestra)))
+    if n_control >= piso:
+        print("   => el control responde y el ultimo no: el bucket de %s NO "
+              "esta poblado" % ultimo)
+        return False
+    print("   => los dos años dan poco: es el LOTE y no el dato. Se corre.")
+    return True
 
 
 def main() -> None:

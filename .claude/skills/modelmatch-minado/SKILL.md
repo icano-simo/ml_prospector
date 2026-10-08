@@ -538,15 +538,30 @@ POST /v1/agents/count
  "period": "<el año anterior al actual>"}
 ```
 
-**Se pide sobre los 20 primeros ids del lote en orden alfabético —no 20
-cualesquiera: dos corridas tienen que sondear a los mismos— y al menos 15
-tienen que devolver 1.** Si no, **este paso no se corre**; los otros dos —tipo
-de préstamo y Everett— no dependen de él y sí pueden correrse.
+**Se pide sobre los 20 primeros `mm_id` del lote en orden alfabético** —ids de
+Model Match, y **solo de realtors identificados**, porque a los demás no hay a
+quién preguntarles—. Fijos, no 20 cualesquiera: dos corridas tienen que
+sondear a los mismos.
 
-**15 de 20, no 1 de 20.** Con el umbral en 1, un año **poblado a medias**
-—que es exactamente el caso de enero— pasa el sondeo y después escribe «no
-produjo» sobre la mayoría. Si el lote tiene menos de 20 realtors, se exige que
+**15 de 20, no 1 de 20.** Con el umbral en 1, un año **poblado a medias** —que
+es exactamente el caso de enero— pasa el sondeo y después escribe «no produjo»
+sobre la mayoría. Si el lote tiene menos de 20 realtors, se exige que
 produzcan **todos** los sondeados.
+
+##### Y si no llega a 15, se sondea el año ANTERIOR como control
+
+Un umbral fijo da por hecho un lote parecido al de referencia. **Un lote de
+realtors chicos podría no llegar a 15 con el dato perfectamente bien**, y
+entonces el sondeo bloquearía un paso que se puede hacer. El control separa
+las dos causas, con las mismas 20 llamadas y el mismo costo cero:
+
+| control (año − 2) | último (año − 1) | qué significa | qué se hace |
+|---|---|---|---|
+| ≥ 15 | < 15 | es **el dato**: ese bucket no está poblado | **no se corre** este paso |
+| < 15 | < 15 | es **el lote**: produce poco, y eso es un hallazgo, no un fallo | **se corre** |
+
+**Si no se corre, no se corre solo este paso.** El tipo de préstamo y Everett
+no dependen de él.
 
 **Por qué, y por qué no alcanza con lo que ya sabemos:** está medido que el
 año **en curso** devuelve 0 aunque haya producción, porque su bucket no está
@@ -776,11 +791,14 @@ vocabulario cerrado.
 > | comprador | 32 | 0,66 | **0,87** | 1,06 | **0** | 1 |
 > | vendedor | 83 | 0,38 | **0,90** | 2,44 | **0** | 8 |
 >
-> **Lo decisivo es la columna del medio: 0 de 115.** Si esos dólares fueran
-> precios de venta, sobre un conjunto de operaciones idéntico tendrían que
-> coincidir **exactamente**, y no coinciden en ningún caso. Las medianas
-> —13 % menos del lado comprador, 10 % del vendedor— dicen además que la
-> diferencia tiene el tamaño de un pie.
+> **Lo decisivo es la FORMA de la distribución, no que no coincidan.** Que
+> 0 de 115 den exactamente 1,0 por sí solo no prueba nada: dos fuentes de
+> precio pueden diferir por redondeo y seguir siendo las dos precios. Lo que
+> no admite esa explicación es **hacia dónde** difieren: del lado comprador,
+> **31 de 32 quedan por debajo de 1 y se agrupan alrededor de 0,87**. Ruido de
+> redondeo entre dos medidas de lo mismo se repartiría a los dos lados de 1 y
+> en centésimas, no un 13 % hacia abajo y casi siempre en la misma dirección.
+> Un sesgo sistemático a la baja del tamaño de un pie es un pie.
 >
 > ⚠ **Y hay nueve casos por encima de 1**, uno comprador y ocho vendedores,
 > con un máximo de 2,44. **Un préstamo mayor que el precio no se explica con
@@ -1037,6 +1055,29 @@ realtor.
 **Antes de entregar un archivo, `⚠ Datos pendientes` tiene que estar vacía en
 todas las filas identificadas.** Si no, se vuelve a correr el paso que falte
 —todos son gratis— y se regenera. Es el chequeo 7 de la sección 6.
+
+##### Lo que SÍ marca la columna, y lo que no
+
+**Marca un periodo o una llamada que falló PARA ESE realtor.** No marca un
+paso que no se corrió **para nadie**, y la diferencia está decidida así a
+propósito:
+
+| caso | la columna | por qué |
+|---|---|---|
+| a este realtor se le cayó una llamada | **NO PUNTUAR** | su fila tiene un hueco que las de al lado no tienen, y el hueco lo favorece |
+| el sondeo del año cerrado descartó el paso **para todo el lote** | **vacía** | no hay ningún valor falso en ninguna parte: las cuatro columnas están vacías en las 500 filas, a la vista de quien lo abra |
+
+**La decisión, que es de criterio y no de dato:** en enero el bucket del año
+anterior puede tardar días en poblarse. Bloquear el archivo entero todo ese
+tiempo cambia **un hueco visible** por **varios días sin archivo**, y lo que
+falta —antigüedad— no es de los datos que al faltar favorecen al realtor,
+como sí lo es Everett. **Se entrega**, con esas cuatro columnas vacías para
+todos, y se vuelve a correr el paso cuando el bucket responda.
+
+**Para que ese caso no pase inadvertido**, el generador lo imprime a nivel de
+lote: `sin producción por año: N de M`. Si N == M fue el sondeo; si N es
+alguno, es que **falta correr el paso**, y eso sí hay que corregirlo antes de
+entregar.
 
 ### F ter · Los realtors en revisión SÍ se completan
 
@@ -1305,10 +1346,13 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 7. **`⚠ Datos pendientes` vacía en todas las filas identificadas.** Una fila
    pendiente no se entrega y no se puntúa: ver 4·F quater. Los pasos que
    faltan son todos gratis, así que no hay razón para entregar con pendientes.
-8. **el sondeo del último año cerrado dio 15 de 20** antes de correr la
-   producción por año. Si no, ese bucket no está poblado —o lo está a medias—
-   y la antigüedad sale corta para todo el lote. **Descarta ese paso, no el
-   lote entero**: los otros dos no dependen de él.
+8. **el sondeo del último año cerrado dio 15 de 20**, o su control dejó claro
+   que lo bajo es el lote y no el dato, antes de correr la producción por año.
+   **Descarta ese paso, no el lote entero**, y **no impide entregar**: ver
+   4·F quater.
+9. **`sin producción por año` es 0, o es TODAS.** Un número intermedio
+   significa que el paso se corrió a medias, y eso sí se corrige antes de
+   entregar.
 
 ### Resultado de referencia
 

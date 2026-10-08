@@ -585,7 +585,14 @@ def preparar(f: dict) -> dict:
         if "sin comprobar" in (f.get("everett_historico"),
                                f.get("everett_12m")):
             falta.append("Everett")
-        if pendiente or not anios:
+        # Se marca el periodo que fallo PARA ESTE realtor, no el paso que no
+        # se corrio para NADIE. Si el sondeo del ultimo año cerrado descarta el
+        # paso --en enero puede pasar--, `anios` no existe en ninguna fila: no
+        # hay ningun valor falso en ningun lado, las cuatro columnas estan
+        # vacias a la vista, y bloquear la entrega del archivo entero por eso
+        # seria cambiar un hueco visible por varios dias sin archivo. Ese caso
+        # se reporta a nivel de lote al generar, no fila por fila.
+        if pendiente:
             falta.append("producción por año")
     d["pendientes"] = (" · ".join(falta) + " · NO PUNTUAR") if falta else ""
     for k in ("mm_pct_unidades_financiadas", "mm_pct_volumen_financiado"):
@@ -1020,6 +1027,22 @@ def main() -> None:
     print("   de los cuales hay que revisar: %d" % len(revisar))
     print("cambios de casa: %d" % con_cambio)
     print("creditos       : %d" % creditos)
+    # El chequeo 7 del manual, a la vista: sin esto hay que abrir el Excel
+    # para saber si se puede entregar.
+    ident = [f for f in filas if f.get("mm_id")]
+    con_pend = [f for f in ident if f.get("pendientes")]
+    print("pendientes     : %d de %d identificados  %s"
+          % (len(con_pend), len(ident),
+             "OK, se puede entregar" if not con_pend
+             else "⚠ NO ENTREGAR — correr de nuevo el paso que falte"))
+    # Y el caso de lote: el paso que no se corrio para nadie. No marca filas
+    # --no hay ningun valor falso-- pero tiene que verse.
+    sin_anios = sum(1 for f in ident if not f.get("anios_buyside"))
+    if sin_anios:
+        print("⚠ sin produccion por año: %d de %d. Si son TODOS, el sondeo "
+              "del ultimo año cerrado descarto el paso y las cuatro columnas "
+              "van vacias a proposito; si son algunos, falta correrlo."
+              % (sin_anios, len(ident)))
     print("guardado en %s" % ruta)
 
 

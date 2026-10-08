@@ -103,9 +103,27 @@ def test_el_orden_de_los_pendientes_es_fijo():
 
     f = {"encontrado": True, "mm_id": "x",
          "everett_historico": "sin comprobar", "everett_12m": "no",
-         "anios_buyside": {}, "hace_fha": "sin comprobar"}
+         # con datos pero SIN sello: se intento y fallo, que es lo pendiente
+         "anios_buyside": {"2020": 1}, "hace_fha": "sin comprobar"}
     assert preparar(f)["pendientes"] == (
         "tipo de préstamo · Everett · producción por año · NO PUNTUAR")
+
+
+def test_un_paso_que_no_se_corrio_para_NADIE_no_marca_filas():
+    """El sondeo del año cerrado puede descartar el paso en todo el lote.
+
+    Ahi no hay ningun valor falso en ninguna parte --las cuatro columnas estan
+    vacias en todas las filas-- asi que marcar cada fila NO PUNTUAR cambiaria
+    un hueco visible por un archivo que no se puede entregar en varios dias.
+    El caso se reporta a nivel de lote, no fila por fila.
+    """
+    from modelmatch.a_excel import preparar
+
+    f = {"encontrado": True, "mm_id": "x", "paso4_en": "ya",
+         "hace_fha": "no", "hace_convencional": "no", "hace_va": "no",
+         "everett_historico": "no", "everett_12m": "no"}
+    assert preparar(f)["pendientes"] == ""        # sin `anios_buyside`
+    assert preparar(f)["antiguedad_aprox"] == ""  # y las columnas, vacias
 
 
 def test_una_bandera_sin_comprobar_cuenta_aunque_el_paso_este_sellado():
