@@ -393,69 +393,35 @@ de `agentAnalyticsTimeSeries`, que devuelve filas y **cuesta**.
   más viejo del enum, así que su primera operación puede ser anterior y no hay
   forma de saberlo desde aquí. Esa fila lleva su propio aviso.
 
-### Paso 5 · Breakdown de originadores — solo si cabe
+### Paso 5 · RETIRADO — los breakdowns ya no se compran
 
-```json
-POST /v1/agents/{mm_id}/breakdowns/originators
-{}
-```
+**Ninguna llamada por fila entra en el minado estándar.** Los breakdowns de
+`originators`, `lenders`, `companies` y `counties` **no se piden**, quepan o
+no en el tope.
 
-**Se pide según LA REGLA ÚNICA de abajo, no según ninguna otra condición.** Si
-no cabe, la celda lleva el centinela de la sección 4·C, con su texto exacto.
+Por qué se retiraron, en orden de peso:
 
-⛔ **NO se puede pedir solo la primera fila. Medido.** Se mandó
-`pagination: {size: 1}` con `sort` por unidades: **no lo rechazó, lo ignoró** —
-devolvió 3 filas y cobró 3. **No reintentar.**
+1. **La única pregunta que de verdad usábamos de ellos —la relación con
+   Everett— sale gratis y mejor** por conteo (paso 4 bis): en vez de un sí/no
+   histórico, da el número de operaciones en dos ventanas.
+2. **Cuestan 1 crédito por fila y no se pueden acotar.** Está medido: se mandó
+   `pagination: {size: 1}` con `sort` por unidades y **la API no lo rechazó,
+   lo ignoró** — devolvió 3 filas y cobró 3. No hay forma de comprar solo la
+   primera. **No reintentar.**
+3. **Con tope 2 casi nunca cabían**: la mediana es 10 lenders y 10 LOs por
+   realtor, así que en la mayoría la celda decía «no consultado» y no aportaba
+   nada.
 
-⚠ **El orden que devuelve la API es por VOLUMEN, no por unidades.** Para
-nosotros manda **unidades**: lo que cuenta es a cuántos clientes les presentó
-un prestamista, no cuán caras eran las casas. En un caso real el primero por
-volumen tenía 2 operaciones y el segundo 4. **Reordenar por `units` antes de
-tomar el principal.**
+**Lo que se perdió, dicho sin adornos:** el **nombre** del loan officer
+principal y el de los lenders. El conteo responde sobre un lender que uno
+nombre; **no descubre nombres**. Si algún día hace falta ese nombre para una
+lista corta de realtors prioritarios, se compra a propósito y fuera del
+minado estándar, sabiendo que cuesta 1 por fila.
 
-#### Los tres breakdowns y su prioridad dentro del tope
-
-Dos rutas, las únicas que se usan. Ambas `POST` con cuerpo `{}`:
-
-```
-/v1/agents/{mm_id}/breakdowns/originators
-/v1/agents/{mm_id}/breakdowns/lenders
-```
-
-**Con tope 2 y la ficha ya pagada queda 1 crédito, así que cabe como mucho un
-breakdown de 1 fila.** El orden de prioridad es fijo y no se negocia:
-
-**LA REGLA, ÚNICA.** Se recorren en este orden fijo —**`originators`, después
-`lenders`**— y de cada uno se pide si, y solo si:
-
-```
-0 < totalXWorkedWith ≤ (TOPE − gastado hasta ahora)
-```
-
-El presupuesto se descuenta a medida que se compra, así que bajo tope 2 (con
-la ficha ya pagada queda 1) **se compra como mucho UNO**, y es el de
-originadores siempre que quepa. No hay excepciones ni casos «en la práctica»:
-se aplica la fórmula.
-
-`originators` va primero porque da `Su loan officer principal`, que es el
-nombre contra el que se compite. **`companies` no se pide nunca**: no produce
-ninguna de las 62 columnas.
-
-**Qué pasa cuando `totalXWorkedWith` es 0:** no se pide (lo excluye el `> 0`)
-y la celda correspondiente queda **vacía**, no lleva centinela. El centinela
-dice «no cupo»; aquí no es que no cupo, es que no hay nada que traer.
-
-Si no cabe ninguno, las columnas `Lenders (si cupo en el tope)` y
-`Originadores (si cupo)` llevan el centinela, con este formato **exacto**:
-
-```
-no consultado · <N> filas y quedaban <K> creditos del tope
-```
-
-donde **`N` = el `totalXWorkedWith` de la ficha** (las filas que habría
-traído) y **`K` = TOPE − gastado hasta ese momento** (lo que quedaba).
-`creditos` va **sin acento** y `del tope` al final: es el texto que ya está en
-el archivo y que el scoring reconoce.
+> Si se reactivaran, dos cosas medidas que hay que respetar: el orden que
+> devuelve la API es **por volumen, no por unidades** —en un caso real el
+> primero por volumen tenía 2 operaciones y el segundo 4— y `companies` no
+> aporta ninguna columna.
 
 ---
 
@@ -496,6 +462,15 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `totalLendersWorkedWith` | `Nº lenders` | tal cual |
 | `totalOriginatorsWorkedWith` | `Nº originadores` | tal cual |
 | `totalCompaniesWorkedWith` | `Nº compañías` | tal cual |
+| `scored.LastTransactionDate` | `Última operación` | epoch en milisegundos → fecha ISO. **Es la única señal de recencia** |
+| `licenses[]` | `Licencias (todas)` | `"<número> (<estado>, vence <fecha>)"` unidos con `" · "` |
+| `licenses[].state` | `Estados con licencia` | los estados distintos, ordenados, unidos con `" · "` |
+| `licenses[].expirationDate` | `Licencia vence` | **el vencimiento más próximo** |
+| `dualVolume` | `Dual ($)` | tal cual |
+| `scored.total_mortgaged_listing_volume` | `Ventas financiadas ($)` | tal cual |
+| `scored.total_mortgaged_dual_units` | `Dual financiadas (u)` | tal cual. Suele ser 0 |
+| `scored.total_mortgaged_dual_volume` | `Dual financiadas ($)` | tal cual. Suele ser 0 |
+| `scored.total_list_price` | `Suma de precios de listado` | tal cual |
 
 ### B · De los conteos — 5 columnas, 0 créditos
 
@@ -504,16 +479,21 @@ traduce, no se le quitan acentos ni el `⚠`.
 | count + `product.key: fha` | `¿Produce FHA?` | `total == 1` → `"sí"`, si no `"no"` |
 | count + `product.key: conventional` | `¿Produce convencional?` | ídem |
 | count + `product.key: va` | `¿Produce VA?` | ídem |
-| count + `footprint.lender: CASA`, `allTime` | `¿Ya financia con la casa?` | `total == 1` → `"SÍ"`, si no `"no"` |
-| el mismo con `units {gte:N}` por tramos | `Operaciones con la casa (al menos)` | el mayor N que dio 1 |
+| count + `footprint.lender`, `allTime` | `¿Trabajó con Everett · histórico?` | `total == 1` → `"SÍ"`, si no `"no"` |
+| el mismo con `units {gte, lt}` por bandas | `Operaciones con Everett · histórico` | la banda que dio 1 |
+| count + `footprint.lender`, `last12Months` | `¿Trabajó con Everett · 12 meses?` | ídem |
+| el mismo con bandas | `Operaciones con Everett · 12 meses` | ídem |
+| count + `buyerUnits` por año | `Historical units · por año` | los años con producción |
 
-### C · Del breakdown — 3 columnas, 1 por fila
+### C · De los conteos por bandas
 
 | columna | cómo |
 |---|---|
-| `Su loan officer principal` | del breakdown de originadores, el `label` de la fila con **más `units`** (no la primera que devuelve la API) |
-| `Lenders (si cupo en el tope)` | `"<label> (<units> u)"` unidos con `" · "`. Si **no cupo**, el centinela exacto: `no consultado · <N> filas y quedaban <K> creditos del tope`. Si `Nº lenders` es **0**, la celda va **vacía, sin centinela** |
-| `Originadores (si cupo)` | ídem con originadores: centinela si no cupo, **vacía** si `Nº originadores` es 0 |
+| `¿Trabajó con Everett · histórico?` | `SÍ` si el conteo con `allTime` da 1 |
+| `Operaciones con Everett · histórico` | la banda que dio 1. Exacto hasta 4, luego `5-9`, `10-19`, `20-49`, `50+` |
+| `¿Trabajó con Everett · 12 meses?` | lo mismo con `period: last12Months` |
+| `Operaciones con Everett · 12 meses` | ídem |
+| `Historical units · por año` | `"<año>: <unidades>"` de los años con producción, unidos con `" · "` |
 
 ### D · Calculadas — 13 columnas, 0 créditos
 
@@ -529,9 +509,21 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `Nº emails` | cuántos correos distintos trae Model Match — el largo de `Emails en Model Match`. Vacía si no se identificó |
 | `Nº teléfonos` | ídem con `Teléfonos en Model Match` |
 | `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en 4·E** |
-| `% por su LO principal` | unidades del LO top ÷ **suma de las unidades de todos sus LOs**. ⚠ **NO usar el `pctUnits` de la API**: su denominador no son las operaciones del agente y llega a dar 167 % |
+| `Precio medio de sus COMPRAS` | `buyerVolume ÷ buyerUnits`. **Distinto de `Precio medio`**, que mezcla los dos lados: éste es el precio de las casas que compran sus clientes |
+| `Precio medio de sus compras financiadas` | el cociente de los mortgaged buyer |
+| `Precio medio de sus listings` | `sellerVolume ÷ sellerUnits` |
+| `Venta vs listado (%)` | `total_sale_price ÷ total_list_price × 100`, un decimal. Bajo 100 vende con descuento sobre lo que pide |
+| `Primer año con producción` | el año más viejo con unidades |
+| `Años con producción` | en cuántos años distintos cerró algo |
+| `Antigüedad aproximada (años)` | año en curso − primer año + 1 |
 | `Créditos gastados` | el acumulado real del realtor. Entero |
 | `Consultado` | ISO 8601 con zona UTC, p. ej. `2026-09-24T20:59:16.308783+00:00` |
+
+> **Los ocho precios medios son aritmética, no datos nuevos.** Se comprobó
+> número a número contra el bloque `scored`: el cociente coincide. Por eso se
+> calculan en vez de guardarse dos veces. **La excepción es
+> `Loan medio de sus compradores`**, que NO es un cociente — es el préstamo
+> promedio, no el precio — y por eso viene de la ficha.
 
 > ⚠ **Discrepancia conocida con otra skill, sobre `Nº emails` y
 > `Nº teléfonos`.** La de las 113 columnas las describe como «conteos solo de
@@ -612,7 +604,8 @@ que no tiene ninguno.
 **`¿Produce FHA?`**, **`¿Produce convencional?`**, **`¿Produce VA?`** →
 `sí` · `no` · `sin comprobar`.
 
-**`¿Ya financia con la casa?`** → `SÍ` · `no` · `sin comprobar`.
+**`¿Trabajó con Everett · histórico?`** y **`· 12 meses?`** → `SÍ` · `no` ·
+`sin comprobar`.
 
 ### E bis · La tabla que une los tres textos — **la más importante**
 
@@ -655,10 +648,11 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | `Confianza` | `no encontrado` |
 | `⚠ Revisar porque…` | `no se encontró en Model Match` |
 | las 26 de la ficha | **vacías** |
-| `¿Produce FHA?` · `convencional` · `VA` · `¿Ya financia con la casa?` | `sin comprobar` |
-| `Operaciones con la casa (al menos)` | **vacía** |
-| `Lenders (si cupo en el tope)` · `Originadores (si cupo)` | `no consultado · ` (con el motivo vacío, porque no hubo conteo) |
-| `¿Fidelizado con un LO?` · `Su loan officer principal` · `% por su LO principal` | **vacías** |
+| `¿Produce FHA?` · `convencional` · `VA` | `sin comprobar` |
+| `¿Trabajó con Everett · histórico?` · `· 12 meses?` | `sin comprobar` |
+| `Operaciones con Everett · histórico` · `· 12 meses` | **vacías** |
+| `Historical units · por año` · `Primer año con producción` · `Años con producción` · `Antigüedad aproximada (años)` | **vacías** |
+| `¿Fidelizado con un LO?` | **vacía** |
 | `¿Teléfono coincide?` · `¿Cambió de casa?` | `sin_dato` |
 | `Nº emails` · `Nº teléfonos` | **vacías** (no se sabe cuántos tiene, no es que tenga cero) |
 | `Candidatos vistos` | el número real de candidatos distintos que devolvió la búsqueda, **también cuando no se eligió ninguno** |
@@ -669,13 +663,12 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 
 | situación | columna | valor |
 |---|---|---|
-| no se pidió el de **originadores** — por no caber, o por ser 0, o porque se compró el de lenders en su lugar | `Su loan officer principal` | **vacía** |
-| ídem | `% por su LO principal` | **vacía** |
-| `Nº originadores` = 0 | `Originadores (si cupo)` | **vacía**, sin centinela |
-| `Nº lenders` = 0 | `Lenders (si cupo en el tope)` | **vacía**, sin centinela |
-| `¿Ya financia con la casa?` = `no` | `Operaciones con la casa (al menos)` | **vacía** |
-| la casa da `SÍ` pero el tramo N = 2 da 0 | `Operaciones con la casa (al menos)` | `1` |
-| `Nº originadores` = 1 y se compró el breakdown | `% por su LO principal` | `100` |
+| `¿Trabajó con Everett · histórico?` = `no` | `Operaciones con Everett · histórico` | **vacía** |
+| ídem con la ventana de 12 meses | `Operaciones con Everett · 12 meses` | **vacía** |
+| da `SÍ` pero la banda `[2,3)` y las de arriba dan 0 | `Operaciones con Everett · …` | `1` |
+| `Nº originadores` = 0 | `¿Fidelizado con un LO?` | `sin operaciones financiadas atribuidas` — **no** `CAUTIVO` |
+| no produjo nada en ningún año | `Primer año con producción` · `Antigüedad aproximada (años)` | **vacías** |
+| el primer año con producción es 2017 | `Antigüedad aproximada (años)` | se escribe igual, **pero es un piso**: 2017 es el año más viejo del enum y su primera operación puede ser anterior |
 | la API devuelve un porcentaje > 100 | el que sea | **se guarda tal cual**, no se recorta |
 
 ### F ter · Los realtors en revisión SÍ se completan
@@ -696,8 +689,9 @@ deja de ser comparable.
 |---|---|
 | correos | minúsculas, sin repetidos, **orden alfabético**, unidos con `" · "` |
 | teléfonos | solo dígitos, sin repetidos, **orden alfabético de la cadena**, unidos con `" · "` |
-| `Lenders (si cupo)` / `Originadores (si cupo)` | en el orden que devuelve la API (por volumen), `"<label> (<units> u)"` unidos con `" · "` |
-| `Su loan officer principal` | el de **más `units`**; si empatan, el de más `volume`; si vuelven a empatar, el primero que devolvió la API |
+| `Historical units · por año` | por año ascendente, `"<año>: <unidades>"` unidos con `" · "`, **omitiendo los años sin producción** |
+| `Licencias (todas)` | por número, `"<número> (<estado>, vence <fecha>)"` unidos con `" · "` |
+| `Estados con licencia` | los estados distintos, **orden alfabético** |
 | perfiles duplicados con el mismo correo | gana el de mayor `volume`; si empatan, el primero que devolvió la búsqueda |
 | qué correos se buscan | los **2 primeros en orden alfabético** de los nuestros |
 | `Candidatos vistos` | ids **distintos** sumando todas las búsquedas hechas para ese realtor |
@@ -708,8 +702,10 @@ deja de ser comparable.
   redondear ni convertir**. Si devuelve un decimal —pasa con `Precio medio` y
   `Loan medio de sus compradores`— se guarda el decimal. Lo que no se hace
   nunca es inventar precisión ni recortarla.
-- `% unidades financiadas` y `% volumen financiado`: **un decimal**.
-- `% por su LO principal`: **entero**.
+- `% unidades financiadas`, `% volumen financiado` y `Venta vs listado (%)`:
+  **un decimal**.
+- Los precios medios calculados y `Antigüedad aproximada (años)`: **enteros**.
+- `Última operación` y `Licencia vence`: **fecha ISO**, `AAAA-MM-DD`.
 - **Vacío no es `0`.** Vacío = no se sabe; `0` = se sabe que es cero.
 - **Los porcentajes no se recortan a 100.** Si la API devuelve más, se guarda
   tal cual: el recorte, si hace falta, lo hace el scoring.
@@ -825,9 +821,8 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 ⚠ **La corrida de 298 realtors de septiembre de 2026 NO es el resultado
 esperado de este procedimiento, y no sirve de patrón de gasto.** Se hizo con
 un tope de 5, no de 2, y además siete realtors terminaron entre 6 y 8 porque
-una compra dirigida posterior sumó sin volver a mirar el tope. En ese archivo
-`% por su LO principal` tiene valores como 90, imposibles bajo el tope de 2,
-donde esa columna solo puede valer `100` o quedar vacía.
+una compra dirigida posterior sumó sin volver a mirar el tope. También se
+compraron breakdowns que este procedimiento ya no pide.
 
 Lo que sí es comparable de aquella corrida, porque no depende del tope:
 

@@ -168,6 +168,28 @@ def main() -> None:
             print("   dice «%s» · ok" % frase)
 
     print("")
+    print("── 3 bis bis · columnas RETIRADAS que el manual sigue nombrando ──")
+    # La direccion que faltaba. El chequeo 3 mira que cada columna del codigo
+    # este en el manual; este mira lo contrario: que el manual no prometa
+    # columnas que ya no existen. Fallo de verdad -- se retiraron cuatro
+    # columnas y el manual siguio explicandolas durante toda una version,
+    # mientras el verificador daba verde.
+    titulos = {c[1] for c in COLUMNAS}
+    for retirada in ("Su loan officer principal", "% por su LO principal",
+                     "Lenders (si cupo en el tope)", "Originadores (si cupo)",
+                     "¿Ya financia con la casa?",
+                     "Operaciones con la casa (al menos)"):
+        if retirada in titulos:
+            continue                      # sigue viva: no hay nada que mirar
+        if "`%s`" % retirada in texto:
+            linea = next((i for i, l in enumerate(texto.splitlines(), 1)
+                          if "`%s`" % retirada in l), "?")
+            fallos.append("linea %s: el manual nombra `%s`, que ya no es una "
+                          "columna" % (linea, retirada))
+            print("   ⚠ linea %s · %s" % (linea, retirada))
+    print("   revisadas las retiradas conocidas")
+
+    print("")
     print("── 3 bis · tablas partidas ──")
     # Una tabla markdown se corta con la primera linea que no empieza por `|`.
     # Si despues de ese corte vuelven filas `|`, la tabla quedo en dos y las
