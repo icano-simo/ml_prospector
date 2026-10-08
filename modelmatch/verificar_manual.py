@@ -23,7 +23,14 @@ sys.path.insert(0, RAIZ)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from modelmatch.a_excel import (APARTE, CALC, COLUMNAS, FICHA,  # noqa: E402
-                                NUESTRO, cargar, preparar)
+                                NUESTRO, cargar, columnas_ig, preparar)
+from modelmatch.anios_buyside import BANDAS as B_ANIOS  # noqa: E402
+from modelmatch.anios_buyside import etiqueta as etq_anios  # noqa: E402
+from modelmatch.auditar_casa import CONFIRMADOS, DUDOSOS  # noqa: E402
+from modelmatch.everett import CASA  # noqa: E402
+from modelmatch.everett_bandas import BANDAS as B_EVERETT  # noqa: E402
+from modelmatch.everett_bandas import etiqueta as etq_everett  # noqa: E402
+from modelmatch.extraer import TOPE_POR_REALTOR as TOPE  # noqa: E402
 
 MANUAL = os.path.join(RAIZ, ".claude", "skills", "modelmatch-minado",
                       "SKILL.md")
@@ -89,7 +96,6 @@ PROHIBIDAS = [
                             "termina en `del tope`"),
     ("quedaban <M> créditos", "idem"),
     ("creditos del tope\"", "idem: revisar comillas y formato"),
-    ("34 columnas aprobadas", "son 47: 34 de la API y 13 calculadas"),
     ("tercera fila de la tabla", "es la SEGUNDA columna de la tabla"),
     ("= `muy concentrado`;", "el texto completo es `muy concentrado · 2-3 LOs`"),
     ("1 = `CAUTIVO · 1 solo LO`;", "n=0 tambien hay que cubrirlo y no es "
@@ -153,19 +159,36 @@ def main() -> None:
           % (n_mm, n_calc, n_mm + n_calc))
 
     print("")
-    print("── 1 bis · el manual dice el numero REAL de columnas ──")
-    # El numero sale citado en el texto y en la descripcion. Si alguien agrega
-    # una columna y no toca el texto, el manual promete una cosa y el codigo
-    # entrega otra. Ya paso: decia 34 y habia 47.
-    n_api = sum(1 for c in COLUMNAS if c[3] in (FICHA, APARTE))
+    print("── 1 bis · TODO numero de columnas que el manual cite ──")
+    # Los numeros escritos a mano se desfasan SIEMPRE. Ya paso tres veces:
+    # decia 34 cuando habia 47, y despues 26, 30, 13 y 5 en distintas tablas
+    # cuando los valores reales eran otros. En vez de corregirlos uno por uno,
+    # se prohibe citar un numero que no sea uno de los reales.
+    import re as _re0
+    n_ficha = sum(1 for c in COLUMNAS if c[3] == FICHA)
+    n_cont = sum(1 for c in COLUMNAS if c[3] == APARTE)
     n_cal = sum(1 for c in COLUMNAS if c[3] == CALC)
-    for frase, cuanto in (("%d columnas" % (n_api + n_cal), n_api + n_cal),
-                          ("%d de la API" % n_api, n_api),
-                          ("%d se calculan" % n_cal, n_cal)):
+    n_nuestras = sum(1 for c in COLUMNAS if c[3] == NUESTRO)
+    n_api = n_ficha + n_cont
+    # La hoja entera y el bloque de Instagram tambien son numeros legitimos:
+    # el plano del archivo los cita, y los genera el mismo script que la tabla
+    # de posiciones, asi que no pueden desfasarse.
+    n_ig = len(columnas_ig(filas))
+    legitimos = {n_ficha, n_cont, n_cal, n_api, n_cal + n_api, n_nuestras,
+                 n_ig, len(COLUMNAS) + n_ig}
+    print("   numeros validos: %s" % sorted(legitimos))
+    for m in _re0.finditer(r"(\d+)\s+columnas", texto):
+        cuanto = int(m.group(1))
+        if cuanto in legitimos:
+            continue
+        linea = texto[:m.start()].count("\n") + 1
+        fallos.append("linea %d: dice «%s columnas» y no es ninguno de los "
+                      "numeros reales %s" % (linea, cuanto, sorted(legitimos)))
+        print("   ⚠ linea %d · «%d columnas»" % (linea, cuanto))
+    for frase in ("%d columnas" % (n_api + n_cal), "%d de la API" % n_api,
+                  "%d se calculan" % n_cal):
         if frase not in texto:
             fallos.append("el manual no dice «%s» y deberia" % frase)
-        else:
-            print("   dice «%s» · ok" % frase)
 
     print("")
     print("── 3 bis bis · columnas RETIRADAS que el manual sigue nombrando ──")
@@ -247,6 +270,80 @@ def main() -> None:
         if ref not in pasos:
             fallos.append("referencia al paso %s, que no existe" % ref)
     print("   %d secciones y %d pasos reales" % (len(secciones), len(pasos)))
+
+    print("")
+    print("── 5 · el tope, el mismo numero en el codigo y en el manual ──")
+    # El tope bajo de 2 a 1 y quedaron CUATRO sitios diciendo 2, uno de ellos
+    # un bloque de codigo copiable. Un manual que autoriza el doble de lo que
+    # el codigo permite no es impreciso: es permiso escrito.
+    if "TOPE_POR_REALTOR = %d" % TOPE not in texto:
+        fallos.append("el manual no muestra «TOPE_POR_REALTOR = %d»" % TOPE)
+    for m in _re0.finditer(r"TOPE_POR_REALTOR = (\d+)", texto):
+        if int(m.group(1)) != TOPE:
+            linea = texto[:m.start()].count("\n") + 1
+            fallos.append("linea %d: el manual muestra TOPE_POR_REALTOR = %s y "
+                          "el codigo dice %d" % (linea, m.group(1), TOPE))
+    for m in _re0.finditer(r"tope de (\d+) cr[eé]dito", texto):
+        if int(m.group(1)) != TOPE:
+            linea = texto[:m.start()].count("\n") + 1
+            fallos.append("linea %d: dice «tope de %s creditos» y el tope es %d"
+                          % (linea, m.group(1), TOPE))
+    for m in _re0.finditer(r"por encima de (\d+) cr[eé]dito", texto):
+        if int(m.group(1)) != TOPE:
+            linea = texto[:m.start()].count("\n") + 1
+            fallos.append("linea %d: el chequeo de corrida permite %s creditos "
+                          "y el tope es %d" % (linea, m.group(1), TOPE))
+    print("   tope del codigo: %d" % TOPE)
+
+    print("")
+    print("── 6 · los ids de Everett: tres copias, una sola lista ──")
+    # La lista vive duplicada en el codigo --everett.py y auditar_casa.py-- y
+    # una tercera vez en el bloque copiable del manual. Un id que falte en una
+    # de las tres deja pasar por prospecto nuevo a alguien que ya es cliente.
+    del_manual = []
+    for bloque in _re2.findall(r"^```[a-z]*\n(.*?)^```", texto,
+                               _re2.S | _re2.M):
+        lineas_b = [x.strip() for x in bloque.splitlines() if x.strip()]
+        if lineas_b and lineas_b[0] == CASA[0]:
+            del_manual = lineas_b
+            break
+    tres = {"everett.py": list(CASA),
+            "auditar_casa.py": CONFIRMADOS + DUDOSOS,
+            "el manual": del_manual}
+    for nombre, lista in tres.items():
+        if lista != list(CASA):
+            fallos.append("los ids de Everett de %s no coinciden con los de "
+                          "everett.py: sobran %s, faltan %s"
+                          % (nombre, sorted(set(lista) - set(CASA)),
+                             sorted(set(CASA) - set(lista))))
+    print("   %d ids · %s" % (len(CASA),
+                              "las tres copias coinciden"
+                              if all(v == list(CASA) for v in tres.values())
+                              else "⚠ DIFIEREN"))
+
+    print("")
+    print("── 7 · las bandas del manual son las del codigo ──")
+    # Las bandas se escribieron a mano en el manual y ya estaban mal: decia
+    # «1 · 2 · 3 · 4 · 5-9» cuando el codigo agrupa 3 y 4 en una sola. Un
+    # numero de operaciones con Everett mal leido decide una exclusion.
+    # No se comprueban solo los CORTES: se comprueba la ETIQUETA, que es lo
+    # que alguien lee. La etiqueta se importa del codigo --`etiqueta()`-- en
+    # vez de reescribirla aqui, porque una copia se desfasa igual que la del
+    # manual y entonces el verificador avalaria el error.
+    for nombre, bandas, fn in (("Everett", B_EVERETT, etq_everett),
+                               ("historical units", B_ANIOS, etq_anios)):
+        for gte, lt in bandas:
+            cota = "%d" % lt if lt is not None else "—"
+            fila = "| %d | %s |" % (gte, cota)
+            if fila not in texto:
+                fallos.append("banda de %s sin su fila `%s` en el manual"
+                              % (nombre, fila))
+            celda = "`%s`" % fn(gte, lt)
+            if celda not in texto:
+                fallos.append("banda [%s, %s) de %s: el manual no escribe en "
+                              "ninguna parte la etiqueta %s que el codigo "
+                              "emite" % (gte, lt, nombre, celda))
+        print("   %-18s %d bandas · cortes y etiquetas" % (nombre, len(bandas)))
 
     print("")
     print("── 4 · cada caso de identificacion tiene sus tres textos ──")

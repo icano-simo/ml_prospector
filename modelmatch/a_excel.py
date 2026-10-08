@@ -1,12 +1,18 @@
 """El Excel de los realtors con Instagram, con lo que trajo Model Match.
 
-Seis hojas:
-  1 Realtors      una fila por realtor, todo lo que se pudo sacar
-  2 Lenders       una fila por (realtor, lender) -- formato largo, filtrable
-  3 Originadores  idem con los LOs
-  4 Companias     idem con las compañias hipotecarias
-  5 Revisar       los que NO se encontraron o el match no es seguro
-  6 Como leer     que significa cada columna, que costo y que NO esta
+Ocho hojas:
+  1 Realtors                una fila por realtor, todo lo que se pudo sacar
+  2 Lenders                 una fila por (realtor, lender) -- formato largo
+  3 Originadores            idem con los LOs
+  4 Companias               idem con las compañias hipotecarias
+  5 Revisar                 los que NO se encontraron o el match no es seguro
+  6 Diccionario de campos   columna por columna: que es y que costo
+  7 Como interpretar        como se leen juntos, no solo uno a uno
+  8 Como leer esto          los limites y las trampas de lectura
+
+Las hojas 2, 3 y 4 son de la corrida vieja, la unica que pago los breakdowns.
+El minado de hoy no los pide --cuestan 1 por fila-- asi que no crecen, y la 4
+queda siempre vacia. Se dejan porque lo ya pagado sigue siendo valido.
 
 La hoja 5 existe por una razon: un match por nombre que nadie reviso se ve
 igual que uno confirmado por correo, y actuar sobre el equivocado es peor que
@@ -251,7 +257,8 @@ COLUMNAS = [
      "estuviera cerrando, no solo habilitado."),
 
     ("creditos_gastados", "Créditos gastados", 13, CALC,
-     "Lo que costó este realtor. El tope es 2."),
+     "Lo que costó este realtor. El tope es 1: la ficha es la única llamada "
+     "que cobra. Un 2 acá significa que se le compró la ficha dos veces."),
     ("consultado_en", "Consultado", 20, CALC,
      "Cuándo se pidió el dato a Model Match (UTC)."),
     ("realtor_id", "realtor_id", 36, NUESTRO,

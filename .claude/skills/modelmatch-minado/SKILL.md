@@ -1,6 +1,6 @@
 ---
 name: modelmatch-minado
-description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 62 columnas aprobadas (43 de la API y 19 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 2 créditos por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
+description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 62 columnas aprobadas (43 de la API y 19 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 1 crédito por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
 ---
 
 # Minado de Model Match — manual operativo
@@ -16,10 +16,11 @@ con su número de posición en 4·I — esa tabla **la regenera
 desfasarse. Las demás columnas del archivo son de nuestra base y de Instagram,
 y no se le piden a nadie.
 
-**Tope: 2 créditos por realtor.** Y de esas 62, **solo las de la ficha
-cuestan**: la ficha es 1 crédito y trae 30 columnas de una. Todo lo demás
-—Everett con sus dos ventanas, los programas, la producción por año— sale de
-`count`, que **no cobra**.
+**Tope: 1 crédito por realtor.** No dos. Con los breakdowns retirados, la
+única llamada que cobra es la ficha y cuesta exactamente 1: **un techo que
+nadie puede alcanzar no es un techo, es permiso.** Todo lo demás —Everett con
+sus dos ventanas, los programas, la producción por año— sale de `count`, que
+**no cobra**.
 
 > ⚠ **Los textos de las columnas de vocabulario cerrado son exactos, y el
 > scoring filtra por igualdad.** Poner una coma donde va el separador `·`, o
@@ -89,7 +90,7 @@ que no se movió ni una décima mientras `balance.total` bajaba 30.
 ## 2 · El presupuesto, y cómo se hace cumplir
 
 ```
-TOPE_POR_REALTOR = 2
+TOPE_POR_REALTOR = 1
 ```
 
 ### El modelo de costo, medido contra el ledger
@@ -112,15 +113,23 @@ gratis.**
 | paso | costo | columnas que paga |
 |---|---|---|
 | 1 · identificar | 0 | — |
-| 2 · ficha | **1** | 26 |
+| 2 · ficha | **1** | 35 |
 | 3 · verificar | 0 | — |
-| 4 · banderas y exclusión | 0 | 5 |
-| 5 · breakdown, solo si cabe | 0 ó 1 | 3 |
+| 4 · banderas y exclusión | 0 | 4 |
+| 4 bis · Everett con número, programas y producción por año | 0 | 4 |
+| — | | + 19 calculadas a partir de las anteriores |
+
+**La ficha es la única línea con un número distinto de cero, y ese número es
+1.** No hay un paso 5: los breakdowns se retiraron.
 
 ### Las cuatro guardas, obligatorias
 
-1. **Antes de cada breakdown**, comparar `totalXWorkedWith` de la ficha con lo
-   que queda del tope. Si no cabe, **no se pide** y la celda dice por qué.
+1. **Antes de gastar, comprobar que el realtor no tiene ya ficha comprada.**
+   Con el tope en 1 y una sola llamada que cobra, la forma de pasarse es
+   comprar dos veces la misma ficha, no comprar algo caro. El registro del
+   realtor ya dice `creditos_gastados`: si es ≥ 1, **no se compra nada más**,
+   y si hace falta re-leer la ficha se lee del crudo en `data/raw/`, que ya
+   está pagado.
 2. **El acumulado vive en el registro del realtor** (`creditos_gastados`), y
    **cualquier script posterior que compre algo para ese realtor tiene que
    volver a comprobar el tope**. Esto ya falló: una compra dirigida sumó sobre
@@ -206,7 +215,7 @@ GET /v1/agents/{mm_id}
 ```
 
 Sin cuerpo. Devuelve `data` con 27 campos de primer nivel más el bloque
-`scored`. **Paga 26 de las 34 columnas de una sola vez.**
+`scored`. **Paga 35 columnas de una sola vez.**
 
 **Siempre la ficha, nunca `POST /v1/agents` para un agente concreto:** cuestan
 lo mismo (1) y la lista **no trae el bloque `scored`**, que es donde están las
@@ -261,18 +270,27 @@ footprint.** Con `dimension: lender` sin lender fijo, el porcentaje se mide
 20 % de FHA real aparece en la banda «≥50 %». Costó 503 créditos descubrirlo.
 **Solo el sí/no es válido.**
 
-#### Relación con la casa — 1 llamada
+#### Quién es Everett, y los nueve ids
 
-```json
-POST /v1/agents/count
-{"flatFilters": {"id": "<mm_id>"},
- "footprint": {"lender": [<ids de la casa>]},
- "period": "allTime"}
-```
+**«La casa» es Everett Financial, Inc. (NMLS 2129), que opera como Supreme
+Lending, y nadie más.** En el código la constante se llama `CASA` por
+herencia; **en las columnas, en los informes y en este manual se escribe
+Everett**, porque «la casa» no se entiende fuera de aquí.
 
-**Los ids de la casa, fijados acá** (comprobados contra `instant-search` el
-2026-09-25; el espejo ejecutable está en `modelmatch/everett.py`, lista
-`CASA`, y si los dos difieren manda este manual hasta que alguien decida):
+La pregunta de si trabajó con Everett **no se hace acá**: es la llamada base
+de las bandas del paso 4 bis, que la hace una vez por ventana y sigue
+preguntando el número. Esta sección fija **con qué ids se pregunta**; el paso
+4 bis fija **cómo**.
+
+**Los nueve ids de Everett, fijados acá** (comprobados contra `instant-search`
+el 2026-09-25). Son los mismos que usan el paso 4 bis y cualquier otra llamada
+que nombre a Everett: **la lista es una sola, no se recorta por llamada.**
+
+El código la tiene **duplicada en dos sitios**, y los dos deben decir esto
+mismo: `CASA` en `modelmatch/everett.py`, y `CONFIRMADOS + DUDOSOS` en
+`modelmatch/auditar_casa.py` —que es de donde la lee `everett_bandas.py`—.
+`verificar_manual.py` comprueba que los tres coincidan. Si alguno difiere,
+**manda este manual** hasta que alguien decida:
 
 El bloque es copiable tal cual: **un id por línea, sin comentarios dentro.**
 
@@ -314,19 +332,33 @@ NMLS 2371076.
   con el historial completo dan 79. Para una exclusión, una operación de hace
   tres años sigue contando.
 
-#### El peso de esa relación — solo si la anterior dio 1
-
-Repetir la misma llamada agregando `"units": {"gte": N}` dentro del
-`footprint`, con N = 2, 3, 5, 10, 20. El mayor N que devuelva 1 es el tramo.
-
-✅ **Acá el umbral SÍ significa lo que dice**, porque el lender es explícito.
-Comprobado contra un caso con 3 operaciones en su tabla cruda: aparece en 1, 2
-y 3 y desaparece en 5.
+El número de operaciones **no** se pide acá: sale de las bandas del paso 4
+bis, que son excluyentes y dan el número en vez de un «al menos N».
 
 ### Paso 4 bis · Everett con número, programas y producción por año — 0 créditos
 
 Todo esto es `POST /v1/agents/count`, así que **no cobra**, y reemplaza a las
 columnas que antes salían de llamadas por fila.
+
+#### El orden, y por qué importa aunque sea gratis
+
+Gratis no es instantáneo: el cliente espera entre llamadas, y un realtor
+completo son **del orden de 40 conteos**. El orden fijo es:
+
+| | qué | script | llamadas por realtor |
+|---|---|---|---|
+| 1 | tipo de préstamo (paso 4) | `modelmatch/paso4.py` | 3 |
+| 2 | Everett, dos ventanas con bandas | `modelmatch/everett_bandas.py` | 2 a 16 |
+| 3 | producción por año | `modelmatch/anios_buyside.py` | 1 a 13 por periodo |
+
+**Van en ese orden y no en otro por una razón concreta: el 2 aborta el lote
+entero si la cota superior dejó de recortar**, y conviene que aborte antes de
+gastar horas en el 3, que es el largo —en la corrida de referencia, 471
+realtors tardaron unas 20 horas y 15.500 llamadas.
+
+**Los tres son independientes y reanudables**: cada uno escribe en el registro
+del realtor apenas termina con él y se salta a los que ya lo tienen. Volver a
+correr cualquiera de los tres no rompe nada y no cuesta nada.
 
 #### Everett, en dos ventanas y con el número
 
@@ -335,60 +367,182 @@ llamada**, así que la banda se pide de una:
 
 ```json
 {"flatFilters": {"id": "<mm_id>"},
- "footprint": {"lender": [<ids de Everett>], "units": {"gte": 1, "lt": 10}},
+ "footprint": {"lender": [<la lista CASA entera>], "units": {"gte": 3, "lt": 5}},
  "period": "allTime"}
 ```
+
+**`<la lista CASA entera>` son los nueve ids del paso 4**, los mismos y todos,
+sin recortar y sin agregar ninguno de la lista de parecidos. El espejo
+ejecutable es `CASA` en `modelmatch/everett_bandas.py`, que la arma como
+`CONFIRMADOS + DUDOSOS` desde `modelmatch/auditar_casa.py`.
+
+##### La comprobación que va ANTES del lote
 
 ✅ **La cota superior recorta de verdad.** Comprobado contra un realtor con 3
 operaciones conocidas por su tabla cruda: la banda `[3,4)` devuelve 1 y la
 `[4,5)` devuelve 0. Si `lt` se ignorara, **todas** las bandas darían positivo
-y el número sería siempre el de la primera — por eso se comprueba antes de
-correr un lote.
+y el número sería siempre el de la primera.
 
-Bandas: 1 · 2 · 3 · 4 · 5-9 · 10-19 · 20-49 · 50+. Finas abajo, gruesas
-arriba: la diferencia entre 2 y 3 operaciones decide, la de 60 a 70 no.
+**Esto no es una nota histórica: es un paso obligatorio.** Antes de cada lote
+se vuelve a medir contra un realtor cuyo número se conoce por su tabla cruda
+de lenders, y **si no da `[n, n+1) → 1` y `[n+1, n+2) → 0`, el lote no se
+corre.** El script lo hace solo y aborta; un agente que repita el
+procedimiento a mano tiene que hacerlo igual.
 
-Se pide con `period: "allTime"` **y** con `period: "last12Months"`: una
-relación de hace cuatro años no es la misma cosa que una viva.
+##### Las bandas, exactas
 
-#### Programas
+Siete llamadas por ventana, **en este orden y con estos cortes**:
 
-```json
-{"flatFilters": {"id": "<mm_id>"},
- "footprint": {"dimension": "lender",
-               "product": {"mix": "loanType", "key": "fha"}},
- "period": "last24Months"}
-```
+| `gte` | `lt` | lo que se escribe en la celda |
+|---|---|---|
+| 1 | 2 | `1` |
+| 2 | 3 | `2` |
+| 3 | 5 | `3-4` |
+| 5 | 10 | `5-9` |
+| 10 | 20 | `10-19` |
+| 20 | 50 | `20-49` |
+| 50 | — | `50` |
 
-⚠ **Solo el sí/no.** Las **unidades** por programa NO son fiables por esta
-vía: con `dimension: lender` y sin lender fijo se miden **dentro del bucket de
-un lender suelto**, no sobre el agente. Si hace falta el número, hay que
-nombrar el lender: `{"lender": [...], "product": {...}}` sí está bien
-definido («N operaciones FHA financiadas por Everett»).
+Un guion en la columna `lt` significa **que esa llamada va sin `lt`**, no que
+lleve un `lt` vacío: el `units` queda en `{"gte": 50}` y nada más.
+
+Finas abajo, gruesas arriba: la diferencia entre 2 y 3 operaciones decide, la
+de 60 a 70 no.
+
+**Antes de las siete va una llamada más, la base**: `units: {"gte": 1}` sin
+`lt`. Si devuelve 0, el realtor no trabajó con Everett en esa ventana, la
+celda del número queda **vacía** —no `0`— y **las siete bandas no se piden**.
+Son 8 llamadas por ventana en el peor caso, 1 en el mejor, y las 16 juntas
+siguen costando 0.
+
+##### Qué hacer si ninguna banda devuelve 1, o si devuelve 1 más de una
+
+- **Son excluyentes por construcción** —`[1,2)`, `[2,3)`, `[3,5)`…— así que
+  dos positivas serían una contradicción de la API, no una ambigüedad del
+  método. **Se recorren en el orden de la tabla y se toma la primera que dé
+  1**, y no se sigue preguntando.
+- **Si la base dio ≥1 y ninguna de las siete da 1**, se escribe `50+`. Es el
+  caso de alguien por encima del último corte sin cota superior, que no
+  debería existir —la última banda no tiene `lt`— y por eso vale como señal de
+  que algo se movió en la API.
+- **Si una llamada no devuelve un `total` numérico** (error, respuesta rara),
+  cuenta como «no es esta banda» y se sigue con la siguiente. No se reintenta
+  dentro del lote.
+
+##### Las dos ventanas
+
+Todo lo anterior se hace **dos veces**: con `period: "allTime"` y con
+`period: "last12Months"`. Una relación de hace cuatro años no es la misma cosa
+que una viva, y la diferencia entre las dos columnas es el hallazgo: de 136
+con relación histórica, 21 la tienen en 12 meses.
+
+Las cuatro celdas que salen de acá, con su nombre exacto:
+
+| ventana | sí/no | número |
+|---|---|---|
+| `allTime` | `¿Trabajó con Everett · histórico?` | `Operaciones con Everett · histórico` |
+| `last12Months` | `¿Trabajó con Everett · 12 meses?` | `Operaciones con Everett · 12 meses` |
+
+El sí/no lleva `SÍ` (con tilde y en mayúsculas) o `no`; el número lleva lo de
+la tabla de bandas, o vacío.
+
+#### Programas — ya están en el paso 4
+
+Las tres llamadas de FHA, convencional y VA **son las del paso 4 y no se
+repiten acá**. Están ahí porque son banderas, no números, y porque su límite
+—que solo el sí/no es válido— se explica junto al payload.
+
+Si hiciera falta el **número** de operaciones por programa, el rodeo bien
+definido es nombrar el lender: `{"lender": [...], "product": {...}}` sí mide
+sobre el agente («N operaciones FHA financiadas por Everett»). **No está
+aprobado como columna**, así que hoy no se pide.
 
 #### Historical units — producción por año
 
+**Cuenta `buyerUnits`, NO las unidades totales.** Es el lado comprador y nada
+más: un realtor que vende mucho y compra poco sale bajo acá, y está bien que
+salga bajo, porque lo que se origina es la compra. No confundir con
+`Unidades 12m (MM)`, que son las dos puntas.
+
+El filtro va en `flatFilters` —no en el `footprint`— y acepta las dos cotas:
+
 ```json
-{"flatFilters": {"id": "<mm_id>", "buyerUnits": {"gte": 3, "lt": 5}},
+{"flatFilters": {"id": "<mm_id>", "buyerUnits": {"gte": 3, "lt": 4}},
  "period": "2024"}
 ```
+
+##### Cómo sale el número exacto
+
+Igual que las bandas de Everett, y por la misma razón: el conteo responde
+sí/no, así que se acorrala. Por **cada periodo**:
+
+1. **La base**: `buyerUnits: {"gte": 1}` sin `lt`. Si devuelve 0, ese periodo
+   queda **vacío** —no `0`— y **no se piden las bandas**.
+2. Si dio 1, se recorren **doce bandas en este orden**, y se toma la primera
+   que devuelva 1:
+
+| `gte` | `lt` | celda | | `gte` | `lt` | celda |
+|---|---|---|---|---|---|---|
+| 1 | 2 | `1` | | 7 | 10 | `7-9` |
+| 2 | 3 | `2` | | 10 | 15 | `10-14` |
+| 3 | 4 | `3` | | 15 | 20 | `15-19` |
+| 4 | 5 | `4` | | 20 | 30 | `20-29` |
+| 5 | 7 | `5-6` | | 30 | 50 | `30-49` |
+| | | | | 50 | 100 | `50-99` |
+| | | | | 100 | — | `100+` |
+
+Si la base dio ≥1 y ninguna de las doce da 1, se escribe `100+`. Las mismas
+tres reglas de las bandas de Everett valen aquí: excluyentes, primera que da
+1, y una respuesta sin `total` numérico cuenta como «no es esta banda».
+
+##### Qué periodos se piden
+
+**Los años completos desde 2017 hasta el anterior al año en curso**, más
+`yearToDate` y `last3Months`. El rango se calcula solo —`range(2017, año en
+curso)`— así que no hay que tocar nada en enero.
+
+- **2017 es el más viejo que acepta el enum.** No es que nadie produjera
+  antes: es que no se puede preguntar.
+- **«Año en curso» es el año del reloj de la máquina en UTC**, el mismo con el
+  que se sella `Consultado`.
 
 ⛔ **El año en curso NO se pide como año literal.** Está medido: para un
 agente con más de cinco operaciones en `yearToDate`, `period: "2026"` devuelve
 **0**. El bucket del año corriente no está poblado, y pedirlo así hace creer
 que el realtor dejó de producir. **Para el año en curso va `yearToDate`.**
 
-Se piden los años completos desde 2017 —el más viejo del enum— más
-`yearToDate` y `last3Months`.
-
 ⛔ **No hay trimestres calendario.** El `period` de agentes no los tiene;
 `last3Months` es un trimestre **móvil**. Los trimestres de verdad solo salen
 de `agentAnalyticsTimeSeries`, que devuelve filas y **cuesta**.
 
+##### Dónde aterriza cada periodo
+
+**Los tres tipos de periodo van a la MISMA celda**, `Historical units · por
+año`, uno por segmento, en el formato `<periodo>: <número>`, unidos con
+`" · "` y ordenados alfabéticamente —que deja los años primero, después
+`last3Months` y al final `yearToDate`—. Los periodos vacíos **no se escriben**:
+la celda solo nombra los que tuvieron producción.
+
+```
+2019: 3 · 2020: 5-6 · 2021: 10-14 · 2024: 2 · last3Months: 1 · yearToDate: 4
+```
+
+**No hay columna propia para `yearToDate` ni para `last3Months`.** Si alguien
+los busca aparte, están ahí dentro y en ningún otro lugar.
+
 #### Derivados, sin una sola llamada más
 
-- **Primer año con producción** = el más viejo con unidades.
-- **Antigüedad aproximada** = año en curso − primer año + 1.
+Los tres salen de la misma celda, y **los tres ignoran `yearToDate` y
+`last3Months`**: solo miran las claves que son un año de cuatro dígitos. Si no
+fuera así, `last3Months` contaría como un año más y la antigüedad saldría
+inflada.
+
+- **`Primer año con producción`** = el año más viejo con unidades.
+- **`Años con producción`** = en cuántos años distintos cerró al menos una.
+  **No es un rango**: alguien que produjo en 2017 y en 2025 y nada en medio
+  lleva `2`, no `9`.
+- **`Antigüedad aproximada (años)`** = año en curso − primer año + 1. Vacía si
+  no hay primer año.
 - ⚠ **Si el primer año es 2017, la antigüedad está topada**: 2017 es el año
   más viejo del enum, así que su primera operación puede ser anterior y no hay
   forma de saberlo desde aquí. Esa fila lleva su propio aviso.
@@ -408,7 +562,7 @@ Por qué se retiraron, en orden de peso:
    `pagination: {size: 1}` con `sort` por unidades y **la API no lo rechazó,
    lo ignoró** — devolvió 3 filas y cobró 3. No hay forma de comprar solo la
    primera. **No reintentar.**
-3. **Con tope 2 casi nunca cabían**: la mediana es 10 lenders y 10 LOs por
+3. **Con el tope de 1 no cabían nunca**: la mediana es 10 lenders y 10 LOs por
    realtor, así que en la mayoría la celda decía «no consultado» y no aportaba
    nada.
 
@@ -432,7 +586,7 @@ transformación se le aplica. **El nombre de la columna es, carácter a
 carácter, el de la segunda columna de cada tabla** — no se renombra, no se
 traduce, no se le quitan acentos ni el `⚠`.
 
-### A · De la ficha `GET /v1/agents/{id}` — 26 columnas, 1 crédito
+### A · De la ficha `GET /v1/agents/{id}` — 35 columnas, 1 crédito
 
 | campo de la API | columna del Excel | transformación |
 |---|---|---|
@@ -472,7 +626,7 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `scored.total_mortgaged_dual_volume` | `Dual financiadas ($)` | tal cual. Suele ser 0 |
 | `scored.total_list_price` | `Suma de precios de listado` | tal cual |
 
-### B · De los conteos — 5 columnas, 0 créditos
+### B · De los conteos — 8 columnas, 0 créditos
 
 | llamada | columna | valor |
 |---|---|---|
@@ -490,12 +644,12 @@ traduce, no se le quitan acentos ni el `⚠`.
 | columna | cómo |
 |---|---|
 | `¿Trabajó con Everett · histórico?` | `SÍ` si el conteo con `allTime` da 1 |
-| `Operaciones con Everett · histórico` | la banda que dio 1. Exacto hasta 4, luego `5-9`, `10-19`, `20-49`, `50+` |
+| `Operaciones con Everett · histórico` | la banda que dio 1: exacto hasta `2`, luego `3-4`, `5-9`, `10-19`, `20-49`, `50`. La tabla completa está en el paso 4 bis |
 | `¿Trabajó con Everett · 12 meses?` | lo mismo con `period: last12Months` |
 | `Operaciones con Everett · 12 meses` | ídem |
 | `Historical units · por año` | `"<año>: <unidades>"` de los años con producción, unidos con `" · "` |
 
-### D · Calculadas — 13 columnas, 0 créditos
+### D · Calculadas — 19 columnas, 0 créditos
 
 | columna | cómo |
 |---|---|
@@ -510,7 +664,7 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `Nº teléfonos` | ídem con `Teléfonos en Model Match` |
 | `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en 4·E** |
 | `Precio medio de sus COMPRAS` | `buyerVolume ÷ buyerUnits`. **Distinto de `Precio medio`**, que mezcla los dos lados: éste es el precio de las casas que compran sus clientes |
-| `Precio medio de sus compras financiadas` | el cociente de los mortgaged buyer |
+| `Precio medio de sus compras financiadas` | `scored.total_mortgaged_buyer_volume ÷ scored.total_mortgaged_buyer_units`. **Es un PRECIO de casa, no un préstamo** — ver el aviso de abajo |
 | `Precio medio de sus listings` | `sellerVolume ÷ sellerUnits` |
 | `Venta vs listado (%)` | `total_sale_price ÷ total_list_price × 100`, un decimal. Bajo 100 vende con descuento sobre lo que pide |
 | `Primer año con producción` | el año más viejo con unidades |
@@ -519,14 +673,28 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `Créditos gastados` | el acumulado real del realtor. Entero |
 | `Consultado` | ISO 8601 con zona UTC, p. ej. `2026-09-24T20:59:16.308783+00:00` |
 
-> **Los ocho precios medios son aritmética, no datos nuevos.** Se comprobó
-> número a número contra el bloque `scored`: el cociente coincide. Por eso se
-> calculan en vez de guardarse dos veces. **La excepción es
-> `Loan medio de sus compradores`**, que NO es un cociente — es el préstamo
-> promedio, no el precio — y por eso viene de la ficha.
+> **Los cuatro cocientes —tres precios medios y `Venta vs listado (%)`— son
+> aritmética, no datos nuevos.** Se comprobó número a número contra el bloque
+> `scored`: el cociente coincide. Por eso se calculan en vez de guardarse dos
+> veces.
+>
+> ⚠ **`Precio medio de sus compras financiadas` y
+> `Loan medio de sus compradores` NO son la misma cosa, y se parecen lo
+> bastante para confundirse.** El primero es el **precio de la casa** y se
+> calcula; el segundo es el **monto del préstamo**, viene de la ficha
+> (`scored.average_mortgaged_loan_amount`) y **no es un cociente de nada que
+> tengamos**. En la ficha de referencia valen 241.974 y 231.284: la diferencia
+> es el pie que puso el comprador, y es justo el dato que se pierde si se
+> toman por intercambiables.
+>
+> **Dos campos de la ficha se leen sin tener columna propia**:
+> `scored.total_sale_price` —solo alimenta el numerador de
+> `Venta vs listado (%)`— y `licenses[]`, que alimenta las tres columnas de
+> licencia. Que no tengan columna no los hace opcionales: sin ellos esas
+> celdas quedan vacías.
 
 > ⚠ **Discrepancia conocida con otra skill, sobre `Nº emails` y
-> `Nº teléfonos`.** La de las 113 columnas las describe como «conteos solo de
+> `Nº teléfonos`.** La skill de lectura las describe como «conteos solo de
 > Model Match», que puede leerse como «cuántos son nuevos respecto de los
 > nuestros». **No es eso**: el código cuenta todos los que trae Model Match,
 > coincidan o no con los nuestros. Manda esta definición, que es la que
@@ -647,7 +815,8 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | `Cómo se identificó` | `ambiguo` o `sin_candidatos`, según el caso |
 | `Confianza` | `no encontrado` |
 | `⚠ Revisar porque…` | `no se encontró en Model Match` |
-| las 26 de la ficha | **vacías** |
+| las de la ficha | **vacías**, las 35 |
+| `Precio medio de sus COMPRAS` · `Precio medio de sus compras financiadas` · `Precio medio de sus listings` · `Venta vs listado (%)` | **vacías**: son cocientes de celdas vacías, y un cociente sin numerador no es `0` |
 | `¿Produce FHA?` · `convencional` · `VA` | `sin comprobar` |
 | `¿Trabajó con Everett · histórico?` · `· 12 meses?` | `sin comprobar` |
 | `Operaciones con Everett · histórico` · `· 12 meses` | **vacías** |
@@ -670,12 +839,18 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | no produjo nada en ningún año | `Primer año con producción` · `Antigüedad aproximada (años)` | **vacías** |
 | el primer año con producción es 2017 | `Antigüedad aproximada (años)` | se escribe igual, **pero es un piso**: 2017 es el año más viejo del enum y su primera operación puede ser anterior |
 | la API devuelve un porcentaje > 100 | el que sea | **se guarda tal cual**, no se recorta |
+| la ficha no trae `licenses` o la trae vacía | `Licencia (MM)` · `Licencias (todas)` · `Estados con licencia` · `Licencia vence` | **vacías**. Model Match tiene licencia para ~la mitad: **vacío significa «no lo sabe», no «no tiene licencia»**, y nadie puede descartar a un realtor por esa celda |
+| una licencia viene **sin** `expirationDate` | `Licencias (todas)` | se escribe `<número> (<estado>)`, **sin** la coma ni el «vence». No se inventa una fecha ni se escribe «sin fecha» dentro del paréntesis |
+| todas sus licencias están **vencidas** | las cuatro | **se escriben igual**, con su fecha pasada. Filtrar por vencimiento es decisión del scoring, no de la extracción: una licencia vencida en el dato puede ser una renovación que Model Match no vio |
+| `buyerUnits` = 0, o `sellerUnits` = 0, o `total_list_price` = 0 | el cociente que lo tenga de divisor | **vacía**. Dividir por cero no da `0`: escribir `0` afirmaría que las casas valían cero |
+| cualquiera de los dos términos de un cociente no es un número | ese cociente | **vacía**, sin intentar convertir el texto |
 
 ### F ter · Los realtors en revisión SÍ se completan
 
 Un realtor con `⚠ Revisar porque…` no vacío **ya pagó su ficha**, así que los
-pasos 4 y 5 se hacen igual: los conteos son gratis y el breakdown, si cabe,
-cuesta lo mismo. Sus columnas se llenan como las de cualquier otro.
+pasos 4 y 4 bis se hacen igual: son conteos y no cuestan nada, así que no hay
+nada que ahorrar dejándolo a medias. Sus columnas se llenan como las de
+cualquier otro.
 
 Lo que está en revisión es **la identidad**, no el dato: si resulta ser otra
 persona, se descarta la fila entera, no se recalcula.
@@ -705,7 +880,25 @@ deja de ser comparable.
 - `% unidades financiadas`, `% volumen financiado` y `Venta vs listado (%)`:
   **un decimal**.
 - Los precios medios calculados y `Antigüedad aproximada (años)`: **enteros**.
-- `Última operación` y `Licencia vence`: **fecha ISO**, `AAAA-MM-DD`.
+  El redondeo es el de Python —`round()`, mitad al par: `2,5 → 2` y
+  `3,5 → 4`—. No es un detalle de estilo: es lo que hace que dos corridas del
+  mismo dato den el mismo número.
+- `Última operación` y `Licencia vence`: **fecha ISO**, `AAAA-MM-DD`, **sin
+  hora y sin zona**. Son fechas de calendario tal como las da la API; no se
+  convierten a ninguna zona horaria, porque convertirlas podría correrlas un
+  día.
+- `Consultado` es lo contrario: **instante**, ISO 8601 **con zona y siempre en
+  UTC** (`…+00:00`). Nunca hora local de la máquina — un archivo hecho en dos
+  máquinas distintas dejaría de ser ordenable.
+- **El «año en curso» de `Antigüedad aproximada (años)` es el año de esa misma
+  hora UTC**, no el del reloj local. En los últimos días de diciembre las dos
+  cosas pueden no coincidir.
+- **`Operaciones con Everett · …` mezcla números y texto a propósito**: `1`,
+  `2` y `50` son números; `3-4`, `5-9`, `10-19` y `20-49` son texto. En el
+  Excel conviven en la misma columna, así que **ordenar esa columna no da un
+  orden numérico** y una fórmula que sume sobre ella falla en las bandas. Para
+  ordenar por relación con Everett se usa el sí/no, o se parte la banda a
+  mano. Lo mismo vale para `Historical units · por año`, que es texto entero.
 - **Vacío no es `0`.** Vacío = no se sabe; `0` = se sabe que es cero.
 - **Los porcentajes no se recortan a 100.** Si la API devuelve más, se guarda
   tal cual: el recorte, si hace falta, lo hace el scoring.
@@ -716,7 +909,21 @@ deja de ser comparable.
 
 <!-- TABLA-POSICIONES:inicio -->
 
-En la hoja *Realtors*. **Van de la 4 a la 71, pero no son contiguas**: las posiciones 11, 14, 17, 21, 26, 27 son de nuestra base y no se le piden a Model Match.
+#### El plano entero de la hoja *Realtors*
+
+Son **128 columnas** en una sola tabla, en este orden y sin huecos:
+
+| posiciones | qué | de dónde |
+|---|---|---|
+| 1 a 3 | `Realtor` · `Instagram` · `Clase IG` | nuestra base: no se le piden a nadie |
+| 4 a 71 | las aprobadas de Model Match, **intercaladas** con el resto de las nuestras | la tabla de abajo |
+| 72 a 128 | Instagram | scraper propio, fuera de este manual |
+
+Las **55 columnas de Instagram no se listan acá y no se listan en ninguna parte a mano**: el generador las descubre de los datos, así que una señal nueva del scraper aparece sola. Listarlas sería prometer que están todas.
+
+#### Las columnas de Model Match, con su número de posición
+
+**Van de la 4 a la 71, pero no son contiguas**: las posiciones 11, 14, 17, 21, 26, 27 son de nuestra base y no se le piden a Model Match.
 
 | nº | encabezado exacto | origen |
 |---|---|---|
@@ -798,8 +1005,7 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 | seguir el `cursor` | multiplica el costo en silencio |
 | `POST /v1/agents` para un agente concreto | cuesta lo mismo que la ficha y trae menos |
 | `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 62 columnas aprobadas |
-| el breakdown de `companies` | **nunca**, quepa o no: no produce ninguna de las 62 columnas |
-| los breakdowns de `lenders` y `counties` sin que quepan en el tope | 1 por fila |
+| **cualquier** `POST /v1/agents/{id}/breakdowns/*` — `originators`, `lenders`, `companies`, `counties` | **nunca, sin excepción y sin «si cabe»**: 1 por fila, no se pueden acotar, y con el tope en 1 no cabe ninguno. Ver el paso 5 |
 | los filtros de tract de `/v1/market` para **elegir** a quién contactar | `minorityTractPct`, `majorityMinorityTract`, `lowModIncomeTract`: segmentar por ahí es redlining y es exposición de fair lending |
 
 ---
@@ -807,20 +1013,28 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 ## 6 · Antes de dar por buena una corrida
 
 1. **gasto previsto == gasto del ledger**. Si no, el modelo de costo cambió.
-2. **ningún realtor por encima de 2 créditos.**
+2. **ningún realtor por encima de 1 crédito**, y el total == el número de
+   identificados. Un realtor en 2 significa que se le compró la ficha dos
+   veces.
 3. **ningún match inventado**: los no resueltos están marcados y con sus
    candidatos guardados.
-4. **dos caminos al mismo hecho coinciden**: los marcados con la casa por
-   `footprint` tienen que aparecer con la casa en su tabla cruda de lenders,
-   en aquellos donde se haya comprado esa tabla.
-5. **ningún porcentaje de la API usado sin contrastar** contra un caso cuya
+4. **la cota superior se comprobó antes del lote**: la banda `[n, n+1)` del
+   testigo dio 1 y la `[n+1, n+2)` dio 0. Sin esa comprobación, todas las
+   bandas darían positivo y los números de Everett serían todos el primero.
+   El script aborta solo; a mano hay que acordarse.
+5. **dos caminos al mismo hecho coinciden**: los marcados con Everett por
+   `footprint` tienen que aparecer con Everett en su tabla cruda de lenders,
+   **en los pocos realtors de la corrida vieja donde esa tabla se pagó**. En
+   los nuevos no hay con qué contrastar, y eso no es un fallo: es el precio de
+   haber dejado de comprarla.
+6. **ningún porcentaje de la API usado sin contrastar** contra un caso cuya
    respuesta se conozca por otra vía.
 
 ### Resultado de referencia
 
 ⚠ **La corrida de 298 realtors de septiembre de 2026 NO es el resultado
 esperado de este procedimiento, y no sirve de patrón de gasto.** Se hizo con
-un tope de 5, no de 2, y además siete realtors terminaron entre 6 y 8 porque
+un tope de 5, no de 1, y además siete realtors terminaron entre 6 y 8 porque
 una compra dirigida posterior sumó sin volver a mirar el tope. También se
 compraron breakdowns que este procedimiento ya no pide.
 
@@ -834,9 +1048,10 @@ Lo que sí es comparable de aquella corrida, porque no depende del tope:
 | no encontrados | 25 |
 | el ledger confirmó el modelo de costo | 422 previstos, 422 reales |
 
-**Bajo este manual, una corrida de 298 debería costar entre 273 y 300
-créditos** (1 por identificado, más los pocos breakdowns de una fila que
-quepan). Si da mucho más, algo se está pidiendo que no está acá.
+**Bajo este manual, una corrida de 298 cuesta exactamente un crédito por
+realtor identificado**, ni uno más: 273 identificados, 273 créditos. No hay
+margen ni rango, porque no queda ninguna llamada opcional que cobre. **Si el
+ledger dice otra cosa, algo se está pidiendo que no está acá.**
 
 ### Dónde va cada cosa
 
@@ -845,7 +1060,7 @@ quepan). Si da mucho más, algo se está pidiendo que no está acá.
 | un registro por realtor, con todo lo extraído | `data/trabajo/mm_por_realtor/<realtor_id>.json` |
 | **toda** respuesta cruda, antes de mirarla | `data/raw/mm_<etiqueta>_<sello>.json` |
 | los candidatos de los no resueltos | dentro del registro del realtor, clave `candidatos`, con nombre, brokerage, ciudad, estado y correo de cada uno |
-| las tablas crudas de lenders y originadores | dentro del registro, claves `mm_lenders` y `mm_originators` |
+| las tablas crudas de lenders y originadores | dentro del registro, claves `mm_lenders` y `mm_originators`, **solo en los realtors de la corrida vieja que sí las pagó**. El minado de hoy no las pide, así que en un realtor nuevo esas claves no existen — y su ausencia no es un fallo |
 | la hoja de los que hay que revisar a mano | hoja *Revisar* del Excel, con los candidatos en una celda |
 | las tablas largas, una fila por relación | hojas *Lenders* y *Originadores*. La hoja *Companias* existe en el libro pero **queda siempre vacía**: ese breakdown no se pide |
 
@@ -876,11 +1091,16 @@ Para que nadie lo busque ahí:
 - **Instagram** — es scraper propio.
 - **Idioma, apellido, origen** — no están, y es correcto que no estén. Esas
   señales salen de Instagram y del modelo de scoring.
-- **Antigüedad en la industria del realtor** — no existe el campo.
-  ⛔ **No se ejecuta en el minado estándar**, porque no produce ninguna de las
-  62 columnas y la regla cero manda. Si algún día se aprueba como columna
-  nueva, el rodeo medido sería pedir producción en un año viejo
-  (`period: "2024"`, `units {gte:1}`), que además es más exigente que la
-  licencia porque obliga a que estuviera produciendo.
+- **Antigüedad en la industria del realtor** — **el campo no existe**, y eso
+  no cambió. Lo que sí cambió es que ahora **se deriva**: el rodeo que antes
+  estaba anotado como «si algún día se aprueba» se aprobó, se ejecuta en el
+  paso 4 bis y produce `Antigüedad aproximada (años)`, la columna 69.
+  Qué significa esa diferencia, porque importa al leerla: **no es la fecha en
+  que se hizo realtor, es el año más viejo en que se le ve producción**. Es un
+  **piso**, y es más exigente que la licencia —obliga a que estuviera
+  cerrando, no solo habilitado—, pero a quien estuvo un año sin cerrar nada al
+  principio lo cuenta tarde, y a quien empezó antes de 2017 lo topa ahí.
+  **Nunca escribirla como «años en la industria» a secas**: con ese nombre se
+  lee como un dato de Model Match, y no lo es.
 - **Las operaciones una por una con su tipo de préstamo y monto** — la
   pestaña Transactions se sigue pegando a mano.

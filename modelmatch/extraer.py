@@ -41,8 +41,14 @@ TRABAJO = os.path.join(RAIZ, "data", "trabajo")
 ENTRADA = os.path.join(TRABAJO, "realtors_con_ig.json")
 SALIDA = os.path.join(TRABAJO, "mm_por_realtor")
 
-#: Tope duro por realtor, del pedido. El codigo no lo pasa ni por un credito.
-TOPE_POR_REALTOR = 2
+#: Tope duro por realtor. UNO, no dos.
+#:
+#: Con los breakdowns retirados, la unica llamada que cobra es la ficha, y
+#: cuesta exactamente 1. Dejar el tope en 2 no protegia de nada y si invitaba
+#: a gastar el segundo: un techo que nadie puede alcanzar no es un techo, es
+#: permiso. Si algun dia vuelve a hacer falta comprar algo por fila, se sube a
+#: proposito y queda en el diff.
+TOPE_POR_REALTOR = 1
 #: Orden de valor de los breakdowns: quien lo financia primero, porque es lo
 #: que decide la exclusion por no-canibalizacion y lo que se usa en el pitch.
 #: ORIGINADORES PRIMERO. El orden decide cual se compra cuando solo cabe uno,

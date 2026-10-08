@@ -92,14 +92,28 @@ def probar_la_cota_superior() -> bool:
     return ok
 
 
+def etiqueta(gte: int, lt) -> int | str:
+    """Lo que se escribe en la celda para la banda [gte, lt).
+
+    Esta aparte para que el verificador del manual la importe en vez de
+    copiarla: la tabla de bandas del manual YA estuvo mal --decia «3 · 4»
+    donde el codigo agrupa `3-4`-- y un numero de operaciones con Everett mal
+    leido decide una exclusion.
+    """
+    if lt is None:
+        return gte
+    if lt == gte + 1:
+        return gte
+    return "%d-%d" % (gte, lt - 1)
+
+
 def unidades(mm: str, periodo: str) -> int | str:
     """El numero exacto, o «50+». Vacio si no trabajo con la casa."""
     if (cuenta(mm, periodo, 1, None, "base_%s" % periodo) or 0) < 1:
         return ""
     for gte, lt in BANDAS:
         if cuenta(mm, periodo, gte, lt, "b%s_%s" % (gte, periodo)) == 1:
-            return gte if lt is None and gte == 50 else (
-                gte if lt == gte + 1 else "%d-%d" % (gte, lt - 1))
+            return etiqueta(gte, lt)
     return "50+"
 
 

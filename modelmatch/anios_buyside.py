@@ -55,15 +55,27 @@ def cuenta(mm: str, periodo: str, gte: int, lt) -> int | None:
     return int(d["total"])
 
 
+def etiqueta(gte: int, lt) -> int | str:
+    """Lo que se escribe para la banda [gte, lt).
+
+    Aparte para que el verificador del manual la importe en vez de copiarla.
+    Ojo: la banda sin tope se escribe `100+`, no como en Everett, donde la
+    ultima se escribe pelada. Son dos escalas distintas y no se unifican.
+    """
+    if lt is None:
+        return "%d+" % gte
+    if lt == gte + 1:
+        return gte
+    return "%d-%d" % (gte, lt - 1)
+
+
 def unidades(mm: str, periodo: str):
     """El numero exacto, una banda, o '' si no produjo nada ese periodo."""
     if (cuenta(mm, periodo, 1, None) or 0) < 1:
         return ""
     for gte, lt in BANDAS:
         if cuenta(mm, periodo, gte, lt) == 1:
-            if lt is None:
-                return "%d+" % gte
-            return gte if lt == gte + 1 else "%d-%d" % (gte, lt - 1)
+            return etiqueta(gte, lt)
     return "100+"
 
 

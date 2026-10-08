@@ -63,6 +63,8 @@ SUITES = [
      "qualifiers con ancla, idioma separado, S6 por token y ECOA"),
     ("manual_casos", "tests.test_manual_casos",
      "los 13 casos del manual de minado, contra el codigo real"),
+    ("manual_bandas", "tests.test_manual_bandas",
+     "las etiquetas de las bandas, y que el verificador cace un manual roto"),
 ]
 
 
