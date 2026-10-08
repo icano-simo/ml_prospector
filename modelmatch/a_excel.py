@@ -164,9 +164,16 @@ COLUMNAS = [
      "efectivo, y ahí hay menos que hacer."),
     ("mm_pct_volumen_financiado", "% volumen financiado", 17, FICHA,
      "Lo mismo medido en dólares."),
-    ("mm_loan_medio", "Loan medio de sus compradores", 22, FICHA,
-     "Préstamo promedio de sus operaciones financiadas: en qué banda de "
-     "precio piden prestado sus compradores."),
+    ("mm_loan_medio", "Precio medio de sus operaciones financiadas", 26, FICHA,
+     "⚠ **NO es un préstamo, aunque la API lo llame "
+     "`average_mortgaged_loan_amount`.** Se midió contra las 461 fichas "
+     "pagadas y la fórmula cuadra en TODAS: es el precio medio de venta de "
+     "sus operaciones financiadas, contando cada operación UNA vez — "
+     "(compras + listings − dual) en dólares, dividido por lo mismo en "
+     "unidades. Incluye los listings, así que tampoco es «de sus "
+     "compradores». Para el precio solo del lado comprador está "
+     "`Precio medio de sus compras financiadas`, que es otra cosa y da otro "
+     "número."),
 
     ("mm_ultima_operacion", "Última operación", 13, FICHA,
      "Fecha de su última operación cerrada. **Es la única señal de recencia "
@@ -259,6 +266,12 @@ COLUMNAS = [
     ("creditos_gastados", "Créditos gastados", 13, CALC,
      "Lo que costó este realtor. El tope es 1: la ficha es la única llamada "
      "que cobra. Un 2 acá significa que se le compró la ficha dos veces."),
+    ("regimen_minado", "Régimen de minado", 24, CALC,
+     "Bajo qué reglas se minó ESTA fila. El archivo mezcla dos corridas y sin "
+     "esta columna el chequeo «ningún realtor por encima de 1 crédito» falla "
+     "por construcción sobre filas que nunca estuvieron sujetas a ese tope. "
+     "'tope viejo · hasta 5 créditos' son 50 filas de la corrida de "
+     "septiembre, las únicas que tienen las tablas de lenders y originadores."),
     ("consultado_en", "Consultado", 20, CALC,
      "Cuándo se pidió el dato a Model Match (UTC)."),
     ("realtor_id", "realtor_id", 36, NUESTRO,
@@ -491,6 +504,16 @@ def preparar(f: dict) -> dict:
             d["lo_principal"] = top.get("nombre")
             d["lo_principal_pct"] = round(
                 100.0 * (top.get("unidades") or 0) / total)
+    # Bajo que reglas se mino ESTA fila. Se deriva de hechos del registro, no
+    # de la fecha: una fila de la corrida vieja que gasto 1 credito y no
+    # compro breakdowns es, dato por dato, lo que produce el procedimiento de
+    # hoy, y marcarla como vieja la haria parecer sospechosa sin serlo.
+    gasto = f.get("creditos_gastados")
+    d["regimen_minado"] = (
+        "tope viejo · hasta 5 créditos"
+        if (isinstance(gasto, (int, float)) and gasto > 1)
+        or f.get("mm_lenders") or f.get("mm_originators")
+        else "tope 1")
     # Vacio no es cero. De un realtor que no encontramos NO sabemos cuantos
     # correos tiene Model Match; escribir 0 afirmaria que no tiene ninguno.
     d["mm_emails_n"] = (len(f.get("mm_emails") or [])

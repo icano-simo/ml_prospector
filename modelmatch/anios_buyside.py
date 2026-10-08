@@ -69,14 +69,58 @@ def etiqueta(gte: int, lt) -> int | str:
     return "%d-%d" % (gte, lt - 1)
 
 
+#: Lo que devuelve `unidades()` cuando alguna llamada fallo. NO es "", que
+#: significa «no produjo nada ese periodo».
+FALLO = object()
+
+
 def unidades(mm: str, periodo: str):
-    """El numero exacto, una banda, o '' si no produjo nada ese periodo."""
-    if (cuenta(mm, periodo, 1, None) or 0) < 1:
+    """El numero, `FALLO` si alguna llamada no contesto, '' si no produjo.
+
+    ⚠ Un fallo NO cuenta como «no es esta banda». Si falla justo la correcta,
+    el recorrido sigue y escribe la ultima --100+--, un numero que nunca
+    existio; y un fallo en la llamada base escribiria «no produjo», que
+    adelanta el primer año y por tanto achica la antiguedad. Cualquier fallo
+    deja el periodo pendiente.
+    """
+    base = cuenta(mm, periodo, 1, None)
+    if base is None:
+        return FALLO
+    if base < 1:
         return ""
     for gte, lt in BANDAS:
-        if cuenta(mm, periodo, gte, lt) == 1:
+        t = cuenta(mm, periodo, gte, lt)
+        if t is None:
+            return FALLO
+        if t == 1:
             return etiqueta(gte, lt)
-    return "100+"
+    return FALLO
+
+
+#: Cuantos realtors se sondean para ver si el ultimo año cerrado esta poblado.
+MUESTRA = 20
+
+
+def probar_el_ultimo_año_cerrado(ids: list[str]) -> bool:
+    """¿El bucket del año recien cerrado ya tiene datos?
+
+    Esta medido que el año EN CURSO devuelve 0 aunque haya produccion. Nada
+    garantiza cuando se puebla el anterior: en enero, `ANIO - 1` puede estar
+    tan vacio como lo estaba `ANIO`. Y un año vacio no se ve como un fallo --se
+    ve como un realtor que dejo de producir-- y ademas adelanta el primer año
+    y achica la antiguedad de TODO el lote a la vez.
+
+    Asi que se sondea: si de una muestra ninguno produjo en ese año, el bucket
+    no esta poblado y el lote no se corre.
+    """
+    ultimo = str(ANIO - 1)
+    positivos = 0
+    for mm in ids[:MUESTRA]:
+        if (cuenta(mm, ultimo, 1, None) or 0) >= 1:
+            positivos += 1
+    print("   %s: %d de %d sondeados tienen produccion"
+          % (ultimo, positivos, min(len(ids), MUESTRA)))
+    return positivos > 0
 
 
 def main() -> None:
@@ -88,6 +132,16 @@ def main() -> None:
         if f.get("mm_id") and (todos or not f.get("anios_buyside")):
             pendientes.append((a, f))
 
+    print("── 1 · ¿el ultimo año cerrado esta poblado? ──")
+    if not probar_el_ultimo_año_cerrado([f["mm_id"] for _r, f in pendientes]):
+        raise SystemExit(
+            "\nNinguno de los sondeados produjo en %d. O el bucket de ese año "
+            "todavia no esta poblado --pasa con el año en curso, esta medido-- "
+            "o la muestra es rarisima. En cualquiera de los dos casos, correr "
+            "el lote escribiria «no produjo» sobre gente que si produjo, y eso "
+            "achica la antiguedad de todos. NO se corre." % (ANIO - 1))
+    print("")
+
     s0 = saldo()
     print("realtors a los que les falta la produccion por año: %d"
           % len(pendientes))
@@ -95,19 +149,33 @@ def main() -> None:
           % (len(PERIODOS), s0))
     print("")
 
+    fallaron = 0
     for i, (ruta, f) in enumerate(pendientes, 1):
         mm = f["mm_id"]
-        anios = {}
+        anios, fallo = {}, False
         for p in PERIODOS:
-            anios[p] = unidades(mm, p)
+            v = unidades(mm, p)
+            if v is FALLO:
+                # Se omite el periodo entero. Vacio y ausente no son lo mismo:
+                # un periodo ausente es «no se pregunto», uno vacio es «no
+                # produjo», y el derivado solo mira los que estan.
+                fallo = True
+                continue
+            anios[p] = v
         f["anios_buyside"] = anios
-        f["anios_buyside_en"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        if fallo:
+            f.pop("anios_buyside_en", None)   # sin sello: se reintenta
+            fallaron += 1
+        else:
+            f["anios_buyside_en"] = dt.datetime.now(
+                dt.timezone.utc).isoformat()
         with open(ruta, "w", encoding="utf-8") as fh:
             json.dump(f, fh, ensure_ascii=False, indent=1)
         if i % 20 == 0 or i == len(pendientes):
             con = sum(1 for v in anios.values() if v != "")
-            print("   %4d/%d · ultimo: %d periodos con produccion · saldo %s"
-                  % (i, len(pendientes), con, saldo()))
+            print("   %4d/%d · ultimo: %d periodos con produccion · "
+                  "incompletos %d · saldo %s"
+                  % (i, len(pendientes), con, fallaron, saldo()))
 
     s1 = saldo()
     gasto = None if None in (s0, s1) else round(s0 - s1, 2)

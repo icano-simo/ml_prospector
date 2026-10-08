@@ -36,6 +36,7 @@ def construir() -> str:
     nuestras = [i for i, c in enumerate(COLUMNAS, 1) if c[3] == NUESTRO]
     ig = columnas_ig([preparar(f) for f in cargar()])
     total = len(COLUMNAS) + len(ig)
+    cola = [n for n in nuestras if n > max(nums)]
     lineas = [
         INICIO,
         "",
@@ -46,19 +47,35 @@ def construir() -> str:
         "",
         "| posiciones | qué | de dónde |",
         "|---|---|---|",
-        "| %d a %d | %s | nuestra base: no se le piden a nadie |"
+        "| %d a %d | %s | nuestra base |"
         % (min(nuestras), max(n for n in nuestras if n < min(nums)),
            " · ".join("`%s`" % COLUMNAS[n - 1][1] for n in nuestras
                       if n < min(nums))),
-        "| %d a %d | las aprobadas de Model Match, **intercaladas** con el "
-        "resto de las nuestras | la tabla de abajo |" % (min(nums), max(nums)),
-        "| %d a %d | Instagram | scraper propio, fuera de este manual |"
-        % (max(nums) + 1, total),
+        "| %d a %d | las aprobadas de Model Match, **intercaladas** con seis "
+        "de las nuestras | la tabla de abajo |" % (min(nums), max(nums)),
+        "| %d a %d | %s | nuestra base: identificadores para cruzar |"
+        % (min(cola), max(cola),
+           " · ".join("`%s`" % COLUMNAS[n - 1][1] for n in cola)),
+        "| %d a %d | Instagram, **%d columnas** | scraper propio, fuera de "
+        "este manual |" % (max(cola) + 1, total, len(ig)),
         "",
-        "Las **%d columnas de Instagram no se listan acá y no se listan en "
-        "ninguna parte a mano**: el generador las descubre de los datos, así "
-        "que una señal nueva del scraper aparece sola. Listarlas sería "
-        "prometer que están todas." % len(ig),
+        "⚠ **Las columnas de Instagram las DESCUBRE el generador de los "
+        "datos**, para que una señal nueva del scraper no se pierda en "
+        "silencio. El riesgo es el contrario: que el archivo cambie de "
+        "columnas sin que nadie lo decida, y eso rompe cualquier scoring que "
+        "lea por posición. Por eso la lista queda **congelada acá abajo** y "
+        "`verificar_manual.py` falla si los datos traen una que no esté o "
+        "dejan de traer una que sí. Cuando falle, se decide: o se agrega al "
+        "manual —y el archivo cambia de versión— o se arregla el scraper. Lo "
+        "que no puede pasar es que cambie sola.",
+        "",
+        "Las %d, en orden:" % len(ig),
+        "",
+        "```",
+    ]
+    lineas += [c[1] for c in ig]
+    lineas += [
+        "```",
         "",
         "#### Las columnas de Model Match, con su número de posición",
         "",

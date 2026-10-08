@@ -30,7 +30,9 @@ from modelmatch.everett_bandas import BANDAS as B_EVERETT  # noqa: E402
 from modelmatch.everett_bandas import etiqueta as etq_everett  # noqa: E402
 
 #: Lo que el manual promete que se escribe en la celda, banda por banda.
-ETIQUETAS_EVERETT = [1, 2, "3-4", "5-9", "10-19", "20-49", 50]
+#: La ultima lleva el `+`: un `50` pelado afirma cincuenta exactas, que es lo
+#: unico que esa llamada --sin cota superior-- no puede saber.
+ETIQUETAS_EVERETT = [1, 2, "3-4", "5-9", "10-19", "20-49", "50+"]
 ETIQUETAS_ANIOS = [1, 2, 3, 4, "5-6", "7-9", "10-14", "15-19", "20-29",
                    "30-49", "50-99", "100+"]
 
@@ -83,7 +85,82 @@ ROTURAS = [
      "| 3 | 5 | `3-4` |", "| 3 | 4 | `3` |\n| 4 | 5 | `4` |"),
     ("una etiqueta cambiada a mano",
      "| 5 | 7 | `5-6` |", "| 5 | 7 | `5-7` |"),
+    ("una columna de Instagram que el manual deja de congelar",
+     "\nIG · handle confianza\n", "\n"),
 ]
+
+
+def test_un_fallo_de_red_no_inventa_una_banda():
+    """Lo que un fallo NO puede producir: un numero, ni un «no».
+
+    Si una llamada que falla contara como «no es esta banda», el recorrido
+    seguiria y terminaria escribiendo la ultima --50+--, que en el scoring
+    dispara el tope T1. Un fallo de red no puede convertirse en una
+    afirmacion sobre el realtor.
+    """
+    from modelmatch import everett_bandas as eb
+
+    llamadas = []
+
+    def falla_en(cual):
+        """Un realtor de 5 operaciones: responde la banda [5,10), la cuarta.
+
+        Asi las llamadas 1 a 5 ocurren de verdad y se puede hacer fallar
+        cualquiera de ellas, incluida la que iba a dar el numero bueno.
+        """
+        def fake(mm, periodo, gte=None, lt=None, etq=""):
+            llamadas.append((gte, lt))
+            if len(llamadas) == cual:
+                return None              # el fallo de red
+            # La BASE es gte=1 SIN lt; la banda [1,2) es gte=1 CON lt. Se
+            # distinguen por eso y no por el gte, que comparten.
+            if lt is None:
+                return 1                 # la base: si trabajo con Everett
+            return 1 if gte == 5 else 0
+        return fake
+
+    original = eb.cuenta
+    try:
+        # sin fallos, el camino bueno da la banda de 5
+        eb.cuenta = falla_en(0)
+        llamadas.clear()
+        assert eb.unidades("x", "allTime") == "5-9"
+        # y con un fallo en cualquiera de las cinco, FALLO y nada mas
+        for cual in (1, 2, 3, 4, 5):
+            llamadas.clear()
+            eb.cuenta = falla_en(cual)
+            visto = eb.unidades("x", "allTime")
+            assert visto is eb.FALLO, "fallo en la llamada %d dio %r" % (
+                cual, visto)
+    finally:
+        eb.cuenta = original
+
+
+def test_sin_fallos_la_primera_banda_responde():
+    """Y el camino bueno sigue dando el numero, no FALLO."""
+    from modelmatch import everett_bandas as eb
+
+    original = eb.cuenta
+    try:
+        eb.cuenta = lambda mm, p, gte=None, lt=None, etq="": 1
+        assert eb.unidades("x", "allTime") == 1   # base si, banda [1,2) si
+        eb.cuenta = lambda mm, p, gte=None, lt=None, etq="": 0
+        assert eb.unidades("x", "allTime") == ""  # la base dice que no
+    finally:
+        eb.cuenta = original
+
+
+def test_las_fechas_de_licencia_se_ordenan_por_fecha_y_no_por_texto():
+    """`03/31/2027` es texto menor que `09/30/2025` y fecha MAYOR."""
+    from modelmatch.rellenar_ficha import fecha_licencia
+
+    crudas = ["03/31/2027", "09/30/2025"]
+    convertidas = sorted(fecha_licencia(x) for x in crudas)
+    assert convertidas[0] == "2025-09-30", convertidas
+    assert sorted(crudas)[0] == "03/31/2027"   # el orden de texto, al reves
+    assert fecha_licencia("") == ""
+    assert fecha_licencia(None) == ""
+    assert fecha_licencia("13/45/2027") == ""
 
 
 def test_el_manual_real_pasa():

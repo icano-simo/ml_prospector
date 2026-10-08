@@ -54,10 +54,38 @@ def cruda(mm: str) -> dict:
 
 
 def fecha(ms) -> str:
-    """Epoch en milisegundos -> fecha ISO. '' si no hay."""
+    """Epoch en milisegundos -> fecha ISO. '' si no hay.
+
+    La API da un INSTANTE, no una fecha, asi que pasarlo a dia obliga a elegir
+    zona. Se elige UTC a proposito: los sellos vienen a las 06:00 UTC --la
+    medianoche del centro de EEUU-- asi que en UTC sale el dia calendario que
+    la fuente quiso decir, y sale el MISMO en cualquier maquina. Con la hora
+    local, una maquina al este de Greenwich daria el dia siguiente.
+    """
     if not isinstance(ms, (int, float)) or ms <= 0:
         return ""
     return dt.datetime.fromtimestamp(ms / 1000, dt.timezone.utc).date().isoformat()
+
+
+def fecha_licencia(s) -> str:
+    """`MM/DD/AAAA` -> `AAAA-MM-DD`. '' si no se puede leer.
+
+    Las licencias NO vienen en ISO, vienen en el formato de EEUU, y eso rompia
+    el orden en silencio: `sorted()` sobre texto pone `03/31/2027` antes que
+    `09/30/2025`, asi que «el vencimiento mas proximo» daba el mas LEJANO.
+    Pasa en pocas fichas --las que tienen dos licencias con meses cruzados--
+    y por eso nadie lo veia.
+    """
+    if not isinstance(s, str):
+        return ""
+    partes = s.strip().split("/")
+    if len(partes) != 3:
+        return ""
+    try:
+        return dt.date(int(partes[2]), int(partes[0]),
+                       int(partes[1])).isoformat()
+    except ValueError:
+        return ""
 
 
 def cociente(a, b):
@@ -89,13 +117,19 @@ def main() -> None:
         # ── lo que la ficha trae y no usabamos ─────────────────────────────
         f["mm_ultima_operacion"] = fecha(s.get("LastTransactionDate"))
         lic = det.get("licenses") or []
+        # Todas las fechas en ISO, tambien dentro del texto largo: dos
+        # formatos en la misma columna es como se lee mal un dia por un mes.
         f["mm_licencias"] = " · ".join(
             "%s (%s%s)" % (x.get("number"), x.get("state"),
-                           ", vence %s" % x["expirationDate"]
-                           if x.get("expirationDate") else "")
-            for x in lic if x.get("number"))
-        vences = sorted(x["expirationDate"] for x in lic
-                        if x.get("expirationDate"))
+                           ", vence %s" % fecha_licencia(x["expirationDate"])
+                           if fecha_licencia(x.get("expirationDate")) else "")
+            for x in sorted(lic, key=lambda y: str(y.get("number") or ""))
+            if x.get("number"))
+        vences = sorted(v for v in (fecha_licencia(x.get("expirationDate"))
+                                    for x in lic) if v)
+        # «El mas proximo» es el minimo, este vencido o no: con todas vencidas
+        # da la mas vieja, que es lo que hay que ver. Quien quiera la vigente
+        # mas cercana tiene la lista entera en `Licencias (todas)`.
         f["mm_licencia_vence"] = vences[0] if vences else ""
         f["mm_estados_licencia"] = " · ".join(
             sorted({x.get("state") for x in lic if x.get("state")}))

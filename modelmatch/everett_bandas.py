@@ -99,22 +99,48 @@ def etiqueta(gte: int, lt) -> int | str:
     copiarla: la tabla de bandas del manual YA estuvo mal --decia «3 · 4»
     donde el codigo agrupa `3-4`-- y un numero de operaciones con Everett mal
     leido decide una exclusion.
+
+    La ultima banda no tiene tope, asi que se escribe `50+` y no `50`: un
+    `50` pelado afirma cincuenta exactas, que es lo unico que esa llamada no
+    puede saber.
     """
     if lt is None:
-        return gte
+        return "%d+" % gte
     if lt == gte + 1:
         return gte
     return "%d-%d" % (gte, lt - 1)
 
 
-def unidades(mm: str, periodo: str) -> int | str:
-    """El numero exacto, o «50+». Vacio si no trabajo con la casa."""
-    if (cuenta(mm, periodo, 1, None, "base_%s" % periodo) or 0) < 1:
+#: Lo que devuelve `unidades()` cuando alguna llamada fallo. NO es "" --que
+#: significa «no trabajo con Everett»-- ni una banda.
+FALLO = object()
+
+
+def unidades(mm: str, periodo: str):
+    """El numero exacto, `FALLO` si alguna llamada no contesto, '' si no hubo.
+
+    ⚠ Una llamada que falla NO puede contar como «no es esta banda». Si falla
+    justo la banda correcta, el recorrido sigue y termina escribiendo la
+    ultima --50+--, que en el scoring dispara el tope T1 y manda al realtor a
+    grado D por un dato que nunca existio. Lo mismo con la llamada base: un
+    fallo ahi escribiria «no trabajo con Everett», que es una exclusion al
+    reves. Asi que cualquier fallo corta y el realtor queda pendiente.
+    """
+    base = cuenta(mm, periodo, 1, None, "base_%s" % periodo)
+    if base is None:
+        return FALLO
+    if base < 1:
         return ""
     for gte, lt in BANDAS:
-        if cuenta(mm, periodo, gte, lt, "b%s_%s" % (gte, periodo)) == 1:
+        t = cuenta(mm, periodo, gte, lt, "b%s_%s" % (gte, periodo))
+        if t is None:
+            return FALLO
+        if t == 1:
             return etiqueta(gte, lt)
-    return "50+"
+    # La ultima banda no tiene tope, asi que llegar aca sin fallos significa
+    # que la API dejo de ser consistente consigo misma. No se inventa un
+    # numero: se deja pendiente, como un fallo.
+    return FALLO
 
 
 def main() -> None:
@@ -138,21 +164,35 @@ def main() -> None:
     print("saldo: %s · esto NO debe gastar nada" % s0)
     print("")
 
-    vivos = historicos = 0
+    vivos = historicos = pendientes = 0
     for i, (ruta, f) in enumerate(objetivo, 1):
         mm = f["mm_id"]
+        fallo = False
         for periodo, sufijo in VENTANAS:
             n = unidades(mm, periodo)
-            f["everett_%s" % sufijo] = "SÍ" if n != "" else "no"
-            f["everett_u_%s" % sufijo] = n
-        f["everett_bandas_en"] = dt.datetime.now(dt.timezone.utc).isoformat()
+            if n is FALLO:
+                # Ni «no» ni una banda: no se sabe. Y sin sello de fecha, asi
+                # que la proxima corrida lo vuelve a intentar.
+                f["everett_%s" % sufijo] = "sin comprobar"
+                f["everett_u_%s" % sufijo] = ""
+                fallo = True
+            else:
+                f["everett_%s" % sufijo] = "SÍ" if n != "" else "no"
+                f["everett_u_%s" % sufijo] = n
+        if fallo:
+            f.pop("everett_bandas_en", None)
+            pendientes += 1
+        else:
+            f["everett_bandas_en"] = dt.datetime.now(
+                dt.timezone.utc).isoformat()
         with open(ruta, "w", encoding="utf-8") as fh:
             json.dump(f, fh, ensure_ascii=False, indent=1)
         historicos += f["everett_historico"] == "SÍ"
         vivos += f["everett_12m"] == "SÍ"
         if i % 25 == 0 or i == len(objetivo):
-            print("   %3d/%d · con la casa alguna vez %d · en 12 meses %d"
-                  % (i, len(objetivo), historicos, vivos))
+            print("   %3d/%d · con la casa alguna vez %d · en 12 meses %d · "
+                  "pendientes %d"
+                  % (i, len(objetivo), historicos, vivos, pendientes))
 
     s1 = saldo()
     gasto = None if None in (s0, s1) else round(s0 - s1, 2)
@@ -161,6 +201,10 @@ def main() -> None:
     print("con la casa en 12 meses : %d" % vivos)
     print("relaciones VIEJAS       : %d  (excluidos hoy por algo que ya no "
           "pasa)" % (historicos - vivos))
+    if pendientes:
+        print("PENDIENTES              : %d  (alguna llamada fallo; quedaron "
+              "en «sin comprobar» y los retoma la proxima corrida)"
+              % pendientes)
     print("gasto: %s  %s" % (gasto, "OK, fue gratis" if gasto == 0
                              else "⚠ COBRO — revisar"))
 

@@ -76,7 +76,15 @@ VOCABULARIOS = {
     "encontrado_txt": ["sí", "NO"],
     "hace_fha": ["sí", "no", "sin comprobar"],
     "trabaja_con_la_casa": ["SÍ", "no", "sin comprobar"],
+    "everett_historico": ["SÍ", "no", "sin comprobar"],
+    "everett_12m": ["SÍ", "no", "sin comprobar"],
+    "regimen_minado": ["tope 1", "tope viejo · hasta 5 créditos"],
 }
+
+#: Las bandas TAMBIEN son vocabulario cerrado: el scoring filtra por igualdad
+#: sobre ellas igual que sobre `Confianza`. Se arman desde el codigo, no a
+#: mano, y se comprueba que el manual las escriba todas (chequeo 7).
+VOCABULARIOS_DE_BANDA = ("everett_u_historico", "everett_u_12m")
 
 
 #: Variantes PROHIBIDAS: textos que se parecen a los buenos y no lo son.
@@ -246,7 +254,12 @@ def main() -> None:
     # Se revisan solo los bloques SIN lenguaje (``` pelado), que son los de
     # valores; los de JSON y los de rutas llevan llaves y barras a proposito.
     import re as _re2
-    for bloque in _re2.findall(r"\n```\n(.*?)\n```", texto, _re2.S):
+    # ⚠ El patron tiene que anclar la apertura al principio de linea y aceptar
+    # el lenguaje. Sin eso, `\n```\n(.*?)\n``` ` emparejaba el CIERRE de un
+    # bloque con la APERTURA del siguiente y revisaba la prosa de en medio como
+    # si fuera un bloque de valores: tres falsos positivos sobre una cita.
+    for bloque in _re2.findall(r"^```[a-z]*\n(.*?)^```", texto,
+                               _re2.S | _re2.M):
         for linea in bloque.splitlines():
             if not linea.strip() or linea.lstrip().startswith(("/", "{", "}")):
                 continue
@@ -322,6 +335,38 @@ def main() -> None:
                               else "⚠ DIFIEREN"))
 
     print("")
+    print("── 6 bis · las columnas de Instagram, congeladas ──")
+    # El generador las DESCUBRE de los datos, para no perder una señal nueva
+    # en silencio. El reverso es que el archivo cambiaria de columnas sin que
+    # nadie lo decida, y un scoring que lea por posicion se rompe. Asi que la
+    # lista vive congelada en el manual y cualquier divergencia FALLA: la
+    # decision --agregarla y cambiar de version, o arreglar el scraper-- la
+    # toma una persona, no el generador.
+    reales = [c[1] for c in columnas_ig(filas)]
+    congeladas = []
+    for bloque in _re2.findall(r"^```[a-z]*\n(.*?)^```", texto,
+                               _re2.S | _re2.M):
+        lineas_b = [x.strip() for x in bloque.splitlines() if x.strip()]
+        if lineas_b and reales and lineas_b[0] == reales[0]:
+            congeladas = lineas_b
+            break
+    if congeladas != reales:
+        sobran = [x for x in reales if x not in congeladas]
+        faltan = [x for x in congeladas if x not in reales]
+        if sobran:
+            fallos.append("los datos traen columnas de Instagram que el "
+                          "manual no congela: %s" % sobran)
+        if faltan:
+            fallos.append("el manual congela columnas de Instagram que los "
+                          "datos ya no traen: %s" % faltan)
+        if not sobran and not faltan:
+            fallos.append("las columnas de Instagram son las mismas pero en "
+                          "otro ORDEN que el congelado en el manual")
+    print("   %d columnas · %s" % (len(reales),
+                                   "coinciden con las congeladas"
+                                   if congeladas == reales else "⚠ DIFIEREN"))
+
+    print("")
     print("── 7 · las bandas del manual son las del codigo ──")
     # Las bandas se escribieron a mano en el manual y ya estaban mal: decia
     # «1 · 2 · 3 · 4 · 5-9» cuando el codigo agrupa 3 y 4 en una sola. Un
@@ -344,6 +389,15 @@ def main() -> None:
                               "ninguna parte la etiqueta %s que el codigo "
                               "emite" % (gte, lt, nombre, celda))
         print("   %-18s %d bandas · cortes y etiquetas" % (nombre, len(bandas)))
+    # Y que el codigo no emita una banda fuera de la escala, como pasaba con
+    # el `50` pelado, que afirmaba cincuenta exactas.
+    validas = {str(etq_everett(g, l)) for g, l in B_EVERETT} | {""}
+    for col in VOCABULARIOS_DE_BANDA:
+        raros = sorted({str(f.get(col)) for f in filas} - validas - {"None"})
+        if raros:
+            fallos.append("%s emite %s, que no es ninguna banda de la escala"
+                          % (col, raros))
+    print("   escala de Everett: %s" % sorted(validas - {""}))
 
     print("")
     print("── 4 · cada caso de identificacion tiene sus tres textos ──")
