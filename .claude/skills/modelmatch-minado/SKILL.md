@@ -563,7 +563,7 @@ anterior se mide igual con 6 que con 20.
 | control (año − 2) | último (año − 1) | qué significa | qué se hace |
 |---|---|---|---|
 | ≥ 3 y **al menos el doble** del último | por debajo del piso | es **el dato**: ese bucket no está poblado | **no se corre** este paso |
-| ≥ 3 y parecido al último | por debajo del piso | es **el lote**: produce poco, y eso es un hallazgo, no un fallo | **se corre** |
+| ≥ 3 y **menos del doble** del último | por debajo del piso | es **el lote**: produce poco, y eso es un hallazgo, no un fallo | **se corre** |
 | **< 3** | por debajo del piso | **no hay con qué comparar**: la muestra no alcanza para decidir | **no se corre** |
 
 **El último renglón es el caso de los lotes muy chicos, y se resuelve a favor
