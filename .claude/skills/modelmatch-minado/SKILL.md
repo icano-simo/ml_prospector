@@ -1,6 +1,6 @@
 ---
 name: modelmatch-minado
-description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 63 columnas aprobadas (43 de la API y 20 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 1 crédito por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
+description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 64 columnas aprobadas (43 de la API y 21 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 1 crédito por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
 ---
 
 # Minado de Model Match — manual operativo
@@ -9,7 +9,7 @@ description: Manual operativo del minado de Model Match para realtors de HOMESÍ
 llamada cuesta dinero y cada campo de más es un campo que alguien va a leer
 mal.
 
-**Lo aprobado son 63 columnas**: **43 salen de la API** y **20 se calculan** a
+**Lo aprobado son 64 columnas**: **43 salen de la API** y **21 se calculan** a
 partir de ellas sin gastar nada. Están listadas una por una en la sección 4, y
 con su número de posición en 4·I — esa tabla **la regenera
 `modelmatch/actualizar_tabla_manual.py` desde el código**, para que no pueda
@@ -117,7 +117,7 @@ gratis.**
 | 3 · verificar | 0 | — |
 | 4 · tipo de préstamo | 0 | 3 |
 | 4 bis · Everett en dos ventanas y producción por año | 0 | 5 |
-| — | | + 20 calculadas a partir de las anteriores |
+| — | | + 21 calculadas a partir de las anteriores |
 
 **La ficha es la única línea con un número distinto de cero, y ese número es
 1.** No hay un paso 5: los breakdowns se retiraron.
@@ -401,7 +401,7 @@ Siete llamadas por ventana, **en este orden y con estos cortes**:
 | 5 | 10 | `5-9` |
 | 10 | 20 | `10-19` |
 | 20 | 50 | `20-49` |
-| 50 | — | `50` |
+| 50 | — | `50+` |
 
 Un guion en la columna `lt` significa **que esa llamada va sin `lt`**, no que
 lleve un `lt` vacío: el `units` queda en `{"gte": 50}` y nada más.
@@ -516,13 +516,41 @@ numérico —o la base, o una banda— deja ese periodo PENDIENTE.** El periodo 
 se escribe en absoluto y el registro no se sella, así que la corrida siguiente
 lo retoma.
 
-**«Ausente» y «vacío» no significan lo mismo acá**, y es la diferencia entre
-un dato y una invención: un periodo **vacío** dice «no produjo», un periodo
-**ausente** dice «no se pudo preguntar». Los derivados —`Primer año con
-producción`, `Años con producción`, `Antigüedad aproximada (años)`— solo miran
-los que están, así que un fallo los deja cortos pero nunca los falsea. Si el
-fallo se escribiera como vacío, el primer año se adelantaría y la antigüedad
-saldría más chica de lo que es.
+⛔ **Y si CUALQUIER periodo quedó pendiente, la celda entera y sus tres
+derivados van VACÍOS** —`Historical units · por año`, `Primer año con
+producción`, `Años con producción` y `Antigüedad aproximada (años)`— hasta que
+una corrida los complete.
+
+**Por qué no alcanza con omitir el periodo que falló**, que es lo que una
+versión anterior de este manual decía: en la celda, un periodo **ausente** y
+uno **vacío** se ven igual, porque los periodos sin producción tampoco se
+escriben. Si el que falló fue 2017 y el realtor sí produjo ese año,
+`Primer año` sale 2018 y **la antigüedad sale un año menor**. El fallo deja de
+ser un hueco y pasa a ser una afirmación falsa — exactamente lo que la regla
+venía a evitar. Mientras falte un periodo no se puede saber cuál es el primer
+año, así que no se escribe ninguno.
+
+##### La comprobación que va ANTES del lote — igual que la de `lt`
+
+```json
+POST /v1/agents/count
+{"flatFilters": {"id": "<mm_id>", "buyerUnits": {"gte": 1}},
+ "period": "<el año anterior al actual>"}
+```
+
+**Se pide sobre 20 realtors del lote, y al menos uno tiene que devolver 1.**
+Si ninguno produjo en el último año cerrado, **el lote no se corre.**
+
+**Por qué, y por qué no alcanza con lo que ya sabemos:** está medido que el
+año **en curso** devuelve 0 aunque haya producción, porque su bucket no está
+poblado. Nada dice cuándo se puebla el anterior — **en enero puede estar tan
+vacío como lo estaba el actual en diciembre**. Y un año vacío no se ve como un
+fallo: se ve como un realtor que dejó de producir. Peor, afecta a **todo el
+lote a la vez**, y adelanta el primer año de todos, así que la antigüedad sale
+corta en masa sin que ninguna celda parezca rara.
+
+En la corrida de referencia, 461 de 471 tenían producción en el año anterior;
+el sondeo de 20 habría dado ~19. Si da 0, es que el bucket no está.
 
 ##### Qué periodos se piden
 
@@ -648,7 +676,7 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `scored.LastTransactionDate` | `Última operación` | epoch en milisegundos → fecha ISO. **Es la única señal de recencia** |
 | `licenses[]` | `Licencias (todas)` | `"<número> (<estado>, vence <fecha>)"` unidos con `" · "` |
 | `licenses[].state` | `Estados con licencia` | los estados distintos, ordenados, unidos con `" · "` |
-| `licenses[].expirationDate` | `Licencia vence` | **el vencimiento más próximo** |
+| `licenses[].expirationDate` | `Última licencia vence` | **el vencimiento MÁS LEJANO**, convertido a ISO. Ver la regla completa en 4·G |
 | `dualVolume` | `Dual ($)` | tal cual |
 | `scored.total_mortgaged_listing_volume` | `Ventas financiadas ($)` | tal cual |
 | `scored.total_mortgaged_dual_units` | `Dual financiadas (u)` | tal cual. Suele ser 0 |
@@ -668,17 +696,18 @@ traduce, no se le quitan acentos ni el `⚠`.
 | el mismo con bandas | `Operaciones con Everett · 12 meses` | ídem |
 | count + `buyerUnits` por año | `Historical units · por año` | los años con producción |
 
-### C · De los conteos por bandas
+### C · El formato de las cuatro celdas por bandas
 
-| columna | cómo |
+La tabla B dice **de qué llamada** sale cada una; ésta dice **qué se escribe**,
+que es lo único que no estaba. Los valores posibles están en 4·E, donde son
+vocabulario cerrado.
+
+| columna | qué se escribe |
 |---|---|
-| `¿Trabajó con Everett · histórico?` | `SÍ` si el conteo con `allTime` da 1 |
-| `Operaciones con Everett · histórico` | la banda que dio 1: exacto hasta `2`, luego `3-4`, `5-9`, `10-19`, `20-49`, `50`. La tabla completa está en el paso 4 bis |
-| `¿Trabajó con Everett · 12 meses?` | lo mismo con `period: last12Months` |
-| `Operaciones con Everett · 12 meses` | ídem |
-| `Historical units · por año` | `"<periodo>: <banda>"` de los periodos con producción, unidos con `" · "`. **El periodo puede ser un año, `yearToDate` o `last3Months`**, y la banda puede ser un número o un rango: `2024: 3 · yearToDate: 5-6` |
+| `Operaciones con Everett · histórico` · `· 12 meses` | la etiqueta de la banda que dio 1 —ver la escala en 4·E—, o **vacía** si no trabajó con Everett en esa ventana, o **vacía** si alguna llamada falló |
+| `Historical units · por año` | `"<periodo>: <banda>"` unidos con `" · "`. **El periodo puede ser un año, `yearToDate` o `last3Months`**, y la banda un número o un rango: `2024: 3 · yearToDate: 5-6`. ⛔ **Vacía entera si algún periodo quedó pendiente** — ver 4·F quater |
 
-### D · Calculadas — 20 columnas, 0 créditos
+### D · Calculadas — 21 columnas, 0 créditos
 
 | columna | cómo |
 |---|---|
@@ -693,50 +722,66 @@ traduce, no se le quitan acentos ni el `⚠`.
 | `Nº teléfonos` | ídem con `Teléfonos en Model Match` |
 | `¿Fidelizado con un LO?` | tramos de `Nº originadores`. **Los seis textos exactos están en 4·E** |
 | `Precio medio de sus COMPRAS` | `buyerVolume ÷ buyerUnits`. **Distinto de `Precio medio`**, que mezcla los dos lados: éste es el precio de las casas que compran sus clientes |
-| `Precio medio de sus compras financiadas` | `scored.total_mortgaged_buyer_volume ÷ scored.total_mortgaged_buyer_units`. **Es un PRECIO de casa, no un préstamo** — ver el aviso de abajo |
+| `Loan medio, solo lado comprador` | `scored.total_mortgaged_buyer_volume ÷ scored.total_mortgaged_buyer_units`. **Es un PRÉSTAMO, no un precio** — ver el aviso de abajo— y a diferencia del de la ficha, mira **solo a sus compradores** |
 | `Precio medio de sus listings` | `sellerVolume ÷ sellerUnits` |
 | `Venta vs listado (%)` | `total_sale_price ÷ total_list_price × 100`, un decimal. Bajo 100 vende con descuento sobre lo que pide |
 | `Primer año con producción` | el año más viejo con unidades |
 | `Años con producción` | en cuántos años distintos cerró algo |
 | `Antigüedad aproximada (años)` | año en curso − primer año + 1 |
+| `⚠ Datos pendientes` | vacía si la fila está completa; si no, qué falta, unido con `" · "` y terminado en `NO PUNTUAR`. Ver 4·F quater |
 | `Créditos gastados` | el acumulado real del realtor. Entero |
-| `Régimen de minado` | `tope viejo · hasta 5 créditos` si gastó más de 1 **o** si tiene tablas de lenders u originadores guardadas; si no, `tope 1`. **Se deriva de hechos del registro, no de la fecha**: una fila de la corrida vieja que gastó 1 y no compró breakdowns es, dato por dato, lo que produce el procedimiento de hoy, y marcarla como vieja la haría parecer sospechosa sin serlo |
+| `Régimen de minado` | `minado antes del tope 1` si gastó más de 1 **o** si tiene tablas de lenders u originadores guardadas; si no, `tope 1`. **Se deriva de hechos del registro, no de la fecha**: una fila de la corrida vieja que gastó 1 y no compró breakdowns es, dato por dato, lo que produce el procedimiento de hoy, y marcarla como vieja la haría parecer sospechosa sin serlo |
 | `Consultado` | ISO 8601 con zona UTC, p. ej. `2026-09-24T20:59:16.308783+00:00` |
 
-> **Los cuatro cocientes —tres precios medios y `Venta vs listado (%)`— son
-> aritmética, no datos nuevos.** Se comprobó número a número contra el bloque
-> `scored`: el cociente coincide. Por eso se calculan en vez de guardarse dos
-> veces.
+> **Los cuatro cocientes son aritmética, no datos nuevos.** Se comprobó número
+> a número contra el bloque `scored`: el cociente coincide. Por eso se
+> calculan en vez de guardarse dos veces. **Dos de ellos son precios de casa**
+> —`Precio medio de sus COMPRAS` y `Precio medio de sus listings`, porque
+> `buyerVolume` y `sellerVolume` son dólares de venta— **y uno es préstamo**
+> —`Loan medio, solo lado comprador`—. La diferencia está medida en el aviso
+> de abajo y no se puede deducir de los nombres de la API.
 >
-> ⚠ **`scored.average_mortgaged_loan_amount` NO es un préstamo**, aunque la
-> API lo llame así y aunque esta misma skill lo afirmara en una versión
-> anterior. **Se midió contra las 461 fichas pagadas, y una sola fórmula
-> cuadra en las 461:** `(compras + listings − dual) en dólares` dividido por
-> `(compras + listings − dual) en unidades`,
-> todo del bloque `scored` y todo sobre operaciones financiadas. Es el
-> **precio medio de venta de sus operaciones financiadas, contando cada
-> operación una vez** —el `− dual` está porque una operación en la que
-> representó a las dos puntas aparece en los dos contadores—.
+> ⚠ **Todos los campos `total_mortgaged_*_volume` son dólares de PRÉSTAMO, no
+> de precio de venta.** Es la distinción que más fácil se lee mal, porque los
+> nombres no la marcan y los órdenes de magnitud se parecen.
 >
-> **Las dos lecturas que circulaban eran falsas, y se descartan con los
-> números:**
+> **La prueba, que no depende de ninguna interpretación:** tomar los realtors
+> en los que **todas** sus compras se financiaron —`mortgaged_buyer_units ==
+> buyerUnits`—. Ahí el conjunto de operaciones es el mismo, así que si los
+> dólares fueran precios tendrían que **coincidir** con `buyerVolume`, que son
+> precios de venta sin discusión.
 >
-> - «es el préstamo, y la diferencia con el precio es el pie» — **no**: en
->   **182 de 456 fichas el supuesto préstamo SUPERA al precio de compra**,
->   hasta en un 65 %. Un pie no puede ser negativo.
-> - «son dólares de préstamo» a secas — **no**: con `avgSoldPrice` y con
->   `volumen ÷ unidades` no cuadra en **ninguna** de las 461.
+> | | |
+> |---|---|
+> | realtors con todas sus compras financiadas | 32 |
+> | `mortgaged_buyer_volume ÷ buyerVolume`, mediana | **0,87** |
+> | de ésos, cuántos dan exactamente 1,0 | **0** |
+> | lo mismo del lado vendedor (83 casos), mediana | **0,90** |
 >
-> Por eso la columna **no** se llama `Loan medio`: se llama
-> `Precio medio de sus operaciones financiadas`. Y **no** es intercambiable
-> con `Precio medio de sus compras financiadas`, que mira **solo el lado
-> comprador** y da otro número.
+> Mismas operaciones, 13 % menos de dólares, en los dos lados y sin una sola
+> excepción. Eso que falta es el pie.
 >
-> **La lección, que vale más que el campo:** el nombre de un campo de la API
-> no es evidencia de lo que contiene, y **un solo caso tampoco** — con una
-> ficha se podía «comprobar» cualquiera de las tres lecturas. Lo que decidió
-> fue correr las cuatro hipótesis sobre todo el lote y quedarse con la única
-> que daba 461 de 461.
+> **Dos consecuencias que hay que tener presentes al leer:**
+>
+> - **`% volumen financiado` no es una proporción de operaciones.** Se midió
+>   en 465 de 465: es `(compras + listings − dual) en préstamo ÷ volumen en
+>   venta`, o sea préstamo sobre precio — más cerca de un LTV mezclado que de
+>   un porcentaje de cartera. Quien financió el 100 % de sus unidades sale
+>   cerca de 87, no de 100. La proporción de verdad es
+>   `% unidades financiadas`, que cuenta operaciones.
+> - **`Loan medio de sus compradores` sí es un préstamo, pero no es solo de
+>   sus compradores.** La fórmula cuadra en 461 de 461 como
+>   `(compras + listings − dual)`, así que **incluye a los compradores de sus
+>   listings** —el `− dual` está porque representar las dos puntas suma en los
+>   dos contadores—. El préstamo medio de **sus** compradores es
+>   `Loan medio, solo lado comprador`, que se calcula aparte y da otro número.
+>
+> **La lección, que vale más que el campo:** aquí se afirmó lo contrario —que
+> eran precios— con **una** ficha y con una fórmula que cuadraba en 461 de
+> 461. Las dos cosas eran ciertas y ninguna probaba nada: esa fórmula vale
+> igual si los dólares son préstamos. **Una hipótesis solo queda descartada
+> por una medición que la dos lecturas no puedan compartir**, y la que lo hizo
+> fue mirar casos donde el conjunto de operaciones era idéntico.
 >
 > **Dos campos de la ficha se leen sin tener columna propia**:
 > `scored.total_sale_price` —solo alimenta el numerador de
@@ -826,7 +871,9 @@ que no tiene ninguno.
 **`¿Trabajó con Everett · histórico?`** y **`· 12 meses?`** → `SÍ` · `no` ·
 `sin comprobar`.
 
-**`Régimen de minado`** → `tope 1` · `tope viejo · hasta 5 créditos`.
+**`Régimen de minado`** → `tope 1` · `minado antes del tope 1`. El segundo
+**no lleva número**: siete de esas filas gastaron entre 6 y 8, así que decir
+«hasta 5» sería falso.
 
 **`Operaciones con Everett · histórico`** y **`· 12 meses`** — vacías, o
 **exactamente uno** de estos siete. **También son vocabulario cerrado**: el
@@ -888,7 +935,7 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | `Confianza` | `no encontrado` |
 | `⚠ Revisar porque…` | `no se encontró en Model Match` |
 | las de la ficha | **vacías**, las 35 |
-| `Precio medio de sus COMPRAS` · `Precio medio de sus compras financiadas` · `Precio medio de sus listings` · `Venta vs listado (%)` | **vacías**: son cocientes de celdas vacías, y un cociente sin numerador no es `0` |
+| `Precio medio de sus COMPRAS` · `Loan medio, solo lado comprador` · `Precio medio de sus listings` · `Venta vs listado (%)` | **vacías**: son cocientes de celdas vacías, y un cociente sin numerador no es `0` |
 | `¿Produce FHA?` · `convencional` · `VA` | `sin comprobar` |
 | `¿Trabajó con Everett · histórico?` · `· 12 meses?` | `sin comprobar` |
 | `Operaciones con Everett · histórico` · `· 12 meses` | **vacías** |
@@ -898,6 +945,7 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | `Nº emails` · `Nº teléfonos` | **vacías** (no se sabe cuántos tiene, no es que tenga cero) |
 | `Candidatos vistos` | el número real de candidatos distintos que devolvió la búsqueda, **también cuando no se eligió ninguno** |
 | `Créditos gastados` | `0` |
+| `⚠ Datos pendientes` | **vacía**: no hay nada pendiente porque no hay a quién preguntarle. Lo que pasa con esta fila lo dice `⚠ Revisar porque…` |
 | `Régimen de minado` | `tope 1`: gastó 0, que cumple el tope |
 | `Consultado` | el sello de tiempo igual: se consultó, aunque no se resolviera |
 
@@ -913,13 +961,39 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | no produjo nada en ningún año | `Primer año con producción` · `Antigüedad aproximada (años)` | **vacías** |
 | el primer año con producción es 2017 | `Antigüedad aproximada (años)` | se escribe igual, **pero es un piso**: 2017 es el año más viejo del enum y su primera operación puede ser anterior |
 | la API devuelve un porcentaje > 100 | el que sea | **se guarda tal cual**, no se recorta |
-| la ficha no trae `licenses` o la trae vacía | `Licencias (todas)` · `Estados con licencia` · `Licencia vence` | **vacías**. ⚠ **`Licencia (MM)` NO**: sale de otro campo, `licenseNumber`, y puede tener valor aunque `licenses` venga vacío. Son dos fuentes distintas y se llenan por separado |
+| la ficha no trae `licenses` o la trae vacía | `Licencias (todas)` · `Estados con licencia` · `Última licencia vence` | **vacías**. ⚠ **`Licencia (MM)` NO**: sale de otro campo, `licenseNumber`, y puede tener valor aunque `licenses` venga vacío. Son dos fuentes distintas y se llenan por separado |
 | cualquiera de las cuatro celdas de licencia queda vacía | — | **vacío significa «Model Match no lo sabe», no «no tiene licencia»**. Model Match trae `licenseNumber` para ~la mitad. Nadie descarta a un realtor por esa celda |
-| las licencias traen fecha pero están **todas vencidas** | `Licencia vence` | se escribe igual. Y hay que saber que **es lo normal, no la excepción**: de las 288 fichas con vencimiento, **182 lo tienen todo vencido**. Eso dice que el dato de vencimiento de Model Match está viejo, no que 182 realtors ejerzan sin licencia. ⛔ **No se filtra por esta columna** |
+| las licencias traen fecha pero están **todas vencidas** | `Última licencia vence` | se escribe igual. Y hay que saber que **es lo normal, no la excepción**: de las 288 fichas con vencimiento, **182 lo tienen todo vencido**. Eso dice que el dato de vencimiento de Model Match está viejo, no que 182 realtors ejerzan sin licencia. ⛔ **No se filtra por esta columna** |
 | una licencia viene **sin** `expirationDate` | `Licencias (todas)` | se escribe `<número> (<estado>)`, **sin** la coma ni el «vence». No se inventa una fecha ni se escribe «sin fecha» dentro del paréntesis |
 | todas sus licencias están **vencidas** | las cuatro | **se escriben igual**, con su fecha pasada. Filtrar por vencimiento es decisión del scoring, no de la extracción: una licencia vencida en el dato puede ser una renovación que Model Match no vio |
 | `buyerUnits` = 0, o `sellerUnits` = 0, o `total_list_price` = 0 | el cociente que lo tenga de divisor | **vacía**. Dividir por cero no da `0`: escribir `0` afirmaría que las casas valían cero |
 | cualquiera de los dos términos de un cociente no es un número | ese cociente | **vacía**, sin intentar convertir el texto |
+
+### F quater · Lo pendiente se ve, y una fila pendiente NO se puntúa
+
+Un «sin comprobar» en una celda que nadie mira **se lee como «comprobado y
+no»**, que es lo contrario. Por eso hay una columna para eso:
+
+**`⚠ Datos pendientes`** — vacía cuando la fila está completa; si no, nombra
+qué falta y termina en `NO PUNTUAR`. Los tres textos que la componen, unidos
+con `" · "`:
+
+```
+Everett
+producción por año
+tipo de préstamo
+```
+
+**El riesgo concreto, que es de scoring y no de prolijidad:** un cliente de
+Everett cuya llamada se cayó queda en `sin comprobar`. El tope que manda a
+grado D a quien tiene ≥3 operaciones con Everett **no se dispara con «sin
+comprobar»**, así que ese realtor puede salir con grado A y terminar en una
+lista de llamadas. El dato que falta no es neutro: su ausencia favorece al
+realtor.
+
+**Antes de entregar un archivo, `⚠ Datos pendientes` tiene que estar vacía en
+todas las filas identificadas.** Si no, se vuelve a correr el paso que falte
+—todos son gratis— y se regenera. Es el chequeo 7 de la sección 6.
 
 ### F ter · Los realtors en revisión SÍ se completan
 
@@ -942,7 +1016,7 @@ deja de ser comparable.
 | teléfonos | solo dígitos, sin repetidos, **orden alfabético de la cadena**, unidos con `" · "` |
 | `Historical units · por año` | **orden alfabético de la clave del periodo**, que deja los años ascendentes primero, después `last3Months` y al final `yearToDate`. Formato `"<periodo>: <banda>"`, unidos con `" · "`, **omitiendo los periodos sin producción** |
 | `Licencias (todas)` | **por número de licencia, orden de texto** —no numérico: los números traen letras y ceros a la izquierda—, con el formato `"<número> (<estado>, vence AAAA-MM-DD)"` unidos con `" · "`. La parte `, vence …` **se omite entera** cuando esa licencia no trae vencimiento |
-| `Licencia vence` | el **mínimo real de las fechas**, esté vencido o no. ⛔ **No se ordenan como texto**: la API las da en `MM/DD/AAAA`, así que `03/31/2027` sale antes que `09/30/2025` y «el más próximo» daba el más lejano. Se convierten a fecha y después se compara |
+| `Última licencia vence` | el **máximo real de las fechas**: hasta cuándo consta habilitado. ⛔ **No se ordenan como texto**: la API las da en `MM/DD/AAAA`, así que `03/31/2027` sale antes que `09/30/2025`. Se convierten a fecha y después se compara. **Antes era el mínimo**, y con 182 de 288 fichas enteramente vencidas eso devolvía la fecha más vieja, que no responde ninguna pregunta útil |
 | `Estados con licencia` | los estados distintos, **orden alfabético** |
 | perfiles duplicados con el mismo correo | gana el de mayor `volume`; si empatan, el primero que devolvió la búsqueda |
 | qué correos se buscan | los **2 primeros en orden alfabético** de los nuestros |
@@ -971,7 +1045,7 @@ deja de ser comparable.
     este de Greenwich daría el día siguiente. En las 471 fichas actuales UTC y
     la hora local de esta máquina coinciden, lo cual **no** es garantía: es
     que esta máquina está al oeste.
-  - `Licencia vence` y las fechas dentro de `Licencias (todas)` vienen como
+  - `Última licencia vence` y las fechas dentro de `Licencias (todas)` vienen como
     **`MM/DD/AAAA`**, el formato de EEUU. Se convierten a ISO **antes** de
     escribirlas y **antes** de ordenarlas (ver 4·G).
 - `Consultado` no es una fecha sino un **instante**: ISO 8601 **con zona y
@@ -981,7 +1055,7 @@ deja de ser comparable.
   hora UTC**, no el del reloj local. En los últimos días de diciembre las dos
   cosas pueden no coincidir.
 - **`Operaciones con Everett · …` mezcla números y texto a propósito**: `1`,
-  `2` y `50` son números; `3-4`, `5-9`, `10-19` y `20-49` son texto. En el
+  `2` son números; `3-4`, `5-9`, `10-19`, `20-49` y `50+` son texto. En el
   Excel conviven en la misma columna, así que **ordenar esa columna no da un
   orden numérico** y una fórmula que sume sobre ella falla en las bandas. Para
   ordenar por relación con Everett se usa el sí/no, o se parte la banda a
@@ -998,14 +1072,14 @@ deja de ser comparable.
 
 #### El plano entero de la hoja *Realtors*
 
-Son **129 columnas** en una sola tabla, en este orden y sin huecos:
+Son **130 columnas** en una sola tabla, en este orden y sin huecos:
 
 | posiciones | qué | de dónde |
 |---|---|---|
 | 1 a 3 | `Realtor` · `Instagram` · `Clase IG` | nuestra base |
-| 4 a 72 | las aprobadas de Model Match, **intercaladas** con seis de las nuestras | la tabla de abajo |
-| 73 a 74 | `realtor_id` · `sf_lead_id` | nuestra base: identificadores para cruzar |
-| 75 a 129 | Instagram, **55 columnas** | scraper propio, fuera de este manual |
+| 4 a 73 | las aprobadas de Model Match, **intercaladas** con seis de las nuestras | la tabla de abajo |
+| 74 a 75 | `realtor_id` · `sf_lead_id` | nuestra base: identificadores para cruzar |
+| 76 a 130 | Instagram, **55 columnas** | scraper propio, fuera de este manual |
 
 ⚠ **Las columnas de Instagram las DESCUBRE el generador de los datos**, para que una señal nueva del scraper no se pierda en silencio. El riesgo es el contrario: que el archivo cambie de columnas sin que nadie lo decida, y eso rompe cualquier scoring que lea por posición. Por eso la lista queda **congelada acá abajo** y `verificar_manual.py` falla si los datos traen una que no esté o dejan de traer una que sí. Cuando falle, se decide: o se agrega al manual —y el archivo cambia de versión— o se arregla el scraper. Lo que no puede pasar es que cambie sola.
 
@@ -1071,7 +1145,7 @@ IG · comentarios del agente
 
 #### Las columnas de Model Match, con su número de posición
 
-**Van de la 4 a la 72, pero no son contiguas**: las posiciones 11, 14, 17, 21, 26, 27 son de nuestra base y no se le piden a Model Match.
+**Van de la 4 a la 73, pero no son contiguas**: las posiciones 11, 14, 17, 21, 26, 27 son de nuestra base y no se le piden a Model Match.
 
 | nº | encabezado exacto | origen |
 |---|---|---|
@@ -1106,13 +1180,13 @@ IG · comentarios del agente
 | 38 | `Ventas financiadas (u)` | ficha |
 | 39 | `% unidades financiadas` | ficha |
 | 40 | `% volumen financiado` | ficha |
-| 41 | `Precio medio de sus operaciones financiadas` | ficha |
+| 41 | `Loan medio de sus compradores` | ficha |
 | 42 | `Última operación` | ficha |
 | 43 | `Licencias (todas)` | ficha |
 | 44 | `Estados con licencia` | ficha |
-| 45 | `Licencia vence` | ficha |
+| 45 | `Última licencia vence` | ficha |
 | 46 | `Precio medio de sus COMPRAS` | calculada |
-| 47 | `Precio medio de sus compras financiadas` | calculada |
+| 47 | `Loan medio, solo lado comprador` | calculada |
 | 48 | `Precio medio de sus listings` | calculada |
 | 49 | `Suma de precios de listado` | ficha |
 | 50 | `Venta vs listado (%)` | calculada |
@@ -1136,8 +1210,9 @@ IG · comentarios del agente
 | 68 | `Años con producción` | calculada |
 | 69 | `Antigüedad aproximada (años)` | calculada |
 | 70 | `Créditos gastados` | calculada |
-| 71 | `Régimen de minado` | calculada |
-| 72 | `Consultado` | calculada |
+| 71 | `⚠ Datos pendientes` | calculada |
+| 72 | `Régimen de minado` | calculada |
+| 73 | `Consultado` | calculada |
 
 <!-- TABLA-POSICIONES:fin -->
 
@@ -1153,7 +1228,7 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
 | cualquier `*BulkDelivery` sin aprobación escrita | 1 crédito por fila, sin tope natural |
 | seguir el `cursor` | multiplica el costo en silencio |
 | `POST /v1/agents` para un agente concreto | cuesta lo mismo que la ficha y trae menos |
-| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 63 columnas aprobadas |
+| `/sales`, `/properties`, `/related`, `/v1/market` | no producen ninguna de las 64 columnas aprobadas |
 | **cualquier** `POST /v1/agents/{id}/breakdowns/*` — `originators`, `lenders`, `companies`, `counties` | **nunca, sin excepción y sin «si cabe»**: 1 por fila, no se pueden acotar, y con el tope en 1 no cabe ninguno. Ver el paso 5 |
 | los filtros de tract de `/v1/market` para **elegir** a quién contactar | `minorityTractPct`, `majorityMinorityTract`, `lowModIncomeTract`: segmentar por ahí es redlining y es exposición de fair lending |
 
@@ -1184,6 +1259,12 @@ Si el código las menciona, el cliente revienta antes de salir a la red.
    haber dejado de comprarla.
 6. **ningún porcentaje de la API usado sin contrastar** contra un caso cuya
    respuesta se conozca por otra vía.
+7. **`⚠ Datos pendientes` vacía en todas las filas identificadas.** Una fila
+   pendiente no se entrega y no se puntúa: ver 4·F quater. Los pasos que
+   faltan son todos gratis, así que no hay razón para entregar con pendientes.
+8. **el sondeo del último año cerrado dio al menos un positivo** antes de
+   correr la producción por año. Si no, el bucket de ese año no está poblado y
+   la antigüedad sale corta para todo el lote.
 
 ### Resultado de referencia
 
@@ -1217,7 +1298,7 @@ ledger dice otra cosa, algo se está pidiendo que no está acá.**
 | los candidatos de los no resueltos | dentro del registro del realtor, clave `candidatos`, con nombre, brokerage, ciudad, estado y correo de cada uno |
 | las tablas crudas de lenders y originadores | dentro del registro, claves `mm_lenders` y `mm_originators`, **solo en los realtors de la corrida vieja que sí las pagó**. El minado de hoy no las pide, así que en un realtor nuevo esas claves no existen — y su ausencia no es un fallo |
 | la hoja de los que hay que revisar a mano | hoja *Revisar* del Excel, con los candidatos en una celda |
-| las tablas largas, una fila por relación | hojas *Lenders* y *Originadores*. ⚠ **Las tres hojas largas son de la corrida vieja y NO crecen**: hoy no se compra ningún breakdown, así que *Companias* está vacía y las otras dos solo tienen las 50 filas marcadas `tope viejo · hasta 5 créditos`. Un realtor minado hoy **no aparece en ninguna**, y esa ausencia no es un fallo |
+| las tablas largas, una fila por relación | hojas *Lenders* y *Originadores*. ⚠ **Las tres hojas largas son de la corrida vieja y NO crecen**: hoy no se compra ningún breakdown, así que *Companias* está vacía y las otras dos solo tienen las 50 filas marcadas `minado antes del tope 1`. Un realtor minado hoy **no aparece en ninguna**, y esa ausencia no es un fallo |
 
 **Nada de esto se versiona**: lleva nombre, correo y teléfono de personas
 reales y el repo es público. `data/` está en el `.gitignore`.

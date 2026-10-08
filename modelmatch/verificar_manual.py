@@ -78,7 +78,7 @@ VOCABULARIOS = {
     "trabaja_con_la_casa": ["SÍ", "no", "sin comprobar"],
     "everett_historico": ["SÍ", "no", "sin comprobar"],
     "everett_12m": ["SÍ", "no", "sin comprobar"],
-    "regimen_minado": ["tope 1", "tope viejo · hasta 5 créditos"],
+    "regimen_minado": ["tope 1", "minado antes del tope 1"],
 }
 
 #: Las bandas TAMBIEN son vocabulario cerrado: el scoring filtra por igualdad
@@ -379,15 +379,15 @@ def main() -> None:
                                ("historical units", B_ANIOS, etq_anios)):
         for gte, lt in bandas:
             cota = "%d" % lt if lt is not None else "—"
-            fila = "| %d | %s |" % (gte, cota)
+            # La FILA ENTERA, con su etiqueta dentro. Comprobar por separado
+            # que la fila existe y que la etiqueta aparece «en alguna parte»
+            # daba verde mientras la tabla que el agente COPIA decia `50` y el
+            # `50+` bueno vivia tres secciones mas abajo. Es el mismo fallo de
+            # siempre: presencia no es correspondencia.
+            fila = "| %d | %s | `%s` |" % (gte, cota, fn(gte, lt))
             if fila not in texto:
-                fallos.append("banda de %s sin su fila `%s` en el manual"
-                              % (nombre, fila))
-            celda = "`%s`" % fn(gte, lt)
-            if celda not in texto:
-                fallos.append("banda [%s, %s) de %s: el manual no escribe en "
-                              "ninguna parte la etiqueta %s que el codigo "
-                              "emite" % (gte, lt, nombre, celda))
+                fallos.append("%s: la fila de la banda [%s, %s) no es "
+                              "exactamente `%s`" % (nombre, gte, lt, fila))
         print("   %-18s %d bandas · cortes y etiquetas" % (nombre, len(bandas)))
     # Y que el codigo no emita una banda fuera de la escala, como pasaba con
     # el `50` pelado, que afirmaba cincuenta exactas.

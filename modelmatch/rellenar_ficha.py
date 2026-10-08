@@ -127,10 +127,11 @@ def main() -> None:
             if x.get("number"))
         vences = sorted(v for v in (fecha_licencia(x.get("expirationDate"))
                                     for x in lic) if v)
-        # «El mas proximo» es el minimo, este vencido o no: con todas vencidas
-        # da la mas vieja, que es lo que hay que ver. Quien quiera la vigente
-        # mas cercana tiene la lista entera en `Licencias (todas)`.
-        f["mm_licencia_vence"] = vences[0] if vences else ""
+        # El MAS LEJANO, no el mas proximo: la pregunta util es «hasta cuando
+        # consta habilitado». Con 182 de 288 fichas enteramente vencidas, el
+        # minimo devolvia la fecha mas vieja, que no responde nada. Quien
+        # necesite el detalle lo tiene en `Licencias (todas)`.
+        f["mm_licencia_vence"] = vences[-1] if vences else ""
         f["mm_estados_licencia"] = " · ".join(
             sorted({x.get("state") for x in lic if x.get("state")}))
         f["mm_dual_v"] = det.get("dualVolume")

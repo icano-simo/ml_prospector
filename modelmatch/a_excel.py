@@ -156,24 +156,32 @@ COLUMNAS = [
      "precisa de cuántas presentaciones a un prestamista puede hacer al "
      "año.** Este dato no lo teníamos a mano."),
     ("mm_compras_financiadas_v", "Compras financiadas ($)", 19, FICHA,
-     "Dólares de esas compras financiadas."),
+     "⚠ **Son dólares de PRÉSTAMO, no de precio de venta.** Medido: en los 32 "
+     "realtors cuyas compras se financiaron TODAS —mismo conjunto de "
+     "operaciones que `Compras ($)`— esta cifra es la mediana del 87 % de "
+     "aquélla, y en ninguno de los 32 coincide. Eso que falta es el pie. Para "
+     "el precio de esas casas está `Precio medio de sus COMPRAS`."),
     ("mm_ventas_financiadas_u", "Ventas financiadas (u)", 18, FICHA,
      "Listings suyos cuyo comprador financió."),
     ("mm_pct_unidades_financiadas", "% unidades financiadas", 18, FICHA,
      "Qué parte de sus operaciones lleva hipoteca. Bajo = libro con mucho "
      "efectivo, y ahí hay menos que hacer."),
     ("mm_pct_volumen_financiado", "% volumen financiado", 17, FICHA,
-     "Lo mismo medido en dólares."),
-    ("mm_loan_medio", "Precio medio de sus operaciones financiadas", 26, FICHA,
-     "⚠ **NO es un préstamo, aunque la API lo llame "
-     "`average_mortgaged_loan_amount`.** Se midió contra las 461 fichas "
-     "pagadas y la fórmula cuadra en TODAS: es el precio medio de venta de "
-     "sus operaciones financiadas, contando cada operación UNA vez — "
-     "(compras + listings − dual) en dólares, dividido por lo mismo en "
-     "unidades. Incluye los listings, así que tampoco es «de sus "
-     "compradores». Para el precio solo del lado comprador está "
-     "`Precio medio de sus compras financiadas`, que es otra cosa y da otro "
-     "número."),
+     "⚠ **NO es «qué parte de sus dólares llevó hipoteca», aunque el nombre "
+     "lo sugiera.** Medido en 465 de 465 fichas: el numerador son dólares de "
+     "PRÉSTAMO y el denominador dólares de VENTA, así que lo que mide se "
+     "parece más a un LTV mezclado que a una proporción. Un realtor que "
+     "financió el 100 % de sus unidades sale cerca de 87, no de 100. Para la "
+     "proporción de verdad está `% unidades financiadas`, que cuenta "
+     "operaciones y no mezcla."),
+    ("mm_loan_medio", "Loan medio de sus compradores", 22, FICHA,
+     "Préstamo promedio de sus operaciones financiadas. **Es un préstamo** —"
+     "se midió: sobre conjuntos idénticos de operaciones estos dólares son la "
+     "mediana del 87 % de los de venta, y nunca coinciden—. ⚠ Lo que el "
+     "nombre sí tapa es el alcance: la fórmula cuadra en 461 de 461 como "
+     "(compras + listings − dual), o sea que **incluye a los compradores de "
+     "sus listings**, no solo a los suyos. Para el préstamo medio del lado "
+     "comprador únicamente está `Loan medio, solo lado comprador`."),
 
     ("mm_ultima_operacion", "Última operación", 13, FICHA,
      "Fecha de su última operación cerrada. **Es la única señal de recencia "
@@ -185,17 +193,23 @@ COLUMNAS = [
      "la lista: vacío es «no lo sabe», no «no tiene»."),
     ("mm_estados_licencia", "Estados con licencia", 16, FICHA,
      "En qué estados está habilitado para operar. Distinto de dónde produce."),
-    ("mm_licencia_vence", "Licencia vence", 13, FICHA,
-     "El vencimiento más próximo. Una fecha cercana puede ser señal de que "
-     "está por dejar la actividad."),
+    ("mm_licencia_vence", "Última licencia vence", 16, FICHA,
+     "El vencimiento **más lejano** de todas sus licencias: hasta cuándo "
+     "consta habilitado. Antes era el más próximo, y con 182 de 288 fichas "
+     "enteramente vencidas eso devolvía la fecha más vieja, que es el dato "
+     "menos útil. ⛔ **No se filtra por esta columna**: que esté vencida dice "
+     "que el dato de Model Match está viejo, no que el realtor no ejerza."),
     ("mm_precio_medio_compras", "Precio medio de sus COMPRAS", 20, CALC,
      "Volumen comprador ÷ unidades compradoras. Distinto de `Precio medio`, "
      "que mezcla los dos lados: éste es el precio de las casas que compran "
      "sus clientes, que es la banda que nos importa."),
-    ("mm_precio_medio_compras_fin", "Precio medio de sus compras financiadas",
-     22, CALC,
-     "Lo mismo, solo sobre las que llevaron hipoteca. Es el precio real de "
-     "quien necesita préstamo."),
+    ("mm_precio_medio_compras_fin", "Loan medio, solo lado comprador",
+     24, CALC,
+     "`Compras financiadas ($) ÷ Compras FINANCIADAS (u)`. **Es un préstamo, "
+     "no un precio**: el numerador son dólares prestados. Y a diferencia de "
+     "`Loan medio de sus compradores`, que de la ficha viene mezclado con los "
+     "compradores de sus listings, éste mira **solo a sus compradores**. Es "
+     "el número que dice cuánto pide prestado la gente que él trae."),
     ("mm_precio_medio_listings", "Precio medio de sus listings", 20, CALC,
      "Volumen vendedor ÷ unidades vendedoras."),
     ("mm_total_listado", "Suma de precios de listado", 18, FICHA,
@@ -266,12 +280,22 @@ COLUMNAS = [
     ("creditos_gastados", "Créditos gastados", 13, CALC,
      "Lo que costó este realtor. El tope es 1: la ficha es la única llamada "
      "que cobra. Un 2 acá significa que se le compró la ficha dos veces."),
+    ("pendientes", "⚠ Datos pendientes", 30, CALC,
+     "Vacía cuando la fila está completa. Si no, nombra qué quedó sin "
+     "comprobar porque una llamada falló. **Una fila con esta celda llena no "
+     "puede puntuarse**: un cliente de Everett cuya llamada se cayó queda en "
+     "'sin comprobar', se salta el tope de ≥3 operaciones con Everett —que "
+     "manda a grado D— y saldría con grado A. Se vuelve a correr el paso que "
+     "falte y se regenera."),
     ("regimen_minado", "Régimen de minado", 24, CALC,
      "Bajo qué reglas se minó ESTA fila. El archivo mezcla dos corridas y sin "
      "esta columna el chequeo «ningún realtor por encima de 1 crédito» falla "
      "por construcción sobre filas que nunca estuvieron sujetas a ese tope. "
-     "'tope viejo · hasta 5 créditos' son 50 filas de la corrida de "
-     "septiembre, las únicas que tienen las tablas de lenders y originadores."),
+     "'minado antes del tope 1' son 50 filas de septiembre, las únicas con "
+     "tablas de lenders y originadores; gastaron entre 2 y 8. **Lo que marca "
+     "es el gasto, no el dato**: a esas 50 se les recalculó todo lo que el "
+     "código nuevo produce —fechas, licencias, Everett por bandas, producción "
+     "por año— desde el crudo ya pagado, sin una llamada más."),
     ("consultado_en", "Consultado", 20, CALC,
      "Cuándo se pidió el dato a Model Match (UTC)."),
     ("realtor_id", "realtor_id", 36, NUESTRO,
@@ -510,7 +534,10 @@ def preparar(f: dict) -> dict:
     # hoy, y marcarla como vieja la haria parecer sospechosa sin serlo.
     gasto = f.get("creditos_gastados")
     d["regimen_minado"] = (
-        "tope viejo · hasta 5 créditos"
+        # «hasta 5» seria falso: siete filas gastaron entre 6 y 8, porque una
+        # compra dirigida sumo sin volver a mirar el tope. El texto no lleva
+        # numero para no afirmar uno equivocado.
+        "minado antes del tope 1"
         if (isinstance(gasto, (int, float)) and gasto > 1)
         or f.get("mm_lenders") or f.get("mm_originators")
         else "tope 1")
@@ -523,15 +550,40 @@ def preparar(f: dict) -> dict:
     # Historical units: los años con produccion, en una celda legible, y los
     # derivados. `anios` lo escribe el script de conteo, que no cobra.
     anios = f.get("anios_buyside") or {}
-    d["historical_units_txt"] = " · ".join(
-        "%s: %s" % (a, anios[a]) for a in sorted(anios) if anios[a] != "")
-    con_produccion = sorted(a for a in anios
-                            if anios[a] != "" and a.isdigit())
-    d["primer_anio"] = con_produccion[0] if con_produccion else ""
-    d["anios_produciendo"] = len(con_produccion)
-    d["antiguedad_aprox"] = (
-        dt.date.today().year - int(d["primer_anio"]) + 1
-        if d["primer_anio"] else "")
+    # Un periodo PENDIENTE --que fallo y no se escribio-- se ve en la celda
+    # igual que uno sin produccion, porque los vacios tampoco se escriben. Si
+    # el que fallo fue 2017 y el realtor produjo ese año, `Primer año` sale
+    # 2018 y la antiguedad sale un año MENOR: el fallo deja de ser un hueco y
+    # pasa a ser una afirmacion falsa. Asi que mientras falte algo, la celda y
+    # sus tres derivados van vacios. `anios_buyside_en` solo se sella cuando no
+    # fallo ninguno; su ausencia con datos presentes es la marca de pendiente.
+    pendiente = bool(anios) and not f.get("anios_buyside_en")
+    if pendiente:
+        d["historical_units_txt"] = ""
+        d["primer_anio"] = d["anios_produciendo"] = d["antiguedad_aprox"] = ""
+    else:
+        d["historical_units_txt"] = " · ".join(
+            "%s: %s" % (a, anios[a]) for a in sorted(anios) if anios[a] != "")
+        con_produccion = sorted(a for a in anios
+                                if anios[a] != "" and a.isdigit())
+        d["primer_anio"] = con_produccion[0] if con_produccion else ""
+        d["anios_produciendo"] = len(con_produccion)
+        d["antiguedad_aprox"] = (
+            dt.date.today().year - int(d["primer_anio"]) + 1
+            if d["primer_anio"] else "")
+    # Que quedo sin comprobar. Un pendiente INVISIBLE es peor que un dato
+    # faltante: «sin comprobar» en una celda que nadie mira se lee como
+    # «comprobado y no», que es lo contrario.
+    falta = []
+    if f.get("mm_id"):
+        if "sin comprobar" in (f.get("everett_historico"),
+                               f.get("everett_12m")):
+            falta.append("Everett")
+        if pendiente or not anios:
+            falta.append("producción por año")
+        if not f.get("paso4_en"):
+            falta.append("tipo de préstamo")
+    d["pendientes"] = (" · ".join(falta) + " · NO PUNTUAR") if falta else ""
     for k in ("mm_pct_unidades_financiadas", "mm_pct_volumen_financiado"):
         if isinstance(d.get(k), (int, float)):
             d[k] = round(d[k], 1)

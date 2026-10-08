@@ -87,7 +87,51 @@ ROTURAS = [
      "| 5 | 7 | `5-6` |", "| 5 | 7 | `5-7` |"),
     ("una columna de Instagram que el manual deja de congelar",
      "\nIG · handle confianza\n", "\n"),
+    ("la fila de la banda sin tope vuelve a decir `50`",
+     "| 50 | — | `50+` |", "| 50 | — | `50` |"),
 ]
+
+
+def test_un_periodo_pendiente_vacia_la_antiguedad():
+    """Si falta un periodo NO se puede saber cual fue el primer año.
+
+    Omitir solo el periodo que fallo no alcanza: en la celda, un periodo
+    ausente se ve igual que uno sin produccion, asi que si el que fallo fue el
+    mas viejo, `Primer año` avanza y la antiguedad sale un año MENOR. El
+    hueco se vuelve una afirmacion falsa.
+    """
+    from modelmatch.a_excel import preparar
+
+    completo = {"encontrado": True, "mm_id": "x",
+                "anios_buyside": {"2019": 3, "2020": 5, "2021": ""},
+                "anios_buyside_en": "2026-10-08T00:00:00+00:00"}
+    d = preparar(completo)
+    assert d["primer_anio"] == "2019"
+    assert d["anios_produciendo"] == 2
+    assert d["antiguedad_aprox"] != ""
+    assert d["historical_units_txt"] != ""
+
+    # El mismo realtor, pero 2017 fallo: sin sello, todo vacio.
+    pendiente = dict(completo)
+    pendiente.pop("anios_buyside_en")
+    d = preparar(pendiente)
+    for clave in ("primer_anio", "anios_produciendo", "antiguedad_aprox",
+                  "historical_units_txt"):
+        assert d[clave] == "", (clave, d[clave])
+    assert "producción por año" in d["pendientes"]
+    assert d["pendientes"].endswith("NO PUNTUAR")
+
+
+def test_everett_sin_comprobar_sale_marcado_como_pendiente():
+    """El riesgo es de scoring: «sin comprobar» se salta el tope de Everett."""
+    from modelmatch.a_excel import preparar
+
+    f = {"encontrado": True, "mm_id": "x", "paso4_en": "ya",
+         "anios_buyside": {"2020": 1}, "anios_buyside_en": "ya",
+         "everett_historico": "sin comprobar", "everett_12m": "no"}
+    assert "Everett" in preparar(f)["pendientes"]
+    f["everett_historico"] = "no"
+    assert preparar(f)["pendientes"] == ""
 
 
 def test_un_fallo_de_red_no_inventa_una_banda():
