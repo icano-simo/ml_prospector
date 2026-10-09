@@ -29,8 +29,13 @@ sys.path.insert(0, PAQUETE)
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 SKILLS = os.path.join(RAIZ, ".claude", "skills")
-BUSQUEDA = os.path.join(SKILLS, "instagram-busqueda", "SKILL.md")
-MINADO = os.path.join(SKILLS, "instagram-minado", "SKILL.md")
+#: Un solo manual. Antes eran dos --busqueda y minado-- partidos por FASE,
+#: pero los dos modos de arranque del scraper se diferencian en si corren la
+#: fase 1 o no, asi que partirlo obligaba a leer los dos para hacer una sola
+#: cosa. Las dos variables apuntan al mismo archivo para no tocar los
+#: chequeos, que siguen distinguiendo que seccion comprueban.
+BUSQUEDA = os.path.join(SKILLS, "instagram-scraping", "SKILL.md")
+MINADO = BUSQUEDA
 
 FUENTE_FINDER = os.path.join(PAQUETE, "instagram", "finder.py")
 FUENTE_EXTRAC = os.path.join(PAQUETE, "instagram", "extraccion.py")
