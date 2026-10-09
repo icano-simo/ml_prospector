@@ -39,6 +39,7 @@ SALIDA = os.path.join(RAIZ, "data", "salida")
 
 CABECERA = PatternFill("solid", fgColor="1F3864")
 LETRA_CAB = Font(color="FFFFFF", bold=True, size=10)
+
 AVISO = PatternFill("solid", fgColor="FCE4D6")
 CAMBIO = PatternFill("solid", fgColor="FFF2CC")
 
@@ -57,6 +58,28 @@ NUESTRO = "nuestra base (MMI / Salesforce)"
 FICHA = "Model Match · ficha del agente"
 APARTE = "Model Match · consulta aparte"
 CALC = "calculado acá"
+
+#: Un color por ORIGEN del dato, en la cabecera de la hoja Realtors.
+#:
+#: Por que importa y no es decoracion: las columnas de las tres fuentes estan
+#: INTERCALADAS --las nuestras caen en las posiciones 11, 14, 17, 21, 26 y 27,
+#: en medio de las de Model Match-- asi que mirando la tabla no hay forma de
+#: saber de donde sale cada cosa. Y de eso depende como se lee un VACIO: vacio
+#: en Model Match es «la API no lo trae», vacio en Instagram puede ser «la
+#: cuenta es privada», y vacio en una calculada es «le faltan sus insumos».
+#:
+#: Los tres azules van juntos a proposito: una columna calculada no es una
+#: fuente nueva, es aritmetica sobre lo que trajo Model Match.
+COLOR_ORIGEN = {
+    FICHA: "1F3864",    # azul oscuro · Model Match, la ficha que se paga
+    APARTE: "2E5FA3",   # azul medio  · Model Match, conteos gratis
+    CALC: "8EA9DB",     # azul claro  · calculado sobre lo anterior
+    NUESTRO: "595959",  # gris        · nuestra base (MMI / Salesforce)
+    "Instagram · scraping propio": "7B3F9D",   # morado · scraper de Instagram
+}
+#: Los fondos claros necesitan letra oscura.
+_FONDO_CLARO = {"8EA9DB"}
+_LETRA_OSCURA = Font(color="1F1F1F", bold=True, size=10)
 
 COLUMNAS = [
     ("nombre", "Realtor", 26, NUESTRO,
@@ -240,9 +263,12 @@ COLUMNAS = [
      "2129, que opera como Supreme Lending), en **todo el historial**. Es la "
      "exclusión por no-canibalización."),
     ("everett_u_historico", "Operaciones con Everett · histórico", 22, APARTE,
-     "Cuántas, en todo el historial. Exacto hasta 4 y por bandas arriba. Un "
-     "'1' es una relación suelta; un '20-49' es una relación de verdad, y "
-     "hasta ahora las dos se veían igual."),
+     "Cuántas, en todo el historial. **Exacto hasta 2; de ahí arriba por "
+     "bandas**, y los únicos valores posibles son 1 · 2 · 3-4 · 5-9 · 10-19 · "
+     "20-49 · 50+, o vacío si no trabajó con Everett. El '+' de la última no "
+     "es adorno: esa banda no tiene tope, así que un '50' pelado afirmaría "
+     "cincuenta exactas. Un '1' es una relación suelta; un '20-49' es una "
+     "relación de verdad, y hasta ahora las dos se veían igual."),
     ("everett_12m", "¿Trabajó con Everett · 12 meses?", 20, APARTE,
      "La misma pregunta, **solo en los últimos 12 meses**. Es la que dice si "
      "la relación está VIVA. De 136 con relación histórica, solo 21 la "
@@ -282,11 +308,13 @@ COLUMNAS = [
      "que cobra. Un 2 acá significa que se le compró la ficha dos veces."),
     ("pendientes", "⚠ Datos pendientes", 30, CALC,
      "Vacía cuando la fila está completa. Si no, nombra qué quedó sin "
-     "comprobar porque una llamada falló. **Una fila con esta celda llena no "
-     "puede puntuarse**: un cliente de Everett cuya llamada se cayó queda en "
-     "'sin comprobar', se salta el tope de ≥3 operaciones con Everett —que "
-     "manda a grado D— y saldría con grado A. Se vuelve a correr el paso que "
-     "falte y se regenera."),
+     "comprobar porque una llamada falló, y **termina en el texto literal "
+     "'NO PUNTUAR'**: ésa es la marca que hay que buscar. Una fila con esta "
+     "celda llena no se puntúa, porque un cliente de Everett cuya llamada se "
+     "cayó queda en 'sin comprobar', se salta el tope de ≥3 operaciones con "
+     "Everett —que manda a grado D— y saldría con grado A. El dato que falta "
+     "no es neutro: su ausencia favorece al realtor. Se vuelve a correr el "
+     "paso que falte —todos son gratis— y se regenera."),
     ("regimen_minado", "Régimen de minado", 24, CALC,
      "Bajo qué reglas se minó ESTA fila. El archivo mezcla dos corridas y sin "
      "esta columna el chequeo «ningún realtor por encima de 1 crédito» falla "
@@ -371,9 +399,10 @@ COLUMNAS_LARGAS = [
     ("Realtor", "El realtor de nuestra lista."),
     ("ID Model Match", "Su identificador en Model Match."),
     ("Instagram", "Su cuenta de Instagram."),
-    ("Lender / Originador / Compania",
+    ("Lender / Originador / Compañía",
      "El nombre tal como lo escribe la fuente, sin normalizar. Puede venir "
-     "con variantes del mismo nombre."),
+     "con variantes del mismo nombre. La columna se llama según la hoja: "
+     "'Lender', 'Originador' o 'Compañía'."),
     ("Unidades", "Cuántas operaciones suyas pasaron por ahí."),
     ("Volumen", "Cuántos dólares."),
     ("% unidades", "Qué parte de sus operaciones. Es la medida de peso real "
@@ -399,25 +428,16 @@ TIPOS = (("fha", "fha"), ("convencional", "convencional"), ("va", "va"))
 
 
 def cargar() -> list[dict]:
-    con_la_casa = set()
-    if os.path.exists(EVERETT):
-        with open(EVERETT, encoding="utf-8") as fh:
-            con_la_casa = {c.get("mm_id") for c in json.load(fh)}
-    peso: dict[str, dict] = {}
-    ruta_peso = os.path.join(RAIZ, "data", "trabajo", "everett_peso.json")
-    if os.path.exists(ruta_peso):
-        with open(ruta_peso, encoding="utf-8") as fh:
-            peso = json.load(fh)["peso"]
+    # Los archivos laterales --everett.json, everett_peso.json,
+    # mix_prestamos.json-- YA NO SE LEEN. Eran el metodo viejo, de pago, y se
+    # usaban como respaldo cuando faltaba el paso 4. Ese respaldo producia
+    # afirmaciones falsas por ausencia: ver el comentario del bucle. El unico
+    # origen de estas banderas es el registro del realtor.
     ig: dict[str, dict] = {}
     ruta_ig = os.path.join(RAIZ, "data", "trabajo", "instagram.json")
     if os.path.exists(ruta_ig):
         with open(ruta_ig, encoding="utf-8") as fh:
             ig = json.load(fh)
-    mix: dict[str, set] = {}
-    if os.path.exists(MIX):
-        with open(MIX, encoding="utf-8") as fh:
-            crudo = json.load(fh)["resultado"]
-        mix = {clave: set(crudo.get(clave) or []) for _, clave in TIPOS}
     filas = []
     for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
         with open(a, encoding="utf-8") as fh:
@@ -428,17 +448,33 @@ def cargar() -> list[dict]:
         # paga. Donde estan los dos, se comprobo que coinciden exacto (79 =
         # 79), asi que preferir el registro no cambia ningun valor: cambia de
         # donde viene, y deja de haber dos fuentes para el mismo dato.
+        # ⛔ Sin el paso 4 corrido, las banderas van «sin comprobar». NO se
+        # cae a los archivos laterales.
+        #
+        # Lo que hacia antes: si el realtor no estaba en `mix_prestamos.json`
+        # --el archivo del metodo viejo, de pago-- escribia «no». Pero ese
+        # archivo se genero una vez, con los realtors de entonces: cualquiera
+        # minado despues NO esta en el, y salia con `fha=no conv=no va=no`
+        # sin que nadie le hubiera preguntado nada. Medido: 62 realtors
+        # afirmando tres «no» por AUSENCIA DE UN ARCHIVO VIEJO.
+        #
+        # Es el error que todo este procedimiento existe para evitar, en el
+        # unico sitio donde no estaba mirando: un «no» producido por la falta
+        # de un dato se lee igual que un «no» medido, y en FHA decide a quien
+        # se llama.
+        #
+        # Lo mismo con Everett: las columnas vivas son `everett_historico` y
+        # `everett_12m`, y el codigo viejo llenaba `trabaja_con_la_casa`, que
+        # ya no es columna. Asi que el valor no llegaba al Excel y las celdas
+        # salian VACIAS, que se lee como «no trabaja con Everett».
         if not f.get("paso4_en"):
-            f["trabaja_con_la_casa"] = (
-                "sin comprobar" if not f.get("mm_id")
-                else ("SÍ" if f["mm_id"] in con_la_casa else "no"))
-            f["ops_con_la_casa"] = (
-                (peso.get(f.get("mm_id") or "") or {}).get("al_menos")
-                or ("" if f["trabaja_con_la_casa"] != "SÍ" else None))
-            for nombre, clave in TIPOS:
-                f["hace_%s" % nombre] = (
-                    "sin comprobar" if not (f.get("mm_id") and mix)
-                    else ("sí" if f["mm_id"] in mix.get(clave, ()) else "no"))
+            for nombre, _clave in TIPOS:
+                f["hace_%s" % nombre] = "sin comprobar"
+        if not f.get("everett_bandas_en"):
+            f["everett_historico"] = "sin comprobar"
+            f["everett_12m"] = "sin comprobar"
+            f["everett_u_historico"] = ""
+            f["everett_u_12m"] = ""
         f.update(ig.get(f.get("realtor_id") or "") or {})
         filas.append(f)
     return filas
@@ -601,10 +637,21 @@ def preparar(f: dict) -> dict:
     return d
 
 
-def escribir_hoja(ws, titulos, anchos, filas):
+def escribir_hoja(ws, titulos, anchos, filas, origenes=None):
+    """Escribe la hoja. Con `origenes`, pinta la cabecera por fuente del dato.
+
+    `origenes` es una lista paralela a `titulos` con el origen de cada
+    columna. Sin ella, la cabecera va toda del mismo color, que es lo que
+    quieren las hojas que tienen una sola fuente.
+    """
     ws.append(titulos)
-    for c in ws[1]:
-        c.fill, c.font = CABECERA, LETRA_CAB
+    for i, c in enumerate(ws[1]):
+        color = COLOR_ORIGEN.get(origenes[i]) if origenes else None
+        if color:
+            c.fill = PatternFill("solid", fgColor=color)
+            c.font = (_LETRA_OSCURA if color in _FONDO_CLARO else LETRA_CAB)
+        else:
+            c.fill, c.font = CABECERA, LETRA_CAB
         c.alignment = Alignment(vertical="center", wrap_text=True)
     ws.row_dimensions[1].height = 30
     for i, an in enumerate(anchos, 1):
@@ -659,7 +706,8 @@ def main() -> None:
     ws.title = "Realtors"
     escribir_hoja(ws, [c[1] for c in todas_las_columnas],
                   [c[2] for c in todas_las_columnas],
-                  [[f.get(c[0]) for c in todas_las_columnas] for f in filas])
+                  [[f.get(c[0]) for c in todas_las_columnas] for f in filas],
+                  origenes=[c[3] for c in todas_las_columnas])
     # Pintar el cambio de casa: es el hallazgo que el pedido venia a buscar.
     col_cambio = [c[0] for c in todas_las_columnas].index(
         "cambio_de_brokerage") + 1
@@ -684,7 +732,11 @@ def main() -> None:
         largo.sort(key=lambda r: (r[0] or "", -(r[4] or 0)))
         escribir_hoja(wb.create_sheet(hoja),
                       ["Realtor", "ID Model Match", "Instagram",
-                       hoja[:-1] if hoja.endswith("s") else hoja,
+                       # Quitarle la «s» final daba «Originadore» y
+                       # «Compania»: el plural de estas tres no se arma igual.
+                       {"Lenders": "Lender",
+                        "Originadores": "Originador",
+                        "Companias": "Compañía"}.get(hoja, hoja),
                        "Unidades", "Volumen", "% unidades", "% volumen"],
                       [26, 22, 18, 38, 10, 14, 11, 11], largo)
 
@@ -726,6 +778,17 @@ def main() -> None:
              "Los perfiles que Model Match propuso, con inmobiliaria, ciudad "
              "y correo, para decidir a mano cuál es. Van separados por '||'.")):
         dicc.append(["Revisar", titulo, CALC, significado])
+    # Las otras ocho columnas de Revisar son las mismas de Realtors. No se
+    # repiten --dos descripciones de lo mismo se desfasan-- pero sin decirlo
+    # quien filtre el diccionario por «Revisar» ve dos entradas y diez
+    # columnas, y concluye que faltan ocho.
+    dicc.append(["Revisar", "(las otras ocho columnas)", CALC,
+                 "Realtor · Instagram · Cómo se identificó · Confianza · "
+                 "¿Teléfono coincide? · Emails que teníamos · Emails en "
+                 "Model Match · realtor_id son LAS MISMAS de la hoja "
+                 "Realtors, y están descritas arriba, en las filas de esa "
+                 "hoja. No se repiten acá para que no haya dos definiciones "
+                 "de lo mismo que puedan desfasarse."])
 
     escribir_hoja(ws, dicc[0], [34, 30, 30, 86], dicc[1:])
     for fila in ws.iter_rows(min_row=2, max_col=4):
@@ -746,7 +809,11 @@ def main() -> None:
     n_cautivos = sum(1 for f in buenas
                      if str(f.get("fidelidad", "")).startswith("CAUTIVO"))
     n_fha = sum(1 for f in buenas if f.get("hace_fha") == "sí")
-    n_casa1 = sum(1 for f in buenas if f.get("ops_con_la_casa") == 1)
+    # Una sola operacion con Everett en todo el historial: la relacion mas
+    # debil que existe. Sale de la banda, que es la columna viva; antes salia
+    # de `ops_con_la_casa`, que se retiro y devolvia None para todos.
+    n_casa1 = sum(1 for f in buenas
+                  if str(f.get("everett_u_historico")) == "1")
     n_produce = sum(1 for f in buenas
                     if (f.get("mm_compras_financiadas_u") or 0) >= 9)
 
@@ -767,12 +834,15 @@ def main() -> None:
          "Si la Confianza dice «contradicha por el teléfono», el resto de la "
          "fila puede ser de otra persona. No se actúa sobre esa fila hasta "
          "resolverla en la hoja Revisar."],
-        ["2 · ¿Ya es de la casa?",
-         "«¿Ya financia con la casa?» en SÍ es exclusión por "
-         "no-canibalización. PERO mirá primero la columna de al lado: %d de "
-         "los 79 tienen UNA sola operación con la casa, y una operación "
-         "suelta hace años no es una relación. Ahí la exclusión es una "
-         "decisión, no un automatismo." % n_casa1],
+        ["2 · ¿Ya es de Everett?",
+         "Son DOS columnas, y la que decide es la segunda. "
+         "«¿Trabajó con Everett · histórico?» en SÍ dice que alguna vez le "
+         "financiaron una operación; «¿Trabajó con Everett · 12 meses?» dice "
+         "si eso sigue pasando. De 136 con relación histórica, solo 21 la "
+         "tienen viva: 115 estarían excluidos hoy por algo que ya no ocurre. "
+         "Y antes de excluir, mirá «Operaciones con Everett»: un '1' es una "
+         "operación suelta de hace años, no una relación. La exclusión es una "
+         "decisión, no un automatismo."],
         ["3 · ¿Produce lo suficiente?",
          "La regla del modelo es 9 operaciones al año. Acá hay una medida "
          "mejor que la de siempre: «Compras FINANCIADAS (u)», que son las "
@@ -833,8 +903,10 @@ def main() -> None:
         ["Muchas financiadas + UN solo LO",
          "El caso más valioso y el más caro. Hay flujo real y hay a quién "
          "desplazar. Requiere una razón concreta para cambiar, no una "
-         "presentación. Mirá «Su loan officer principal»: ese es el nombre "
-         "contra el que se compite."],
+         "presentación. ⚠ El NOMBRE de ese loan officer no está en este "
+         "archivo: salía de un breakdown que cuesta 1 crédito por fila y se "
+         "retiró. «¿Fidelizado con un LO?» dice que hay uno solo; para saber "
+         "quién es hay que comprarlo a propósito, fuera del minado estándar."],
         ["Muchas financiadas + muchos LOs",
          "El más fácil. Ya reparte entre diez o más, así que sumar uno no le "
          "cuesta nada emocionalmente. Es entrada, no desplazamiento, y el "
@@ -923,6 +995,13 @@ def main() -> None:
 
     # ── la hoja que explica, que es la que evita que alguien lea mal ────────
     creditos = sum(f.get("creditos_gastados") or 0 for f in filas)
+    n_viejas = sum(1 for f in filas
+                   if f.get("regimen_minado") == "minado antes del tope 1")
+    # Los numeros de Everett se CUENTAN de este archivo, no se escriben a
+    # mano. Los que habia puestos --28 y 79-- eran de la corrida de 471 y
+    # llevaban tres tandas sin actualizarse.
+    n_ev_hist = sum(1 for f in filas if f.get("everett_historico") == "SÍ")
+    n_ev_12m = sum(1 for f in filas if f.get("everett_12m") == "SÍ")
     # El estado del lote tiene que viajar DENTRO del archivo. Quien lo reciba
     # por correo no vio la pantalla del generador, y una celda vacia en
     # «Historical units» puede significar dos cosas opuestas: «no compro» o
@@ -952,6 +1031,24 @@ def main() -> None:
             "nada en ese periodo." % len(_ident))
 
     notas = [
+        ["Los colores de la cabecera", ""],
+        ["", "La cabecera de la hoja Realtors está pintada por ORIGEN del "
+             "dato, y no es decoración: las columnas de las tres fuentes "
+             "están INTERCALADAS, así que mirando la tabla no hay forma de "
+             "saber de dónde sale cada cosa."],
+        ["AZUL OSCURO", "Model Match · la ficha del agente. Es la única "
+                        "llamada que cuesta créditos."],
+        ["AZUL MEDIO", "Model Match · consultas de conteo. Gratis."],
+        ["AZUL CLARO", "Calculado acá, con aritmética sobre las dos "
+                       "anteriores. No es una fuente nueva."],
+        ["MORADO", "Instagram · scraping propio. Nada de esto sale de "
+                   "Model Match."],
+        ["GRIS", "Nuestra base (MMI / Salesforce). No se le pidió a nadie."],
+        ["", "Para qué sirve saberlo: de ahí depende cómo se lee un VACÍO. "
+             "Vacío en azul es «Model Match no lo trae»; vacío en morado "
+             "puede ser «la cuenta es privada»; vacío en azul claro es «le "
+             "faltan sus insumos»."],
+        ["", ""],
         ["Estado de este archivo", ""],
         ["", "Filas que NO se pueden puntuar: %d de %d identificadas. %s"
          % (_pendientes, len(_ident),
@@ -994,19 +1091,26 @@ def main() -> None:
          "préstamos no conocen al agente y las ventas solo lo traen como "
          "nombre en búsqueda difusa, con los ids en null. Eso se sigue "
          "pegando a mano."],
-        ["Los lenders y originadores de todos",
-         "Esos listados cuestan 1 crédito POR FILA. Un agente con 43 lenders "
-         "cuesta 43 créditos. Con el tope de 5 créditos por realtor solo se "
-         "pidieron donde cabían; en el resto queda el CONTEO, que sí viene "
-         "gratis con la ficha. Pedir la tabla de lenders de los 298 costaría "
-         "unos 3.500 créditos."],
-        ["¿Ya financia con la casa?",
-         "Esta sí se pudo contestar para todos, y barata: en vez de "
-         "preguntarle a cada agente con quién trabaja (1 crédito por lender), "
-         "se le preguntó a Everett Financial (NMLS 2129, que opera como "
-         "Supreme Lending) quiénes de esta lista financiaron con ella. Solo "
-         "cobra los que dan positivo. Un 'SÍ' significa que ese realtor YA "
-         "tiene relación con la casa: es la exclusión por no-canibalización."],
+        ["Los NOMBRES de sus lenders y loan officers",
+         "Esos listados cuestan 1 crédito POR FILA —un agente con 43 lenders "
+         "cuesta 43 créditos— y no se pueden acotar: está medido que pedir "
+         "una sola fila devuelve y cobra todas. Con el tope actual de 1 "
+         "crédito por realtor no cabe ninguno, así que HOY NO SE COMPRAN. Lo "
+         "que queda en su lugar son los conteos —«Nº lenders», "
+         "«Nº originadores»— que vienen gratis con la ficha. Las hojas "
+         "Lenders y Originadores solo tienen las 50 filas de la corrida "
+         "vieja que sí los pagó; un realtor minado hoy no aparece en ellas, "
+         "y esa ausencia no es un fallo."],
+        ["¿Trabajó con Everett?",
+         "Esta sí se contesta para todos y GRATIS, que es lo que cambió: en "
+         "vez de pedir la lista de lenders de cada agente, se le pregunta al "
+         "contador «¿este agente tiene operaciones financiadas por Everett "
+         "Financial (NMLS 2129, que opera como Supreme Lending)?», y un "
+         "conteo devuelve un número, no filas, así que no cobra. Acorralando "
+         "con bandas sale además CUÁNTAS, y se pregunta en dos ventanas: "
+         "todo el historial y los últimos 12 meses. Un 'SÍ' en la histórica "
+         "es la exclusión por no-canibalización; el 'SÍ' de 12 meses es el "
+         "que dice si esa relación sigue viva."],
         ["¿Produce FHA / convencional / VA?",
          "Es un SÍ/NO: tiene al menos una operación de ese tipo en los "
          "últimos 24 meses. Está validado contra el conteo real de préstamos "
@@ -1020,22 +1124,29 @@ def main() -> None:
          "no están en esta hoja. La proporción real se saca contando los "
          "préstamos de sus propiedades, y eso cuesta ~30 créditos por "
          "realtor."],
-        ["⚠ La ventana cambia la respuesta",
-         "Mirando solo los últimos 24 meses dan 28. Mirando TODO el "
-         "historial dan 79. Los 51 de diferencia financiaron con la casa "
-         "hace más de dos años, y para una exclusión eso sigue contando: la "
-         "columna usa el historial completo. Se comprobó que la diferencia "
-         "es la ventana y no la lista de nombres de Everett — con la lista "
-         "corregida y 24 meses vuelven a salir los mismos 28."],
+        ["⚠ La ventana cambia la respuesta, y es el hallazgo del archivo",
+         "En ESTE archivo: %d tienen relación con Everett en todo el "
+         "historial y solo %d la tienen en los últimos 12 meses. Los %d de "
+         "diferencia financiaron con Everett hace años y ya no. Un filtro "
+         "que excluya por historial los descarta a todos; el que decide a "
+         "quién NO llamar es el de 12 meses. Por eso son dos columnas."
+         % (n_ev_hist, n_ev_12m, n_ev_hist - n_ev_12m)],
         ["", ""],
         ["Lo que costó", ""],
         ["Modelo de costo (medido, no estimado)",
-         "instant-search 0 · ficha del agente 1 · listados 1 por fila."],
+         "instant-search 0 · conteos 0 · ficha del agente 1 · listados por "
+         "fila 1 cada una. La regla: se cobra lo que devuelve FILAS; lo que "
+         "devuelve un NÚMERO es gratis."],
         ["Créditos gastados en total", creditos],
-        ["Tope respetado", "5 créditos por realtor, comprobado antes de cada "
-                           "pedido y no después."],
+        ["Tope", "1 crédito por realtor: la ficha es la única llamada que "
+                 "cobra. Las %d filas marcadas 'minado antes del tope 1' son "
+                 "de septiembre, cuando el tope era 5 y se compraban "
+                 "listados." % n_viejas],
         ["", ""],
-        ["Ventana de los datos de Model Match", "Últimos 12 meses."],
+        ["Ventana de los datos de Model Match",
+         "Últimos 12 meses, SALVO: Everett histórico y «Historical units», "
+         "que miran todo el historial, y «¿Trabajó con Everett · 12 meses?», "
+         "que es la ventana corta."],
         ["Advertencia", "Los datos de contacto son de uso comercial interno. "
                         "No se comparten fuera del equipo."],
     ]

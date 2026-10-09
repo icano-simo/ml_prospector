@@ -226,7 +226,25 @@ def main() -> None:
             fallos.append("linea %s: el manual nombra `%s`, que ya no es una "
                           "columna" % (linea, retirada))
             print("   ⚠ linea %s · %s" % (linea, retirada))
-    print("   revisadas las retiradas conocidas")
+    # Y LO MISMO EN LA PROSA DEL EXCEL, que es la que el usuario lee de
+    # verdad. El manual estaba al dia y las hojas «Como interpretar» y
+    # «Diccionario» seguian mandando a mirar «Su loan officer principal» y
+    # «¿Ya financia con la casa?», columnas que no existen hace versiones.
+    # Un chequeo que solo mira el manual da verde mientras el entregable
+    # miente.
+    fuente_excel = open(os.path.join(RAIZ, "modelmatch", "a_excel.py"),
+                        encoding="utf-8").read()
+    for retirada in ("Su loan officer principal", "% por su LO principal",
+                     "Lenders (si cupo en el tope)", "Originadores (si cupo)",
+                     "¿Ya financia con la casa?",
+                     "Operaciones con la casa (al menos)"):
+        if retirada in titulos:
+            continue
+        if retirada in fuente_excel:
+            fallos.append("a_excel.py nombra «%s» en la prosa del Excel, y "
+                          "ya no es una columna" % retirada)
+            print("   ⚠ a_excel.py · %s" % retirada)
+    print("   revisadas las retiradas, en el manual y en la prosa del Excel")
 
     print("")
     print("── 3 bis · tablas partidas ──")

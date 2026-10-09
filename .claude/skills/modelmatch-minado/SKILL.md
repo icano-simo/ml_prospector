@@ -998,6 +998,19 @@ encontramos afirma que no produce FHA, y eso es falso: no se comprobó.
 | `Precio medio de sus COMPRAS` · `Loan medio, solo lado comprador` · `Precio medio de sus listings` · `Venta vs listado (%)` | **vacías**: son cocientes de celdas vacías, y un cociente sin numerador no es `0` |
 | `¿Produce FHA?` · `convencional` · `VA` | `sin comprobar` |
 | `¿Trabajó con Everett · histórico?` · `· 12 meses?` | `sin comprobar` |
+
+⛔ **Y esto vale también para un realtor SÍ identificado al que todavía no se
+le corrió el paso.** `sin comprobar` no depende de si lo encontramos: depende
+de si **esa llamada concreta se hizo**. La regla es una sola: **el valor sale
+del registro del realtor o no sale**.
+
+**Lo que esta regla prohíbe, porque ya pasó:** rellenar desde un archivo
+lateral de una corrida vieja. El generador caía a `mix_prestamos.json` cuando
+faltaba el paso 4, y como ese archivo se generó una vez, **cualquiera minado
+después no estaba en él y salía con `fha=no conv=no va=no`** — tres
+afirmaciones producidas por la ausencia de un archivo. Fueron 62 realtors. Un
+`no` por falta de dato se lee igual que un `no` medido, y en FHA decide a
+quién se llama.
 | `Operaciones con Everett · histórico` · `· 12 meses` | **vacías** |
 | `Historical units · por año` · `Primer año con producción` · `Años con producción` · `Antigüedad aproximada (años)` | **vacías** |
 | `¿Fidelizado con un LO?` | **vacía** |
@@ -1175,6 +1188,33 @@ deja de ser comparable.
   tal cual: el recorte, si hace falta, lo hace el scoring.
 
 ---
+
+### H bis · Los colores de la cabecera
+
+La cabecera de la hoja *Realtors* va pintada **por origen del dato**, y no es
+decoración: **las columnas de las tres fuentes están intercaladas** —las
+nuestras caen en las posiciones 11, 14, 17, 21, 26 y 27, en medio de las de
+Model Match— así que mirando la tabla no hay forma de saber de dónde sale cada
+cosa.
+
+| color | origen | cuántas |
+|---|---|---|
+| **azul oscuro** `1F3864` | Model Match · la ficha. **La única llamada que cobra** | 35 |
+| **azul medio** `2E5FA3` | Model Match · conteos. Gratis | 8 |
+| **azul claro** `8EA9DB` | calculado acá sobre las dos anteriores | 21 |
+| **morado** `7B3F9D` | Instagram · scraping propio | 55 |
+| **gris** `595959` | nuestra base (MMI / Salesforce) | 11 |
+
+**Los tres azules van juntos a propósito:** una columna calculada no es una
+fuente nueva, es aritmética sobre lo que trajo Model Match.
+
+**Para qué sirve saberlo, que es lo que lo justifica: de ahí depende cómo se
+lee un VACÍO.** Vacío en azul es «Model Match no lo trae»; vacío en morado
+puede ser «la cuenta es privada»; vacío en azul claro es «le faltan sus
+insumos». Son tres cosas distintas que sin el color se ven igual.
+
+El mapa vive en `COLOR_ORIGEN` en `modelmatch/a_excel.py`, y la leyenda se
+escribe sola en la hoja **Cómo leer esto**.
 
 ### I · Las columnas, con su número de posición
 
