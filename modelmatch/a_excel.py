@@ -665,10 +665,43 @@ def escribir_hoja(ws, titulos, anchos, filas, origenes=None):
 
 
 def main() -> None:
+    # `--solo-completos` escribe un archivo aparte con las filas que NO tienen
+    # nada pendiente. Existe porque el lote tarda horas y mientras tanto el
+    # archivo entero no se puede entregar: lo que ya esta completo si.
+    #
+    # Se quedan las identificadas sin pendientes. Las NO identificadas quedan
+    # fuera a proposito: su fila esta «completa» en el sentido de que no falta
+    # ninguna llamada, pero no tiene ningun dato de Model Match, y mezclarlas
+    # con las buenas en un archivo que se llama «completos» invita a contarlas.
+    solo_completos = "--solo-completos" in sys.argv
     crudas = cargar()
     if not crudas:
         raise SystemExit("no hay resultados en %s" % DIR)
     filas = [preparar(f) for f in crudas]
+    if solo_completos:
+        antes = len(filas)
+        # Los TRES sellos, no solo la ausencia de pendientes.
+        #
+        # `⚠ Datos pendientes` no marca el paso que no se corrio para NADIE
+        # --esta decidido asi, ver 4·F quater del manual-- asi que filtrar
+        # solo por esa columna dejaba entrar 36 filas sin produccion por año,
+        # con sus cuatro columnas vacias, en un archivo llamado COMPLETOS. El
+        # nombre del archivo es una promesa.
+        sellos = ("paso4_en", "everett_bandas_en", "anios_buyside_en")
+        por_id = {c.get("realtor_id"): c for c in crudas}
+        def completa(f):
+            if not f.get("mm_id") or f.get("pendientes"):
+                return False
+            c = por_id.get(f.get("realtor_id")) or {}
+            return all(c.get(s) for s in sellos)
+        filas = [f for f in filas if completa(f)]
+        print("── solo los completos ──")
+        print("   de %d filas, %d tienen los TRES pasos sellados y entran"
+              % (antes, len(filas)))
+        print("   quedan fuera %d: sin identificar, con algo pendiente, o con "
+              "algun paso sin correr" % (antes - len(filas)))
+        if not filas:
+            raise SystemExit("no hay ninguna fila completa todavia")
     filas.sort(key=lambda f: -(f.get("mm_compras_financiadas_u") or 0))
 
     # Lo dudoso NO va en la hoja principal: va a Revisar, y se dice por que.
@@ -1158,15 +1191,21 @@ def main() -> None:
             fila[0].font = Font(bold=True, size=11)
 
     os.makedirs(SALIDA, exist_ok=True)
-    ruta = os.path.join(SALIDA, "realtors_instagram_model_match.xlsx")
+    # Nombre distinto a proposito: dos archivos con el mismo nombre y
+    # distinto numero de filas es como alguien termina puntuando el parcial
+    # creyendo que es el entero.
+    ruta = os.path.join(SALIDA, "realtors_COMPLETOS.xlsx" if solo_completos
+                        else "realtors_instagram_model_match.xlsx")
     try:
         wb.save(ruta)
     except PermissionError:
         # Windows bloquea el archivo mientras Excel lo tiene abierto. Guardar
         # al lado es mejor que perder la corrida: el usuario decide cual se
         # queda, y se le DICE, en vez de fallar callado o pisar a medias.
-        ruta = os.path.join(SALIDA, "realtors_instagram_model_match_%s.xlsx"
-                            % dt.datetime.now().strftime("%H%M"))
+        base = ("realtors_COMPLETOS" if solo_completos
+                else "realtors_instagram_model_match")
+        ruta = os.path.join(SALIDA, "%s_%s.xlsx"
+                            % (base, dt.datetime.now().strftime("%H%M")))
         wb.save(ruta)
         print("⚠ el archivo principal estaba abierto en Excel; se guardo al lado")
     print("hoja Realtors : %d filas x %d columnas (TODOS, incluidos los "

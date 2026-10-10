@@ -121,11 +121,28 @@ antes de gastar diez horas.
 
 El paquete trae el CODIGO. Los INSUMOS son tuyos:
 
-- **la lista de objetivo**. En el repo original sale de un libro de scoring
-  (`cargar_objetivo()`, ver §2 del manual). En tu servidor vas a querer
-  sustituir esa funcion por la tuya: lo unico que tiene que devolver es una
-  lista de `Objetivo` con nombre, estado y, si lo tenes, handle y licencia.
+- **la lista de objetivo**, en `insumos/objetivo.xlsx`, hoja `Realtors PACS`.
+  Esa ruta la fijo el empaquetador; en el repo original el libro vive en otro
+  lado. Si preferis otra fuente --una base, un CSV-- sustitui
+  `cargar_objetivo()` en `instagram/finder.py`: lo unico que tiene que
+  devolver es una lista de `Objetivo` con nombre, estado y, si lo tenes,
+  handle y licencia.
 - **una cuenta de Instagram** para la sesion.
+
+### Las cuatro lineas que NO son copia literal
+
+El codigo del repo asume que hay un repo alrededor. Para que el paquete sea
+autocontenido se reescribieron cuatro rutas, y cada una lleva su comentario en
+el archivo:
+
+| archivo | antes apuntaba a | ahora |
+|---|---|---|
+| `verificar_manuales_ig.py` | `.claude/skills/...` | `MANUAL.md`, al lado |
+| `exportar_ig_excel.py` | `../data/salida/` **fuera del paquete** | `output/` |
+| `config.py` | `latino_re_engine/` | se quito: no viaja |
+| `instagram/finder.py` | `../Data_inputIA/Homesi_...xlsx` | `insumos/objetivo.xlsx` |
+
+Todo lo demas es copia byte a byte del codigo de produccion.
 
 ## 6 · Donde queda cada cosa
 
@@ -195,7 +212,47 @@ for m, _ in MODULOS:
         raise SystemExit(1)
 
 print("")
-print("── 3 · el manual dice lo mismo que el codigo ──")
+print("── 3 · ninguna ruta apunta fuera del paquete ──")
+# El codigo original vivia dentro de un repo y daba por hecho lo que tenia
+# alrededor: el manual en .claude/skills, la salida en ../data/salida, el
+# libro de objetivo en ../Data_inputIA. En un servidor nuevo nada de eso
+# existe. El empaquetador las reescribio; esto comprueba que no volvieron.
+import re as _re
+# `parent.parent` NO esta en la lista: desde `instagram/finder.py` apunta a la
+# raiz del paquete, que es correcto. Buscarlo daba un falso positivo, y un
+# chequeo que grita por lo que esta bien deja de leerse.
+FUERA = [
+    (r'"data",\\s*"salida"', "escribe en ../data/salida"),
+    (r"Data_inputIA", "busca el libro fuera del paquete"),
+    (r"latino_re_engine", "capa que no viaja"),
+    (r"\\.claude", "las skills del repo"),
+]
+escapes = []
+for raiz, dirs, archivos in os.walk(AQUI):
+    dirs[:] = [d for d in dirs if d != "__pycache__"]
+    for a in archivos:
+        # Este archivo LLEVA los patrones, asi que se encontraria a si mismo.
+        if not a.endswith(".py") or a == os.path.basename(__file__):
+            continue
+        ruta = os.path.join(raiz, a)
+        for i, linea in enumerate(open(ruta, encoding="utf-8",
+                                       errors="replace"), 1):
+            if linea.lstrip().startswith("#"):
+                continue
+            for patron, que in FUERA:
+                if _re.search(patron, linea):
+                    escapes.append((os.path.relpath(ruta, AQUI), i, que,
+                                    linea.strip()[:70]))
+for rel, i, que, l in escapes:
+    print("   RUTA FUERA  %%s:%%d  %%s" %% (rel, i, que))
+    print("               %%s" %% l)
+if escapes:
+    raise SystemExit("\\n%%d rutas apuntan fuera del paquete: no es portable"
+                     %% len(escapes))
+print("   ninguna: el paquete es autocontenido")
+
+print("")
+print("── 4 · el manual dice lo mismo que el codigo ──")
 r = subprocess.run([sys.executable,
                     os.path.join(AQUI, "verificar_manuales_ig.py")],
                    capture_output=True, text=True, encoding="utf-8",
@@ -241,22 +298,79 @@ def main() -> None:
         print("   %-34s %5d lineas · %s" % (rel, n, que))
     print("   %-34s %5d lineas" % ("TOTAL", lineas))
 
-    # El verificador espera las skills en .claude/skills; en el paquete el
-    # manual vive al lado, asi que se le reescribe la ruta. Es la unica
-    # linea del paquete que no es copia literal, y se declara.
-    with open(os.path.join(PAQUETE, "verificar_manuales_ig.py"),
-              encoding="utf-8") as fh:
-        ver = fh.read()
-    ver = ver.replace(
-        'BUSQUEDA = os.path.join(SKILLS, "instagram-scraping", "SKILL.md")',
-        'BUSQUEDA = os.path.join(os.path.dirname(os.path.abspath(__file__)),\n'
-        '                        "MANUAL.md")  # reescrito por el empaquetador')
-    ver = ver.replace('PAQUETE = os.path.join(RAIZ, "realtor_scraper")',
-                      'PAQUETE = os.path.dirname(os.path.abspath(__file__))'
-                      '  # reescrito por el empaquetador')
-    with open(os.path.join(DESTINO, "verificar_manuales_ig.py"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        fh.write(ver)
+    # ── Las rutas que apuntan FUERA del paquete ───────────────────────────
+    #
+    # El codigo del repo asume que hay un repo alrededor: el manual en
+    # `.claude/skills/`, la salida en `../data/salida/`, el libro de objetivo
+    # en `../Data_inputIA/`. En un servidor nuevo nada de eso existe, y el
+    # paquete fallaria escribiendo fuera de si mismo o buscando un xlsx que
+    # no esta.
+    #
+    # Se reescriben, y CADA reescritura se declara en el propio archivo con
+    # un comentario y en el LEEME. Son las unicas lineas del paquete que no
+    # son copia literal.
+    reescrituras = [
+        ("verificar_manuales_ig.py", [
+            ('BUSQUEDA = os.path.join(SKILLS, "instagram-scraping", '
+             '"SKILL.md")',
+             'BUSQUEDA = os.path.join(os.path.dirname(os.path.abspath('
+             '__file__)),\n                        "MANUAL.md")'
+             '  # reescrito por el empaquetador'),
+            ('PAQUETE = os.path.join(RAIZ, "realtor_scraper")',
+             'PAQUETE = os.path.dirname(os.path.abspath(__file__))'
+             '  # reescrito por el empaquetador'),
+            # Queda muerta al reescribir BUSQUEDA, y seguia nombrando
+            # `.claude/skills`, que en el paquete no existe.
+            ('SKILLS = os.path.join(RAIZ, ".claude", "skills")',
+             '# SKILLS se quito al empaquetar: el manual vive al lado.'),
+        ]),
+        ("exportar_ig_excel.py", [
+            # Escribia en ../data/salida, o sea FUERA del paquete.
+            ('SALIDA = os.path.join(RAIZ, "data", "salida")',
+             'SALIDA = os.path.join(os.path.dirname(os.path.abspath('
+             '__file__)), "output")  # reescrito: dentro del paquete'),
+        ]),
+        ("config.py", [
+            # Apuntaba a latino_re_engine/, una capa que no viaja. El scraper
+            # de Instagram no la usa: se quita para que nadie la busque.
+            ('CENSUS_OUTPUT = Path(__file__).parent.parent / "latino_re_engine"'
+             ' / "data" / "output" / "latino_market_zip_2024.csv"',
+             '# CENSUS_OUTPUT se quito al empaquetar: era de la capa de\n'
+             '# licencias estatales, que no viaja con el scraper de Instagram.'),
+        ]),
+        ("instagram/finder.py", [
+            # El libro de objetivo vivia en ../Data_inputIA con un nombre
+            # fijo. En el paquete se espera en insumos/, y el LEEME lo dice.
+            ('RAIZ_SCRAPER.parent / "Data_inputIA" / '
+             '"Homesi_Scoring_Realtors_v3_PACS (2).xlsx"',
+             'RAIZ_SCRAPER / "insumos" / "objetivo.xlsx"'
+             '  # reescrito por el empaquetador'),
+            # El mensaje de error seguia mandando a Data_inputIA, que en el
+            # paquete no existe: diria al usuario que mire donde no hay nada.
+            ('"Es el insumo de la lista de objetivo. Vive en Data_inputIA/, '
+             'que "\n            "esta fuera del control de versiones." % ruta',
+             '"Es el insumo de la lista de objetivo. Ponelo ahi, con la hoja "\n'
+             '            "\'Realtors PACS\', o sustitui cargar_objetivo() por '
+             'tu fuente." % ruta'),
+        ]),
+    ]
+    print("")
+    print("── rutas reescritas para que el paquete sea autocontenido ──")
+    for rel, cambios in reescrituras:
+        destino = os.path.join(DESTINO, rel)
+        with open(destino, encoding="utf-8") as fh:
+            texto = fh.read()
+        for viejo, nuevo in cambios:
+            if viejo not in texto:
+                raise SystemExit(
+                    "no encuentro en %s el texto a reescribir:\n  %s\n\n"
+                    "El codigo cambio y el empaquetador no se entero. Mejor "
+                    "fallar que entregar un paquete con rutas rotas."
+                    % (rel, viejo[:90]))
+            texto = texto.replace(viejo, nuevo)
+            print("   %-28s %s" % (rel, viejo.split("=")[0].strip()))
+        with open(destino, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(texto)
 
     print("")
     print("── el manual y los textos de arranque ──")
@@ -275,10 +389,41 @@ def main() -> None:
             fh.write(texto)
         print("   %-30s generado" % nombre)
 
-    os.makedirs(os.path.join(DESTINO, "output"), exist_ok=True)
-    with open(os.path.join(DESTINO, "output", ".gitignore"), "w",
-              encoding="utf-8", newline="\n") as fh:
-        fh.write("*\n!.gitignore\n")
+    for carpeta, nota in (
+        ("output", "Acá escribe el scraper: crudos, checkpoint y CSV.\n"
+                   "NADA de esto se versiona ni se comparte: lleva texto de\n"
+                   "cuentas personales y comentarios de terceros.\n"),
+        ("insumos", "Poné acá `objetivo.xlsx`, con la hoja 'Realtors PACS'.\n"
+                    "Es la lista de a quién raspar. No viene con el paquete:\n"
+                    "lleva nombres, correos y teléfonos de personas reales.\n"),
+    ):
+        os.makedirs(os.path.join(DESTINO, carpeta), exist_ok=True)
+        with open(os.path.join(DESTINO, carpeta, ".gitignore"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write("*\n!.gitignore\n!LEEME.txt\n")
+        with open(os.path.join(DESTINO, carpeta, "LEEME.txt"), "w",
+                  encoding="utf-8", newline="\n") as fh:
+            fh.write(nota)
+
+    # ── El paquete sale VACIO de datos, y se comprueba ───────────────────
+    #
+    # Probarlo deja dentro lo que uno le puso: un objetivo.xlsx con 4.249
+    # realtors, unos crudos, el CSV derivado. Si despues se comprime y se
+    # manda, eso es una fuga -- y es facil que pase, porque probarlo es
+    # justo lo que hay que hacer antes de mandarlo.
+    datos = []
+    for carpeta in ("output", "insumos"):
+        for raiz, _d, archivos in os.walk(os.path.join(DESTINO, carpeta)):
+            for a in archivos:
+                if a in (".gitignore", "LEEME.txt"):
+                    continue
+                datos.append(os.path.relpath(os.path.join(raiz, a), DESTINO))
+    if datos:
+        raise SystemExit(
+            "⛔ el paquete tiene %d archivos de DATOS dentro:\n    %s\n\n"
+            "Se regenera vaciandolo, asi que esto no deberia pasar. Si pasa, "
+            "revisalo antes de comprimir nada." % (len(datos),
+                                                   "\n    ".join(datos[:8])))
 
     print("")
     print("paquete en %s" % DESTINO)

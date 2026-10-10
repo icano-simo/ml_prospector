@@ -49,16 +49,9 @@ SALIDA = os.path.join(TRABAJO, "mm_por_realtor")
 #: permiso. Si algun dia vuelve a hacer falta comprar algo por fila, se sube a
 #: proposito y queda en el diff.
 TOPE_POR_REALTOR = 1
-#: Orden de valor de los breakdowns: quien lo financia primero, porque es lo
-#: que decide la exclusion por no-canibalizacion y lo que se usa en el pitch.
-#: ORIGINADORES PRIMERO. El orden decide cual se compra cuando solo cabe uno,
-#: y el que cambia una decision comercial es el loan officer: es el nombre
-#: contra el que se compite. Antes iba `lenders` primero por el orden en que
-#: se escribio la tupla, sin que nadie lo hubiera decidido.
-#:
-#: `companies` NO se pide: no produce ninguna de las 47 columnas aprobadas.
-BREAKDOWNS = (("originators", "totalOriginatorsWorkedWith"),
-              ("lenders", "totalLendersWorkedWith"))
+#: BREAKDOWNS se quito junto con el codigo que lo usaba. Una tupla que
+#: nombra los endpoints prohibidos, viva en el modulo que los tenia, es una
+#: invitacion a volver a conectarla.
 
 
 def normalizar(s) -> str:
@@ -230,30 +223,23 @@ def extraer(r: dict) -> dict:
                   == normalizar(a["office"])[:12] else "si")),
     })
 
-    # ── nivel 2 · los breakdowns que QUEPAN en lo que sobra. ────────────────
-    # `totalXWorkedWith` es el numero de filas, y el breakdown cuesta 1 por
-    # fila: por eso se puede decidir sin gastar.
-    for nombre, clave_n in BREAKDOWNS:
-        filas_n = a.get(clave_n) or 0
-        resto = TOPE_POR_REALTOR - fila["creditos_gastados"]
-        if not filas_n:
-            fila["mm_%s" % nombre] = []
-            continue
-        if filas_n > resto:
-            fila["mm_%s" % nombre] = None      # None = no consultado
-            fila["mm_%s_motivo" % nombre] = (
-                "%d filas y quedaban %d creditos del tope" % (filas_n, resto))
-            continue
-        d = llamar("/v1/agents/%s/breakdowns/%s" % (elegido["id"], nombre), {},
-                   etiqueta="bd_%s_%s" % (nombre, elegido["id"]),
-                   silencioso=True)
-        obtenidas = (d or {}).get("data") or []
-        fila["mm_%s" % nombre] = [
-            {"nombre": x.get("label"), "unidades": x.get("units"),
-             "volumen": x.get("volume"), "pct_unidades": x.get("pctUnits"),
-             "pct_volumen": x.get("pctVolume")} for x in obtenidas]
-        fila["creditos_gastados"] += len(obtenidas)
-
+    # ── Los breakdowns ya NO se piden. El bloque se quito entero ───────────
+    #
+    # Aqui habia un «nivel 2» que compraba `originators` y `lenders` si
+    # cabian en lo que sobraba del tope. Con el tope en 1 y la ficha ya
+    # pagada, `resto` es 0 y nunca disparaba -- pero NO disparaba por
+    # ARITMETICA, no por regla. Subir el tope a 2 lo reactivaba solo, y el
+    # manual los prohibe «nunca, sin excepcion y sin si cabe».
+    #
+    # Una prohibicion que depende de que un numero siga valiendo 1 no es una
+    # prohibicion: es una coincidencia. Por eso se borra el codigo en vez de
+    # confiar en el tope.
+    #
+    # Lo que se pierde esta dicho en el manual, paso 5: el NOMBRE del loan
+    # officer principal y el de los lenders. El conteo responde sobre un
+    # lender que uno nombre; no descubre nombres. Si algun dia hace falta
+    # para una lista corta, se compra a proposito y FUERA de este script,
+    # sabiendo que cuesta 1 por fila.
     return fila
 
 

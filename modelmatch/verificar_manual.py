@@ -361,6 +361,35 @@ def main() -> None:
                               else "⚠ DIFIEREN"))
 
     print("")
+    print("── 4 bis · todo script de modelmatch/ esta nombrado en el manual ──")
+    # El manual describia el PROCEDIMIENTO y no decia que scripts existen.
+    # Resultado: ocho escribian entregables sin estar mencionados, y DOS de
+    # ellos --mix_prestamos.py y everett_peso.py-- llaman a POST /v1/agents,
+    # que cobra 1 por fila y que este mismo manual declara prohibido. Seguian
+    # ahi, ejecutables, y nada avisaba.
+    #
+    # Un script que existe y no esta en el manual es un script que alguien va
+    # a correr sin saber lo que cuesta.
+    import glob as _glob
+    sin_nombrar = []
+    for ruta in sorted(_glob.glob(os.path.join(RAIZ, "modelmatch", "*.py"))):
+        nombre = os.path.basename(ruta)
+        if nombre == "__init__.py":
+            continue
+        if nombre not in texto:
+            sin_nombrar.append(nombre)
+    print("   scripts en modelmatch/: %d · sin nombrar: %d"
+          % (len(_glob.glob(os.path.join(RAIZ, "modelmatch", "*.py"))) - 1,
+             len(sin_nombrar)))
+    for n in sin_nombrar:
+        cobra = "/v1/agents\"" in open(
+            os.path.join(RAIZ, "modelmatch", n), encoding="utf-8").read()
+        fallos.append("el script %s no esta nombrado en el manual%s"
+                      % (n, "  ⛔ Y LLAMA A UN ENDPOINT QUE COBRA" if cobra
+                         else ""))
+        print("   ⚠ %s%s" % (n, "  ⛔ COBRA" if cobra else ""))
+
+    print("")
     print("── 5 bis · cada bandera tiene su caso de FALLO escrito ──")
     # No alcanza con prohibir «si no»: hay que exigir que el tercer caso este.
     # Una columna cuyo valor sale de un conteo PUEDE quedar «sin comprobar», y

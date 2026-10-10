@@ -1368,6 +1368,80 @@ IG · comentarios del agente
 
 ---
 
+## 4·J · Los scripts: cuáles son el procedimiento y cuáles NO se corren
+
+⚠ **En `modelmatch/` hay más scripts de los que este procedimiento usa, y dos
+de ellos COBRAN.** Están ahí porque son el método viejo y su salida sigue
+siendo válida; no se borraron para no perder lo ya pagado. Pero son
+ejecutables, así que hay que decir cuáles son.
+
+### Los del procedimiento, en orden
+
+| # | script | qué hace | costo |
+|---|---|---|---|
+| 1 | `modelmatch/construir_lista.py --desde-csv` | arma la lista de a quién minar desde el CSV del scraper | 0 |
+| 2 | `modelmatch/extraer.py` | **pasos 1 a 3**: identifica y compra la ficha | **1 por identificado** |
+| 3 | `modelmatch/paso4.py` | tipo de préstamo | 0 |
+| 4 | `modelmatch/everett_bandas.py` | Everett en dos ventanas, con bandas | 0 |
+| 5 | `modelmatch/anios_buyside.py` | producción por año | 0 |
+| 6 | `modelmatch/instagram_lista.py` | trae las señales de Instagram desde Supabase | 0 |
+| 7 | `modelmatch/a_excel.py` | arma el libro | 0 |
+
+### Los auxiliares, que no cobran
+
+| script | para qué |
+|---|---|
+| `modelmatch/a_excel.py --solo-completos` | el entregable **parcial**: solo las filas con los tres sellos. Ver 4·F quater |
+| `modelmatch/para_revisar.py` | saca los `ambiguo` a `revisar_model_match.xlsx` para decidir a mano |
+| `modelmatch/rellenar_ficha.py` | recalcula campos derivados desde el crudo **ya pagado** |
+| `modelmatch/actualizar_tabla_manual.py` | regenera la tabla de posiciones de este manual |
+| `modelmatch/verificar_manual.py` | este manual contra el código |
+| `modelmatch/ficha_cero.py` · `catalogo_campos.py` | demostraciones y catálogo, solo conteos |
+
+### ⛔ Los que NO se corren, porque cobran por fila
+
+| script | qué llama | por qué está prohibido |
+|---|---|---|
+| `modelmatch/mix_prestamos.py` | `POST /v1/agents` | es el método viejo del tipo de préstamo: **costó 1.207 créditos**. Hoy lo hace `paso4.py` por conteo, gratis |
+| `modelmatch/everett_peso.py` | `POST /v1/agents` | el peso de la relación con Everett por lista. Hoy lo hacen las bandas, gratis |
+| `modelmatch/lenders_de_la_casa.py` | `instant-search` | no cobra, pero su salida —`lenders_casa.json`— es del método viejo y **ya no la lee nadie** |
+
+⚠ **Sus archivos de salida siguen en `data/trabajo/` y NO se usan.** El
+generador los leía como respaldo cuando faltaba el paso 4, y eso producía
+`fha=no` por ausencia: ver el aviso de 4·F. **Ese respaldo se quitó.** Si
+alguien vuelve a conectarlos, reintroduce el defecto.
+
+### Las herramientas de medición de la fase 1
+
+Quedaron de la investigación con la que se midió el modelo de costo. **No son
+del procedimiento** y la mayoría solo cuenta, pero **tres tocan endpoints que
+cobran** y por eso se nombran una por una:
+
+| script | qué llama | ⚠ |
+|---|---|---|
+| `modelmatch/medir_lote.py` | `POST /v1/agents` | **1 por fila** |
+| `modelmatch/originadores_cautivos.py` | `breakdowns/originators` | **1 por fila · endpoint prohibido** |
+| `modelmatch/probar_loan.py` | `/v1/loans` | **cobra** |
+| `modelmatch/contar_casa.py` | `count` | 0 |
+| `modelmatch/medir_costos.py` · `probar_count.py` · `probar_limite.py` · `probar_transacciones.py` · `validar_everett.py` · `calibracion.py` · `descubrir.py` | mediciones y sondas | 0 |
+| `modelmatch/esquema.py` · `parser.py` · `fidelidad.py` · `pasada_ficha.py` · `lista_de_captura.py` | análisis local, sin red | 0 |
+
+⛔ **Ninguna se corre como parte del minado.** Están documentadas para que
+nadie las ejecute creyendo que son parte del flujo.
+
+### El bloque de breakdowns se borró de `extraer.py`
+
+Hasta hoy el extractor **conservaba** el código que compraba `originators` y
+`lenders` «si cabían en lo que sobraba del tope». Con el tope en 1 nunca
+disparaba —`resto` queda en 0— **pero no disparaba por aritmética, no por
+regla**: subir el tope a 2 lo reactivaba solo.
+
+**Una prohibición que depende de que un número siga valiendo 1 no es una
+prohibición, es una coincidencia.** Por eso se borró el código y la tupla
+`BREAKDOWNS` en vez de confiar en el tope.
+
+---
+
 ## 5 · Llamadas prohibidas
 
 Si el código las menciona, el cliente revienta antes de salir a la red.
