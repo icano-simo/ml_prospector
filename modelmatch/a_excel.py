@@ -1,20 +1,23 @@
 """El Excel de los realtors con Instagram, con lo que trajo Model Match.
 
-Ocho hojas:
+Cinco hojas:
   1 Realtors                una fila por realtor, todo lo que se pudo sacar
-  2 Lenders                 una fila por (realtor, lender) -- formato largo
-  3 Originadores            idem con los LOs
-  4 Companias               idem con las compañias hipotecarias
-  5 Revisar                 los que NO se encontraron o el match no es seguro
-  6 Diccionario de campos   columna por columna: que es y que costo
-  7 Como interpretar        como se leen juntos, no solo uno a uno
-  8 Como leer esto          los limites y las trampas de lectura
+  2 Revisar                 los que NO se encontraron o el match no es seguro
+  3 Diccionario de campos   columna por columna: que es y de donde sale
+  4 Como interpretar        como se leen juntos, no solo uno a uno
+  5 Como leer esto          los limites y las trampas de lectura
 
-Las hojas 2, 3 y 4 son de la corrida vieja, la unica que pago los breakdowns.
-El minado de hoy no los pide --cuestan 1 por fila-- asi que no crecen, y la 4
-queda siempre vacia. Se dejan porque lo ya pagado sigue siendo valido.
+Habia tres hojas mas --Lenders, Originadores y Companias-- con el formato
+largo de los breakdowns. Se retiraron: esos listados cuestan 1 credito por
+fila y dejaron de comprarse, asi que solo tenian las filas de la corrida de
+septiembre y *Companias* estaba vacia desde siempre. Una hoja con 125 filas
+en un libro de 1.086 realtors se lee como «estos son sus lenders», y no lo
+son: son los de 50 realtors de hace un mes.
 
-La hoja 5 existe por una razon: un match por nombre que nadie reviso se ve
+Lo ya pagado no se perdio: sigue en los registros, en `mm_lenders` y
+`mm_originators`.
+
+La hoja «Revisar» existe por una razon: un match por nombre que nadie reviso se ve
 igual que uno confirmado por correo, y actuar sobre el equivocado es peor que
 no tener el dato. Todo lo dudoso sale de la hoja 1 y se concentra ahi.
 """
@@ -88,6 +91,9 @@ COLUMNAS = [
      "La cuenta de Instagram que le encontramos. Es el motivo por el que este "
      "realtor está en esta lista."),
     ("clase_ig", "Clase IG", 15, NUESTRO,
+     "⚠ Misma cosa que `IG · clase`, y se rellena con ella cuando nuestra "
+     "base no la tiene. La base solo la tiene para los perfiles ya cargados a "
+     "Supabase; el resto se calcula del raspado con el mismo código. "
      "Qué tan utilizable es ese perfil de Instagram según la revisión que ya "
      "se hizo (p. ej. poca_evidencia, persona_equivocada)."),
     ("encontrado_txt", "¿En Model Match?", 15, CALC,
@@ -157,6 +163,11 @@ COLUMNAS = [
      "Operaciones al año según nuestra base. Otra ventana y otra fecha que "
      "las de Model Match: no son comparables directamente."),
     ("rango_volumen_mmi", "Rango volumen (MMI)", 18, NUESTRO,
+     "⚠ **Vacía en todas las filas**: la tabla `realtors` de nuestra base no "
+     "trae `rango_volumen` para ninguno de los 1.086. No es un fallo de la "
+     "extracción —Model Match no tiene nada que ver— es un dato que nuestra "
+     "base no tiene. Se deja la columna para que se llene sola el día que lo "
+     "tenga. "
      "La banda de volumen que teníamos."),
     ("mm_unidades", "Unidades 12m (MM)", 14, FICHA,
      "Operaciones cerradas en los últimos 12 meses, los dos lados sumados."),
@@ -394,21 +405,8 @@ DESC_IG = {
     "ig_texto_truncado": "Si el texto guardado se cortó por tamaño.",
 }
 
-#: Los campos de las hojas largas, que no salen de COLUMNAS.
-COLUMNAS_LARGAS = [
-    ("Realtor", "El realtor de nuestra lista."),
-    ("ID Model Match", "Su identificador en Model Match."),
-    ("Instagram", "Su cuenta de Instagram."),
-    ("Lender / Originador / Compañía",
-     "El nombre tal como lo escribe la fuente, sin normalizar. Puede venir "
-     "con variantes del mismo nombre. La columna se llama según la hoja: "
-     "'Lender', 'Originador' o 'Compañía'."),
-    ("Unidades", "Cuántas operaciones suyas pasaron por ahí."),
-    ("Volumen", "Cuántos dólares."),
-    ("% unidades", "Qué parte de sus operaciones. Es la medida de peso real "
-                   "de esa relación."),
-    ("% volumen", "Qué parte de sus dólares."),
-]
+#: COLUMNAS_LARGAS se retiro junto con las hojas Lenders, Originadores y
+#: Companias. Describia columnas de un formato largo que ya no se escribe.
 
 
 #: Los que ya financian con Everett Financial (la casa). Se calcula aparte,
@@ -476,6 +474,13 @@ def cargar() -> list[dict]:
             f["everett_u_historico"] = ""
             f["everett_u_12m"] = ""
         f.update(ig.get(f.get("realtor_id") or "") or {})
+        # `Clase IG` y `IG · clase` son el MISMO concepto con dos origenes: la
+        # primera venia de nuestra base --que la tiene solo para los que ya se
+        # cargaron a Supabase-- y la segunda se calcula del raspado. Tener una
+        # llena y la otra vacia en la misma fila es peor que no tener ninguna:
+        # quien filtre por la equivocada pierde 788 filas sin enterarse.
+        if not f.get("clase_ig") and f.get("ig_clase"):
+            f["clase_ig"] = f["ig_clase"]
         filas.append(f)
     return filas
 
@@ -751,27 +756,20 @@ def main() -> None:
         if f.get("revisar_por"):
             ws.cell(row=i, column=col_rev).fill = AVISO
 
-    for hoja, clave in (("Lenders", "mm_lenders"),
-                        ("Originadores", "mm_originators"),
-                        ("Companias", "mm_companies")):
-        largo = []
-        for f in filas:
-            for x in (f.get(clave) or []):
-                largo.append([f.get("nombre"), f.get("mm_id"), f.get("handle"),
-                              x.get("nombre"), x.get("unidades"),
-                              x.get("volumen"),
-                              round((x.get("pct_unidades") or 0) * 100, 1),
-                              round((x.get("pct_volumen") or 0) * 100, 1)])
-        largo.sort(key=lambda r: (r[0] or "", -(r[4] or 0)))
-        escribir_hoja(wb.create_sheet(hoja),
-                      ["Realtor", "ID Model Match", "Instagram",
-                       # Quitarle la «s» final daba «Originadore» y
-                       # «Compania»: el plural de estas tres no se arma igual.
-                       {"Lenders": "Lender",
-                        "Originadores": "Originador",
-                        "Companias": "Compañía"}.get(hoja, hoja),
-                       "Unidades", "Volumen", "% unidades", "% volumen"],
-                      [26, 22, 18, 38, 10, 14, 11, 11], largo)
+    # ── Las hojas Lenders, Originadores y Companias se RETIRARON ──────────
+    #
+    # Eran el formato largo de los breakdowns, que cuestan 1 credito por fila
+    # y dejaron de comprarse. Solo tenian las filas de la corrida de
+    # septiembre --la unica que los pago-- y *Companias* estaba vacia desde
+    # siempre.
+    #
+    # Por que se quitan en vez de dejarlas: una hoja con 125 filas en un libro
+    # de 1.086 realtors se lee como «estos son los lenders de la lista», y no
+    # lo son: son los de 50 realtors de hace un mes. Un dato parcial sin
+    # etiqueta de parcialidad es peor que ninguno.
+    #
+    # Lo ya pagado no se pierde: sigue en `data/trabajo/mm_por_realtor/`, en
+    # las claves `mm_lenders` y `mm_originators` de cada registro.
 
     ws = wb.create_sheet("Revisar")
     escribir_hoja(
@@ -808,9 +806,8 @@ def main() -> None:
         dicc.append(["Realtors", titulo, fuente, significado])
         if not significado:
             faltan.append(titulo)
-    for titulo, significado in COLUMNAS_LARGAS:
-        dicc.append(["Lenders / Originadores / Companias", titulo,
-                     APARTE, significado])
+    # COLUMNAS_LARGAS se retiro con sus hojas: describir columnas de hojas que
+    # ya no existen manda a buscar algo que no esta.
     for titulo, significado in (
             ("Por qué hay que revisarlo",
              "El motivo concreto por el que este realtor no entró en la hoja "
@@ -1238,6 +1235,20 @@ def main() -> None:
     # contarlo daria un numero intermedio y haria fallar el chequeo 9 sin que
     # nada estuviera mal. Y se cuenta solo sobre los IDENTIFICADOS, porque a
     # los demas nunca se les pregunto nada.
+    # Una columna vacia en el 100 % de las filas no es un hueco: es una
+    # columna que no se esta llenando. Puede ser que la fuente no lo traiga
+    # --`rango_volumen` viene vacio de la base para los 1.086-- o puede ser
+    # una clave mal escrita, y las dos se ven igual en el Excel. Se dicen al
+    # generar para que nadie las descubra filtrando.
+    del_todo_vacias = []
+    for clave, titulo, _an, fuente, _sig in todas_las_columnas:
+        if not any(f.get(clave) not in (None, "") for f in filas):
+            del_todo_vacias.append((titulo, fuente))
+    if del_todo_vacias:
+        print("⚠ columnas vacias en las %d filas:" % len(filas))
+        for titulo, fuente in del_todo_vacias:
+            print("     %-34s (%s)" % (titulo, fuente))
+
     sin_paso = sum(1 for f in ident if "anios_buyside" not in f)
     if sin_paso:
         print("⚠ sin el paso de produccion por año: %d de %d identificados. "

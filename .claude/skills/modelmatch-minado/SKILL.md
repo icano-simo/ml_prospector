@@ -1532,7 +1532,7 @@ ledger dice otra cosa, algo se está pidiendo que no está acá.**
 | los candidatos de los no resueltos | dentro del registro del realtor, clave `candidatos`, con nombre, brokerage, ciudad, estado y correo de cada uno |
 | las tablas crudas de lenders y originadores | dentro del registro, claves `mm_lenders` y `mm_originators`, **solo en los realtors de la corrida vieja que sí las pagó**. El minado de hoy no las pide, así que en un realtor nuevo esas claves no existen — y su ausencia no es un fallo |
 | la hoja de los que hay que revisar a mano | hoja *Revisar* del Excel, con los candidatos en una celda |
-| las tablas largas, una fila por relación | hojas *Lenders* y *Originadores*. ⚠ **Las tres hojas largas son de la corrida vieja y NO crecen**: hoy no se compra ningún breakdown, así que *Companias* está vacía y las otras dos solo tienen las 50 filas marcadas `minado antes del tope 1`. Un realtor minado hoy **no aparece en ninguna**, y esa ausencia no es un fallo |
+| las tablas largas, una fila por relación | **ya no están en el Excel.** Las hojas *Lenders*, *Originadores* y *Companias* se retiraron: solo tenían las 50 filas de la corrida que pagó los breakdowns, y una hoja con 125 filas en un libro de 1.086 realtors se lee como «éstos son sus lenders» cuando son los de 50 realtors de hace un mes. **Lo pagado sigue en los registros**, en `mm_lenders` y `mm_originators` |
 
 **Nada de esto se versiona**: lleva nombre, correo y teléfono de personas
 reales y el repo es público. `data/` está en el `.gitignore`.

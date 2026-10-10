@@ -1,6 +1,6 @@
 ---
 name: instagram-modelmatch-union
-description: Manual operativo de la UNIÓN de las dos capas — cómo se pega lo que produce el scraping de Instagram con lo que produce el minado de Model Match en un solo libro de Excel de 130 columnas y 8 hojas, con qué llave se cruzan, en qué orden van las columnas, qué hoja lleva qué y por qué, y las cuatro condiciones que hacen que dos corridas den exactamente el mismo archivo. Cárgala ANTES de generar, leer o modificar `realtors_instagram_model_match.xlsx`, y antes de tocar `modelmatch/a_excel.py`. Presupone las skills `instagram-scraping` y `modelmatch-minado`.
+description: Manual operativo de la UNIÓN de las dos capas — cómo se pega lo que produce el scraping de Instagram con lo que produce el minado de Model Match en un solo libro de Excel de 130 columnas y 5 hojas, con qué llave se cruzan, por qué Supabase no hace falta para el Excel, en qué orden van las columnas, qué hoja lleva qué y por qué, y las cuatro condiciones que hacen que dos corridas den exactamente el mismo archivo. Cárgala ANTES de generar, leer o modificar `realtors_instagram_model_match.xlsx`, y antes de tocar `modelmatch/a_excel.py`. Presupone las skills `instagram-scraping` y `modelmatch-minado`.
 ---
 
 # La unión de las dos capas — manual operativo
@@ -72,7 +72,7 @@ separación de prefijos es lo que hace segura esa línea.
 | capa | cómo |
 |---|---|
 | **Model Match** | `construir_lista.py` lo pone en el registro al crearlo |
-| **Instagram** | `instagram_lista.py` lo lee de `v_ig_senales_current` en Supabase |
+| **Instagram** | `instagram_lista.py`: de Supabase, **y del CSV local para los que la base todavía no tiene** |
 
 ⚠ **El scraper NO conoce el `realtor_id`.** Su CSV se identifica por **correo**
 (`email`), y el cruce a `realtor_id` lo hace `construir_lista.py --desde-csv`
@@ -80,42 +80,71 @@ contra la tabla `realtors`. **Ese correo es la llave dura de todo el sistema**,
 y es la razón de que un realtor sin correo no pueda unirse aunque tenga las
 dos capas.
 
+### ⛔ Supabase NO hace falta para el Excel
+
+Esto costó 788 filas vacías antes de verse, así que conviene que quede dicho:
+
+**`instagram_lista.py` leía solo `v_ig_senales_current`**, que tenía 298
+perfiles mientras el CSV del scraper tenía 1.098. El resultado eran **788
+filas con las 55 columnas de Instagram vacías, con cara de «no tiene
+Instagram», mientras el dato estaba en el disco de al lado.**
+
+Ahora lee las dos fuentes, **con la base por delante**: el CSV solo rellena
+huecos. Es la misma regla que `construir_lista.py --desde-csv`.
+
+**Y la clase del perfil se CALCULA, no se espera de la base.**
+`v_ig_clase_actual` la guarda, pero `ingest/instagram/clase_perfil.py` la
+calcula con **funciones puras** a partir de `estado_perfil`, `captions_texto`
+y `handle` — las tres columnas del CSV. Para el Excel la base no aporta nada
+que no se pueda derivar; **hacía falta para la app, no para esto.**
+
+⚠ **`Clase IG` e `IG · clase` son el MISMO concepto con dos orígenes.** La
+primera venía de nuestra base —que solo la tiene para lo ya cargado— y la
+segunda del cálculo. Tener una llena y la otra vacía en la misma fila es peor
+que no tener ninguna: quien filtre por la equivocada pierde 788 filas sin
+enterarse. **La primera se rellena con la segunda cuando la base no la
+tiene.**
+
 ### Qué pasa cuando una capa falta
 
 | caso | qué sale |
 |---|---|
 | tiene Instagram y no Model Match | la fila existe, con las 64 columnas de MM **vacías o `sin comprobar`** |
 | tiene Model Match y no Instagram | las 55 columnas `IG ·` van **vacías** |
-| no está en Supabase todavía | **no tiene `realtor_id`** y el `update` no encuentra nada: sus columnas de Instagram salen vacías aunque el CSV las tenga |
-
-⚠ **El tercero es el que engaña.** El scraper guarda su CSV mucho antes de que
-alguien cargue a la base. Por eso `construir_lista.py` tiene `--desde-csv`:
-lee el CSV local en vez de esperar la carga. Pero `instagram_lista.py` **sí**
-lee de Supabase, así que un perfil raspado y no cargado **se mina en Model
-Match y sale sin columnas de Instagram**.
+| raspado pero sin cargar a la base | **ya no es un problema**: el CSV local lo cubre |
+| no tiene correo | **no se puede cruzar**: sin esa llave no hay unión |
 
 ---
 
-## 3 · El libro: ocho hojas
+## 3 · El libro: cinco hojas
 
 | # | hoja | una fila por | de dónde |
 |---|---|---|---|
 | 1 | **Realtors** | realtor | la unión: 130 columnas |
-| 2 | Lenders | (realtor, lender) | breakdown pagado de la corrida vieja |
-| 3 | Originadores | (realtor, LO) | ídem |
-| 4 | Companias | (realtor, compañía) | ídem — **siempre vacía** |
-| 5 | Revisar | realtor no resuelto | los `ambiguo` con sus candidatos |
-| 6 | Diccionario de campos | columna | generado desde el código |
-| 7 | Cómo interpretar | idea | cómo se leen juntas |
-| 8 | Cómo leer esto | límite | estado del archivo y trampas |
+| 2 | Revisar | realtor no resuelto | los `ambiguo` con sus candidatos |
+| 3 | Diccionario de campos | columna | generado desde el código |
+| 4 | Cómo interpretar | idea | cómo se leen juntas |
+| 5 | Cómo leer esto | límite | estado del archivo y trampas |
 
-### Por qué existe cada una
+### Las tres hojas que se RETIRARON
+
+Había **Lenders**, **Originadores** y **Companias** con el formato largo de
+los breakdowns: una fila por relación. Se quitaron.
+
+**Por qué, y no solo porque ya no crecen:** esos listados cuestan 1 crédito
+por fila y dejaron de comprarse, así que solo tenían las filas de la corrida
+de septiembre —50 realtors— y *Companias* estaba vacía desde siempre. **Una
+hoja con 125 filas en un libro de 1.086 realtors se lee como «estos son sus
+lenders», y no lo son: son los de 50 realtors de hace un mes.** Un dato
+parcial sin etiqueta de parcialidad es peor que ninguno.
+
+⚠ **Lo ya pagado no se perdió:** sigue en
+`data/trabajo/mm_por_realtor/<realtor_id>.json`, en las claves `mm_lenders` y
+`mm_originators`. Si algún día hacen falta, se vuelven a volcar sin pagar.
+
+### Por qué existe cada una de las que quedan
 
 - **Realtors** es el producto. Todo lo demás existe para poder leerla.
-- **Lenders / Originadores / Companias** ⚠ **son de la corrida de septiembre y
-  NO crecen.** Hoy no se compra ningún breakdown —cuestan 1 crédito por fila—
-  así que un realtor minado hoy **no aparece en ninguna**, y esa ausencia no es
-  un fallo. *Companias* está vacía porque ese breakdown nunca produjo columnas.
 - **Revisar** existe por una razón concreta: **un match por nombre que nadie
   revisó se ve igual que uno confirmado por correo**, y actuar sobre el
   equivocado es peor que no tener el dato. Todo lo dudoso se concentra ahí —

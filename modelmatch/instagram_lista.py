@@ -107,21 +107,55 @@ if "--sin-csv" not in sys.argv and os.path.exists(CSV_IG) \
             for c in (r.get("emails_mmi") or []):
                 if c and r.get("realtor_id"):
                     por_correo[c.strip().lower()] = r["realtor_id"]
+    # La CLASE del perfil se calcula aca, no se espera de Supabase.
+    #
+    # `v_ig_clase_actual` guarda la clase, pero `ingest/instagram/clase_perfil`
+    # la calcula con funciones PURAS a partir de `estado_perfil`,
+    # `captions_texto` y `handle` -- las tres columnas del CSV. O sea que para
+    # el Excel la base no hace falta: hacia falta para la app.
+    #
+    # Sin esto, 788 filas salian con `Clase IG` vacia, y por la regla de
+    # scoring un perfil sin clase no puede ganar puntos: ninguna llegaba a A.
+    sys.path.insert(0, RAIZ)
+    from ingest.instagram.clase_perfil import clasificar  # noqa: E402
+
     with open(CSV_IG, encoding="utf-8-sig", newline="") as fh:
-        for f in _csv.DictReader(fh):
-            rid = por_correo.get((f.get("email") or "").strip().lower())
-            if not rid or rid in salida:
-                continue          # la base manda sobre el CSV
-            fila = {}
-            for col, valor in f.items():
-                if col in ("email", "nombre", "estado") or not col:
-                    continue      # esos ya los tiene el registro del realtor
-                clave = "ig_%s" % col
-                fila[clave] = valor
-                claves.add(clave)
-            if fila:
-                salida[rid] = fila
-                desde_csv += 1
+        crudo_csv = list(_csv.DictReader(fh))
+    # Un handle asignado a mas de un lead se anula en todos hasta verificar:
+    # lo exige `clasificar`, y hay que calcularlo sobre el lote entero.
+    cuenta_handle = {}
+    for f in crudo_csv:
+        h = (f.get("handle") or "").strip().lower().lstrip("@")
+        if h:
+            cuenta_handle[h] = cuenta_handle.get(h, 0) + 1
+    repetidos = frozenset(h for h, n in cuenta_handle.items() if n > 1)
+
+    for f in crudo_csv:
+        rid = por_correo.get((f.get("email") or "").strip().lower())
+        if not rid or rid in salida:
+            continue              # la base manda sobre el CSV
+        fila = {}
+        for col, valor in f.items():
+            if col in ("email", "nombre", "estado") or not col:
+                continue          # esos ya los tiene el registro del realtor
+            clave = "ig_%s" % col
+            fila[clave] = valor
+            claves.add(clave)
+        if not fila:
+            continue
+        c = clasificar(f, handles_repetidos=repetidos)
+        fila.update({
+            "ig_clase": c.clase,
+            "ig_clase_motivo": c.motivo,
+            "ig_clase_origen": "auto · calculado local",
+            "ig_clase_revisar": c.revisar,
+            "ig_version_lexico": c.version_lexico,
+        })
+        for k in ("ig_clase", "ig_clase_motivo", "ig_clase_origen",
+                  "ig_clase_revisar", "ig_version_lexico"):
+            claves.add(k)
+        salida[rid] = fila
+        desde_csv += 1
 
 with open(SALIDA, "w", encoding="utf-8") as fh:
     json.dump(salida, fh, ensure_ascii=False, indent=1)
