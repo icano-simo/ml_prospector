@@ -152,10 +152,18 @@ def main() -> None:
             "primera. NO se corre el lote.")
 
     objetivo = []
+    # Reanuda por el SELLO, como `paso4.py`. Antes reprocesaba los 1.014 en
+    # cada corrida: gratis, pero horas, y un corte obligaba a repetirlo todo.
+    # Peor, lo dejaba sin forma de retomar SOLO a los que fallaron -- en la
+    # ultima corrida quedaron 59 sin sellar y la unica salida era volver a
+    # pedir los 1.014.
+    #
+    # `--todos` fuerza el repaso completo, para cuando cambie el metodo.
+    todos = "--todos" in sys.argv
     for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
         with open(a, encoding="utf-8") as fh:
             f = json.load(fh)
-        if f.get("mm_id"):
+        if f.get("mm_id") and (todos or not f.get("everett_bandas_en")):
             objetivo.append((a, f))
 
     s0 = saldo()

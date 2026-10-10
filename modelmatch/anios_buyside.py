@@ -170,7 +170,20 @@ def main() -> None:
     for a in sorted(glob.glob(os.path.join(DIR, "*.json"))):
         with open(a, encoding="utf-8") as fh:
             f = json.load(fh)
-        if f.get("mm_id") and (todos or not f.get("anios_buyside")):
+        # ⛔ Se reanuda por el SELLO, no por los datos.
+        #
+        # Decia `not f.get("anios_buyside")`, o sea «¿tiene datos?». Pero un
+        # realtor al que se le cae una llamada a mitad queda CON datos
+        # parciales y SIN sello, asi que esa condicion lo daba por hecho y no
+        # volvia a tocarlo NUNCA -- mientras `preparar()` le dejaba las cuatro
+        # columnas vacias para siempre, por no estar sellado.
+        #
+        # Un registro invisible para el que lo repara y vacio para el que lo
+        # lee es el peor de los dos mundos. Paso con 1 de 1.014, y se vio
+        # contando sellos, no mirando el codigo de salida.
+        #
+        # `paso4.py` ya lo hacia bien: mira `paso4_en`. Este no.
+        if f.get("mm_id") and (todos or not f.get("anios_buyside_en")):
             pendientes.append((a, f))
 
     print("── 1 · ¿el ultimo año cerrado esta poblado? ──")
