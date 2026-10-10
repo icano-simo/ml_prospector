@@ -781,8 +781,16 @@ def main() -> None:
          "Emails que teníamos", "Emails en Model Match",
          "Candidatos que devolvió Model Match", "realtor_id"],
         [26, 20, 42, 24, 10, 16, 34, 34, 70, 36],
+        # ⚠ `confianza_final`, NO `match_confianza`.
+        #
+        # `match_confianza` es lo que decidio el extractor con lo que trae
+        # instant-search, que NO incluye telefono. `confianza_final` es la de
+        # despues de comparar el telefono de la ficha, y es la que sale en la
+        # hoja Realtors. Escribir la cruda aqui ponia DOS valores distintos
+        # para el mismo concepto en el mismo libro, y el de esta hoja era el
+        # viejo: justo en las filas que alguien va a revisar a mano.
         [[f.get("nombre"), f.get("handle"), dudoso(f), f.get("match_criterio"),
-          f.get("match_confianza"), f.get("telefono_coincide"),
+          confianza_final(f), f.get("telefono_coincide"),
           f.get("emails_mmi_txt"), f.get("mm_emails_txt"),
           " || ".join("%s · %s · %s %s · %s" % (
               c.get("nombre"), c.get("office"), c.get("ciudad"),

@@ -119,10 +119,20 @@ def main() -> None:
         lic = det.get("licenses") or []
         # Todas las fechas en ISO, tambien dentro del texto largo: dos
         # formatos en la misma columna es como se lee mal un dia por un mes.
+        # El estado puede faltar, y escribirlo sin mirar dejaba literalmente
+        # «sa547551000 (None)» en 64 filas. `None` en una celda no es un dato
+        # ausente: es la palabra None, que se filtra y se ordena como texto.
+        def _una(x) -> str:
+            estado = (x.get("state") or "").strip()
+            vence = fecha_licencia(x.get("expirationDate"))
+            dentro = " · ".join(p for p in (estado,
+                                            "vence %s" % vence if vence else "")
+                                if p)
+            return "%s (%s)" % (x["number"], dentro) if dentro else str(
+                x["number"])
+
         f["mm_licencias"] = " · ".join(
-            "%s (%s%s)" % (x.get("number"), x.get("state"),
-                           ", vence %s" % fecha_licencia(x["expirationDate"])
-                           if fecha_licencia(x.get("expirationDate")) else "")
+            _una(x)
             for x in sorted(lic, key=lambda y: str(y.get("number") or ""))
             if x.get("number"))
         vences = sorted(v for v in (fecha_licencia(x.get("expirationDate"))
