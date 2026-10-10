@@ -1,6 +1,6 @@
 ---
 name: instagram-scraping
-description: Manual operativo completo del scraping de Instagram de realtors — los dos modos de arranque (desde el nombre, buscando el perfil; o desde un handle ya conocido), los insumos exactos, las tres consultas de búsqueda, la regla de verificación del handle, las dos pasadas, las 50 columnas del CSV en su orden de contrato, la salida a Excel, y cómo se reanuda tras un corte. Cárgala ANTES de raspar cualquier lote, antes de tocar `realtor_scraper/`, antes de leer `ig_signals.csv`, y antes de montar cualquier interfaz que lance el scraper. Es prescriptiva y suficiente: un agente que la siga reproduce el proceso entero sin leer el código.
+description: Manual operativo completo del scraping de Instagram de realtors — los dos modos de arranque (desde el nombre, buscando el perfil; o desde un handle ya conocido, que es el caso normal), los insumos exactos, las tres consultas de búsqueda, la regla de verificación del handle, las dos pasadas, las 50 columnas del CSV en su orden de contrato, la salida a Excel, y cómo se reanuda tras un corte. Cárgala ANTES de raspar cualquier lote, antes de tocar `realtor_scraper/`, antes de leer `ig_signals.csv`, y antes de montar cualquier interfaz que lance el scraper. Alcanza para CORRER y LEER el proceso sin abrir el código; para reescribirlo desde cero hace falta además el paquete portable, porque los selectores del DOM y los léxicos no están acá a propósito.
 ---
 
 # Scraping de Instagram de realtors — manual operativo
@@ -8,9 +8,43 @@ description: Manual operativo completo del scraping de Instagram de realtors —
 **Regla cero: un handle sin verificar no es un handle, es una suposición; y el
 crudo se guarda antes de derivarlo, siempre.**
 
-Este manual cubre el proceso entero y es **autosuficiente**: quien lo siga de
-principio a fin obtiene el mismo archivo, con las mismas 50 columnas en el
-mismo orden.
+### Para qué alcanza este manual, y para qué no
+
+| querés… | ¿alcanza con este manual? |
+|---|---|
+| **correr** el scraper y entender qué sale | **sí**, de principio a fin |
+| **operarlo** en otro servidor con el código | **sí**, junto al paquete portable |
+| **leer** el CSV sin malinterpretarlo | **sí** |
+| **reescribir el scraper desde cero**, sin el código | **no** |
+
+⛔ **Lo último es importante y conviene no engañarse.** Este manual documenta
+el **comportamiento y los contratos**: qué entra, qué sale, en qué orden, con
+qué reglas y con qué límites. **No contiene los algoritmos.** Fuera de él
+quedan, a propósito:
+
+- los **20 selectores del DOM** de `extraccion.py` — y son lo que más
+  cambia, porque Instagram cambia su HTML;
+- los **léxicos bilingües** (`LEXICO_PROGRAMAS`, `LEXICO_ANTI_ICP`,
+  `LEXICO_CO_MARKETING`, `LEXICO_PRODUCCION`) y la taxonomía de audiencia, que
+  son cientos de patrones;
+- el algoritmo completo de comparación de nombres.
+
+Copiarlos aquí los dejaría viejos al día siguiente sin que nadie se enterara,
+que es el problema que este repositorio lleva toda su vida combatiendo. **Para
+reconstruirlo hace falta el código**, y para eso está el paquete portable:
+
+```
+python realtor_scraper/empaquetar_scraper.py
+```
+
+Deja en `data/salida/scraper_instagram_portable/` los 13 archivos, este manual
+y un `verificar.py` que comprueba que el paquete está completo antes del
+primer lote.
+
+**Manual + paquete = replicable. Manual solo = operable.**
+
+Dicho eso, quien lo siga de principio a fin obtiene el mismo archivo, con las
+mismas 50 columnas en el mismo orden.
 
 Para unir esta salida con la de Model Match en un solo libro, ver la skill
 `instagram-modelmatch-union`.
@@ -27,6 +61,37 @@ Para unir esta salida con la de Model Match en un solo libro, ver la skill
 **No son dos programas: son el mismo, con la fase 1 activada o no.** Si el
 insumo ya trae handle, la fase 1 se salta entera y no se gasta ni una
 consulta de búsqueda.
+
+### ⚠ El modo NO se elige con una bandera: lo decide cada fila
+
+No hay `--modo-a` ni `--modo-b`. El lote mira, **realtor por realtor**, si su
+fila trae handle:
+
+```python
+handle = (objetivo.handle_del_libro or "").strip().lstrip("@")
+if not handle:
+    senales = buscar_instagram(...)    # fase 1, solo para los que no lo traen
+    handle = senales.handle or ""
+```
+
+**Un mismo lote corre los dos modos a la vez**, uno por fila. Para forzar el
+modo B en todo el lote, la vía es **el insumo**: que todas las filas traigan
+handle. Para forzar el modo A, que no lo traiga ninguna.
+
+**En la corrida de referencia fueron 3 de 1.203 los que no traían handle**, o
+sea que la fase 1 es el camino raro: casi todo el trabajo es modo B.
+
+### ⚠ Y hay DOS puntos de entrada con comportamiento distinto
+
+| función | qué hace |
+|---|---|
+| `correr_lote()` | **lo que se usa.** Si hay handle lo toma; si no, llama a la búsqueda **solo para obtener el handle** (`con_comentarios=False`) y después raspa con `capturar_crudo()` |
+| `buscar_instagram()` | busca, verifica **y además lee el perfil entero** por su cuenta |
+
+**El lote NO usa la lectura que hace `buscar_instagram`**: la descarta y vuelve
+a raspar con `capturar_crudo`, que es el que respeta `n_posts` y `forzar_dom`.
+Quien lea solo `buscar_instagram` creerá que ésa es la ruta del lote y no lo
+es.
 
 ```
 MODO A   nombre ──► [1 búsqueda] ──► handle verificado ─┐
