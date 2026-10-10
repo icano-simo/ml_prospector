@@ -3,7 +3,20 @@ name: instagram-modelmatch-union
 description: Manual operativo de la UNIÓN de las dos capas — cómo se pega lo que produce el scraping de Instagram con lo que produce el minado de Model Match en un solo libro de Excel de 130 columnas y 5 hojas, con qué llave se cruzan, por qué Supabase no hace falta para el Excel, en qué orden van las columnas, qué hoja lleva qué y por qué, y las cuatro condiciones que hacen que dos corridas den exactamente el mismo archivo. Cárgala ANTES de generar, leer o modificar `realtors_instagram_model_match.xlsx`, y antes de tocar `modelmatch/a_excel.py`. Presupone las skills `instagram-scraping` y `modelmatch-minado`.
 ---
 
-# La unión de las dos capas — manual operativo
+# 3 de 4 · UNIÓN DE LAS DOS CAPAS — manual operativo
+
+> **Los cuatro manuales de este repositorio.** Se leen en este orden, que es
+> el del flujo: cada uno produce lo que el siguiente consume.
+>
+> | | manual | qué cubre |
+> |---|---|---|
+> | 1 | `instagram-scraping` | **SCRAPER** · del nombre o del handle a las 50 columnas |
+> | 2 | `modelmatch-minado` | **MINADO MODEL MATCH** · de un realtor a sus 64 columnas, con el tope de 1 crédito |
+> | **3** | **`instagram-modelmatch-union`** | **UNIÓN** · las dos capas en un libro de 130 columnas ← **estás aquí** |
+> | 4 | `modelmatch-lectura` | **LECTURA** · cómo se interpreta el resultado y qué NO se puede concluir |
+>
+> Éste presupone los dos primeros: no repite cómo se raspa ni cómo se mina,
+> solo cómo se pegan.
 
 **Regla cero: la unión no decide nada.** No puntúa, no filtra y no rellena
 huecos. Pega dos fuentes por una llave y deja ver de cuál viene cada celda.

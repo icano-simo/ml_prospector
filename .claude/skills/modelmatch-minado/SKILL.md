@@ -3,7 +3,20 @@ name: modelmatch-minado
 description: Manual operativo del minado de Model Match para realtors de HOMESÍ — las 64 columnas aprobadas (43 de la API y 21 calculadas), el payload exacto de cada llamada, la transformación de cada campo, los vocabularios exactos que el scoring filtra por igualdad, el tope de 1 crédito por lead y la lista de llamadas prohibidas. Cárgala ANTES de extraer, re-extraer o ampliar datos de Model Match para cualquier lote de realtors, y antes de modificar cualquier cosa en `modelmatch/`. Es prescriptiva: si una llamada no está acá, no se hace.
 ---
 
-# Minado de Model Match — manual operativo
+# 2 de 4 · MINADO DE MODEL MATCH — manual operativo
+
+> **Los cuatro manuales de este repositorio.** Se leen en este orden, que es
+> el del flujo: cada uno produce lo que el siguiente consume.
+>
+> | | manual | qué cubre |
+> |---|---|---|
+> | 1 | `instagram-scraping` | **SCRAPER** · del nombre o del handle a las 50 columnas |
+> | **2** | **`modelmatch-minado`** | **MINADO MODEL MATCH** · de un realtor a sus 64 columnas ← **estás aquí** |
+> | 3 | `instagram-modelmatch-union` | **UNIÓN** · las dos capas en un libro de 130 columnas |
+> | 4 | `modelmatch-lectura` | **LECTURA** · cómo se interpreta el resultado y qué NO se puede concluir |
+>
+> **Éste es el único de los cuatro que gasta dinero.** Los otros tres leen,
+> derivan o explican; aquí se compran fichas a 1 crédito.
 
 **Regla cero: si una llamada no está en este manual, no se hace.** Cada
 llamada cuesta dinero y cada campo de más es un campo que alguien va a leer

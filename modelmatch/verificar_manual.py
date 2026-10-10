@@ -191,7 +191,12 @@ def main() -> None:
     # de posiciones, asi que no pueden desfasarse.
     n_ig = len(columnas_ig(filas))
     legitimos = {n_ficha, n_cont, n_cal, n_api, n_cal + n_api, n_nuestras,
-                 n_ig, len(COLUMNAS) + n_ig}
+                 n_ig, len(COLUMNAS) + n_ig,
+                 # 50 son las columnas del CSV del scraper. No salen de
+                 # COLUMNAS --son de otra capa-- pero el mapa de los cuatro
+                 # manuales las cita, y quien lo comprueba es
+                 # `verificar_manuales_ig.py`, no este.
+                 50}
     print("   numeros validos: %s" % sorted(legitimos))
     for m in _re0.finditer(r"(\d+)\s+columnas", texto):
         cuanto = int(m.group(1))
@@ -359,6 +364,36 @@ def main() -> None:
                               "las tres copias coinciden"
                               if all(v == list(CASA) for v in tres.values())
                               else "⚠ DIFIEREN"))
+
+    print("")
+    print("── 0 bis · los cuatro manuales llevan su etiqueta y su mapa ──")
+    # Son cuatro .md parecidos. Sin un titulo que diga CUAL es y en que orden
+    # va, quien abre uno no sabe si tiene el del scraper, el del minado o el
+    # de la union -- y los tres hablan de columnas y de creditos.
+    MANUALES = [
+        (1, "instagram-scraping", "SCRAPER"),
+        (2, "modelmatch-minado", "MINADO DE MODEL MATCH"),
+        (3, "instagram-modelmatch-union", "UNIÓN"),
+        (4, "modelmatch-lectura", "LECTURA"),
+    ]
+    carpeta = os.path.join(RAIZ, ".claude", "skills")
+    for n, nombre, etiqueta in MANUALES:
+        ruta = os.path.join(carpeta, nombre, "SKILL.md")
+        if not os.path.exists(ruta):
+            fallos.append("falta el manual %s" % nombre)
+            continue
+        t = open(ruta, encoding="utf-8").read()
+        titulo = "# %d de %d · %s" % (n, len(MANUALES), etiqueta)
+        if titulo not in t:
+            fallos.append("%s no empieza por «%s»" % (nombre, titulo))
+            print("   ⚠ %-30s sin su etiqueta" % nombre)
+            continue
+        # Y que cada uno nombre a los otros tres, para que se pueda saltar.
+        faltan_hnos = [o for _i, o, _e in MANUALES
+                       if o != nombre and o not in t]
+        if faltan_hnos:
+            fallos.append("%s no nombra a %s" % (nombre, faltan_hnos))
+        print("   %d · %-30s %s" % (n, nombre, etiqueta))
 
     print("")
     print("── 4 bis · todo script de modelmatch/ esta nombrado en el manual ──")

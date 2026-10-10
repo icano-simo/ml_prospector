@@ -3,7 +3,20 @@ name: instagram-scraping
 description: Manual operativo completo del scraping de Instagram de realtors — los dos modos de arranque (desde el nombre, buscando el perfil; o desde un handle ya conocido, que es el caso normal), los insumos exactos, las tres consultas de búsqueda, la regla de verificación del handle, las dos pasadas, las 50 columnas del CSV en su orden de contrato, la salida a Excel, y cómo se reanuda tras un corte. Cárgala ANTES de raspar cualquier lote, antes de tocar `realtor_scraper/`, antes de leer `ig_signals.csv`, y antes de montar cualquier interfaz que lance el scraper. Alcanza para CORRER y LEER el proceso sin abrir el código; para reescribirlo desde cero hace falta además el paquete portable, porque los selectores del DOM y los léxicos no están acá a propósito.
 ---
 
-# Scraping de Instagram de realtors — manual operativo
+# 1 de 4 · SCRAPER DE INSTAGRAM — manual operativo
+
+> **Los cuatro manuales de este repositorio.** Se leen en este orden, que es
+> el del flujo: cada uno produce lo que el siguiente consume.
+>
+> | | manual | qué cubre |
+> |---|---|---|
+> | **1** | **`instagram-scraping`** | **SCRAPER** · del nombre o del handle a las 50 columnas ← **estás aquí** |
+> | 2 | `modelmatch-minado` | **MINADO MODEL MATCH** · de un realtor a sus 64 columnas, con el tope de 1 crédito |
+> | 3 | `instagram-modelmatch-union` | **UNIÓN** · las dos capas en un libro de 130 columnas |
+> | 4 | `modelmatch-lectura` | **LECTURA** · cómo se interpreta el resultado y qué NO se puede concluir |
+>
+> Para montar el scraper en otro servidor: `empaquetar_scraper.py` deja este
+> manual junto al código, en `data/salida/scraper_instagram_portable/`.
 
 **Regla cero: un handle sin verificar no es un handle, es una suposición; y el
 crudo se guarda antes de derivarlo, siempre.**

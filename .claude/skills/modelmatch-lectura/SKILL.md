@@ -3,7 +3,24 @@ name: modelmatch-lectura
 description: Cómo leer y usar la extracción de Model Match de este repo — el Excel de realtors, qué significa cada campo, qué NO se puede concluir de él, y cuánto cuesta cada llamada a la API. Cárgala antes de interpretar `data/salida/realtors_instagram_model_match.xlsx`, antes de escribir o modificar cualquier cosa en `modelmatch/`, y antes de pedirle datos nuevos a la API de Model Match. Contiene el modelo de costo medido y las trampas de porcentajes y ventanas, que no se pueden re-derivar del dato.
 ---
 
-# La extracción de Model Match — cómo se lee y cómo se amplía
+# 4 de 4 · LECTURA DEL RESULTADO — cómo se lee y cómo se amplía
+
+> **Los cuatro manuales de este repositorio.** Se leen en este orden, que es
+> el del flujo: cada uno produce lo que el siguiente consume.
+>
+> | | manual | qué cubre |
+> |---|---|---|
+> | 1 | `instagram-scraping` | **SCRAPER** · del nombre o del handle a las 50 columnas |
+> | 2 | `modelmatch-minado` | **MINADO MODEL MATCH** · de un realtor a sus 64 columnas, con el tope de 1 crédito |
+> | 3 | `instagram-modelmatch-union` | **UNIÓN** · las dos capas en un libro de 130 columnas |
+> | **4** | **`modelmatch-lectura`** | **LECTURA** · cómo se interpreta y qué NO se puede concluir ← **estás aquí** |
+>
+> ⚠ **Éste es el más viejo de los cuatro y el que no tiene verificador
+> automático.** Los otros tres se comprueban contra el código
+> (`verificar_manual.py` y `verificar_manuales_ig.py`) y fallan si se
+> desfasan; éste no, así que ante una contradicción **mandan los otros
+> tres**. Hay una discrepancia conocida, sobre `Nº emails` y `Nº teléfonos`,
+> documentada en `modelmatch-minado` §4·D.
 
 Qué hay: los realtors a los que se les encontró Instagram, cruzados contra
 Model Match. Una fila por realtor en
