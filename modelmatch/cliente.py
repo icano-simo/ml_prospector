@@ -54,6 +54,10 @@ PAUSA = 2.0
 #: Espera tras un 429 antes de reintentar, y cuantas veces.
 ESPERA_429 = 20.0
 REINTENTOS_429 = 3
+#: Espera BASE tras un corte de red. Crece al doble en cada reintento --5, 10,
+#: 20-- porque un corte suele ser el servidor protegiendose del volumen, y
+#: volver enseguida al mismo ritmo es pedir el siguiente corte.
+ESPERA_RED = 5.0
 
 LLAMADAS: list[dict] = []
 
@@ -85,6 +89,17 @@ def _pedir(ruta: str, cuerpo, metodo: str):
             return r.read().decode("utf-8", "replace"), r.status
     except urllib.error.HTTPError as e:
         return e.read().decode("utf-8", "replace"), e.code
+    except (urllib.error.URLError, TimeoutError, ConnectionError,
+            OSError) as e:
+        # Un corte de RED no es una respuesta: no tiene codigo HTTP. Antes se
+        # propagaba y MATABA el lote entero -- paso cinco veces en la corrida
+        # de produccion por año, siempre con
+        # «[WinError 10054] An existing connection was forcibly closed».
+        #
+        # Se devuelve status 0, que ningun servidor emite, para que el que
+        # llama lo distinga de un 429 y de una respuesta de verdad. Lo trata
+        # el bucle de reintentos de `llamar`.
+        return json.dumps({"error_de_red": str(e)}), 0
 
 
 def llamar(ruta: str, cuerpo=None, etiqueta: str = "", metodo: str | None = None,
@@ -104,14 +119,23 @@ def llamar(ruta: str, cuerpo=None, etiqueta: str = "", metodo: str | None = None
     # modelo de costo MEDIDO (detalle = 1, breakdown = 1 por fila), y lo
     # concilia con el ledger cada tantos realtors.
     metodo = metodo or ("POST" if cuerpo is not None else "GET")
+    # Se reintenta el 429 Y el corte de red (status 0). Los dos se arreglan
+    # solos esperando; el resto de los errores, no.
+    #
+    # El corte de red lleva espera CRECIENTE --5s, 10s, 20s...-- porque suele
+    # ser el servidor cortando por volumen, y volver enseguida al mismo ritmo
+    # es pedir el siguiente corte. El 429 mantiene su espera fija, que ya
+    # estaba medida.
     for intento in range(REINTENTOS_429 + 1):
         texto, status = _pedir(ruta, cuerpo, metodo)
-        if status != 429 or intento == REINTENTOS_429:
+        if status not in (429, 0) or intento == REINTENTOS_429:
             break
+        espera = ESPERA_429 if status == 429 else ESPERA_RED * (2 ** intento)
         if not silencioso:
-            print("   429 · espero %.0fs y reintento (%d/%d)"
-                  % (ESPERA_429, intento + 1, REINTENTOS_429))
-        time.sleep(ESPERA_429)
+            print("   %s · espero %.0fs y reintento (%d/%d)"
+                  % ("429" if status == 429 else "corte de red",
+                     espera, intento + 1, REINTENTOS_429))
+        time.sleep(espera)
     time.sleep(PAUSA)
 
     LLAMADAS.append({"ruta": metodo + " " + ruta, "status": status,

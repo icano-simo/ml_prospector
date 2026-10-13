@@ -95,8 +95,48 @@ d = llamar("/v1/agents/%s" % mm_id, etiqueta="det_%s" % mm_id)
 GET /v1/me/credits
 ```
 
-Leer **`balance.total`**. **NO usar `usage.spent`**: va con retraso — se midió
-que no se movió ni una décima mientras `balance.total` bajaba 30.
+La respuesta trae cuatro cosas y **cada una contesta una pregunta distinta**.
+Confundirlas ya pasó: durante toda una corrida se reportó «quedan 1.076
+créditos» cuando quedaban **3.076**.
+
+| campo | sirve para | ⚠ |
+|---|---|---|
+| `balance.total` | **medir cuánto costó una corrida**, por diferencia antes/después | **NO es «lo que queda»** — ver abajo |
+| `usage.spent` | nada operativo | **va con retraso**: se midió que no se movió ni una décima mientras `balance.total` bajaba 30 |
+| `usage.spentByCategory` | vigilar que `enrichment` siga en **0** | es la categoría prohibida, 10 créditos por match |
+| `allowance.perCycle` | **nada**: puede estar desactualizado | decía 4.000 con el plan ya en 6.000 |
+
+### ⛔ `balance.total` NO es el crédito disponible
+
+Está medido, y la aritmética cierra exacta:
+**`balance.total` = `allowance.perCycle` de la API − gasto real**, o sea
+**1.076 = 4.000 − 2.924**.
+
+El problema es que **`allowance.perCycle` de la API se quedó en el plan
+viejo**. El panel dice 6.000, así que `balance.total` **subestima en
+exactamente 2.000**.
+
+**Para saber cuánto queda, se mira el panel. La API no lo dice.**
+
+⚠ **Y esto NO invalida ninguna conciliación anterior**, porque todas se
+hicieron por **diferencia**: leer el saldo justo antes y justo después. El
+error es una **constante**, y una constante se cancela al restar. Por eso seis
+tandas seguidas cuadraron al céntimo con un número absoluto equivocado.
+
+**La regla que sale de ahí:** el saldo se usa como **cronómetro**, no como
+cuentakilómetros. Mide intervalos; no dice dónde estás.
+
+### El gasto nuestro no es todo el gasto del ciclo
+
+`creditos_gastados` lo escribe **solo el extractor, por realtor**. Los scripts
+de medición de la fase 1 —`mix_prestamos.py` con 1.207, las bandas de
+`shareOfUnits` con 503— gastaron **sin escribir nada por realtor**.
+
+Medido el 2026-10-13: el ciclo llevaba **2.924** y nuestra extracción
+**1.287**. Los 1.637 de diferencia son exploración, no minado.
+
+**Al estimar un lote se usa el modelo —1 crédito por identificado—; al mirar
+cuánto queda, el panel.** Sumar `creditos_gastados` no da el gasto del ciclo.
 
 ---
 
